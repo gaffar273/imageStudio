@@ -13,6 +13,7 @@ from pathlib import Path
 from PIL import Image
 
 from image_studio.core.paths import CACHE, IMAGES
+from image_studio.core.processes import launch_detached
 from image_studio.services import agent
 
 
@@ -181,4 +182,4 @@ def open_document(path):
     desktop = cli.with_name('photocraft.exe' if os.name == 'nt' else 'photocraft') if cli else None
     if desktop is None or not desktop.is_file():
         raise ValueError('The PhotoCraft desktop application was not found.')
-    subprocess.Popen([str(desktop), str(path)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    launch_detached([str(desktop), str(path)])

@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
 import { Layers, Upload } from 'lucide-react';
-import type { CraftDocument, Region } from './types';
+import type { AreaMark, AreaTool, CraftDocument, Region } from './types';
+import { AreaSelection } from './AreaSelection';
 
 interface Props {
   document: CraftDocument | null;
@@ -12,6 +13,11 @@ interface Props {
   onOpen: () => void;
   onLibrary: () => void;
   onDrop: (file?: File) => void;
+  marks: AreaMark[];
+  areaTool: AreaTool | null;
+  brushSize: number;
+  onMarks: (marks: AreaMark[]) => void;
+  onDrawing: (drawing: boolean) => void;
 }
 
 /** The document preview with a draggable before/after split and the areas a plan will touch. */
@@ -25,6 +31,11 @@ export function Canvas({
   onOpen,
   onLibrary,
   onDrop,
+  marks,
+  areaTool,
+  brushSize,
+  onMarks,
+  onDrawing,
 }: Props) {
   const [split, setSplit] = useState(50);
   const frame = useRef<HTMLDivElement>(null);
@@ -84,6 +95,7 @@ export function Canvas({
             </>
           )}
           {!compare &&
+            marks.length === 0 &&
             regions.map((region) =>
               region.boxes.map((box, index) => (
                 <div
@@ -100,6 +112,18 @@ export function Canvas({
                 </div>
               )),
             )}
+          {!compare && (
+            <AreaSelection
+              key={`${document.id}-${document.revision}`}
+              width={document.state.width}
+              height={document.state.height}
+              marks={marks}
+              tool={busy ? null : areaTool}
+              size={brushSize}
+              onChange={onMarks}
+              onDrawing={onDrawing}
+            />
+          )}
         </div>
       ) : (
         <div className="pc-empty">

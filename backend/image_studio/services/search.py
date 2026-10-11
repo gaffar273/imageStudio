@@ -10,8 +10,8 @@ import json
 import subprocess
 import threading
 from image_studio.core.catalog import ROOT, SEARCH, WORK
+from image_studio.core.paths import IMAGES
 
-IMAGES = ROOT / 'images'
 IDLE_SECONDS = 300
 BACKGROUND_THREADS = 4
 LOG = WORK / 'image-search.log'

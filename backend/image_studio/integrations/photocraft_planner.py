@@ -136,11 +136,25 @@ def describe(state):
             f'{state.get("depth", 8)}-bit. Layers top to bottom: {", ".join(layers) or "none"}.')
 
 
-def understand(prompt, preview, state):
+def understand(prompt, preview, state, area=None):
     """(normalized edits, preserve notes, questions, normalization notes)."""
+    content = [brain.image_part(preview)]
+    if area:
+        from PIL import Image
+
+        from .photocraft_area import mask_for
+        mask = mask_for(area, preview.width, preview.height)
+        overlay = Image.new('RGB', preview.size, '#c4f477')
+        marked = Image.composite(overlay, preview.convert('RGB'), mask.point(lambda value: round(value * .4)))
+        content += [brain.image_part(marked), {'type': 'text', 'text':
+            'The second image shows the exact user-marked area in green. The green is a selection overlay, '
+            'not part of the photograph. Apply every requested edit only inside it. “Here”, “these spots”, '
+            'or “this area” mean that selection; do not ask where it is or guess a wider target. '
+            'Choose target area. The engine protects everything outside the marks.'}]
+    content.append({'type': 'text', 'text': f'{describe(state)}\n\nRequest: {prompt}'})
     answer = brain.chat(
         system_prompt(),
-        [brain.image_part(preview), {'type': 'text', 'text': f'{describe(state)}\n\nRequest: {prompt}'}],
+        content,
         schema=UNDERSTAND_SCHEMA, max_tokens=2600, temperature=0.0,
     )
     edits, notes = [], []

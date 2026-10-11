@@ -8,6 +8,8 @@ PhotoCraft command whose ID starts with ``studio.``.
 
 from PIL import Image, ImageStat
 
+from .photocraft_area import select_marked
+
 PHOTO = 'Photo'
 RETOUCH_PREFIXES = ('Removed ', 'Content-Aware Fill')
 GRAPHIC_KINDS = {'Type', 'Shape'}
@@ -15,6 +17,7 @@ GRAPHIC_NAMES = {'Frame'}
 NAMES = {
     'studio.select_photo', 'studio.select_insert', 'studio.select_top', 'studio.require_selection',
     'studio.develop', 'studio.retouch_fill', 'studio.local_filter', 'studio.text', 'studio.ai_layer',
+    'studio.select_outline', 'studio.select_marked',
 }
 
 
@@ -121,28 +124,168 @@ def retouch_fill(engine, folder, params, context):
     else:
         engine.call('engine.execute', {'command': 'layer.select', 'params': {'layer': photo['id']}})
         result = engine.call('engine.execute', {'command': 'edit.contentAwareFill', 'params': {'output': 'new'}})
+    copies = local_copies(state, photo)
+    if copies:
+        # Below a masked copy of the original photo, the removed object would show again.
+        engine.call('engine.execute', {'command': 'layer.moveTo', 'params': {
+            'layer': result['layer'], 'target': copies[0]['id'], 'position': 'above'}})
     engine.call('engine.execute', {'command': 'layer.renameLayer',
                                    'params': {'layer': result['layer'], 'name': params['label'][:80]}})
     return {'layer': result['layer']}
 
 
+def local_copies(state, photo):
+    """Masked smart objects above the photo that carry a local filter (one per area), top first."""
+    top = state['layers']
+    position = next(i for i, layer in enumerate(top) if layer['id'] == photo['id'])
+    return [layer for layer in top[:position] if layer['kind'] == 'Smart Object' and layer.get('hasMask')
+            and layer.get('smartFilters')]
+
+
+def ex(engine, command, params=None):
+    return engine.call('engine.execute', {'command': command, 'params': params or {}})
+
+
+def fresh_copy(engine, state, photo, copies):
+    """A smart object to carry a new local filter. Over earlier copies it is a merged copy of the
+    photo and those copies: a plain copy of the photo would cover their edits wherever the masks
+    overlap (sharpening the person hid the shirt and skin grading beneath it)."""
+    if not copies:
+        return ex(engine, 'layer.duplicate', {'layer': photo['id']})['layer']
+    selected = state.get('hasSelection')
+    if selected:
+        ex(engine, 'select.saveSelection', {'name': 'Studio area'})
+        ex(engine, 'select.deselect')
+    ex(engine, 'layer.select', {'layer': photo['id']})
+    for layer in copies:
+        ex(engine, 'layer.select', {'layer': layer['id'], 'mode': 'add'})
+    stamp = ex(engine, 'layer.stampDown')['layer']
+    ex(engine, 'layer.select', {'layer': stamp})
+    smart = ex(engine, 'layer.smartObjects.convertToSmartObject')['layer']
+    ex(engine, 'layer.moveTo', {'layer': smart, 'target': copies[0]['id'], 'position': 'above'})
+    if selected:
+        ex(engine, 'select.loadSelection', {'channel': 'Studio area'})
+        ex(engine, 'channel.delete', {'channel': 'Studio area'})
+    return smart
+
+
+def area_of(name):
+    return name.partition(' · ')[2].strip().lower()
+
+
+def merge_camera_raw(engine, layer, wanted, label):
+    """Add Camera Raw settings to a copy's existing filter; False if it has none."""
+    for index, item in enumerate(layer.get('smartFilters') or []):
+        if item.get('command') == 'filter.cameraRaw':
+            merged = dict(item.get('params') or {})
+            for key, value in wanted.items():
+                merged[key] = max(-100, min(100, round(merged.get(key, 0) + value, 2)))
+            engine.call('engine.execute', {'command': 'layer.smartFilter.setParams',
+                                           'params': {'layer': layer['id'], 'index': index, 'params': merged}})
+            head, _, area = label.partition(' · ')
+            name = layer['name'] if head.lower() in layer['name'].lower() else \
+                f'{layer["name"].partition(" · ")[0]}, {head[:1].lower() + head[1:]} · {area}'
+            engine.call('engine.execute', {'command': 'layer.renameLayer',
+                                           'params': {'layer': layer['id'], 'name': name[:80]}})
+            return True
+    return False
+
+
 def local_filter(engine, folder, params, context):
     """A filter limited to the current selection: a masked copy of the photo carries it, so
-    the original stays untouched and the effect can be hidden, faded or repainted."""
+    the original stays untouched and the effect can be hidden, faded or repainted.
+
+    Camera Raw for an area that already has a copy is added to that copy's filter. A new area
+    gets a copy above the earlier ones, made from them, so neither edit hides the other."""
     select_photo(engine, folder, {'smart': True}, context)
     state = inspect(engine)
     photo = photo_layer(state)
-    copy = engine.call('engine.execute', {'command': 'layer.duplicate', 'params': {'layer': photo['id']}})
-    engine.call('engine.execute', {'command': 'layer.select', 'params': {'layer': copy['layer']}})
-    engine.call('engine.execute', {'command': 'layer.layerMask.revealSelection', 'params': {}})
-    engine.call('engine.execute', {'command': 'layer.renameLayer',
-                                   'params': {'layer': copy['layer'], 'name': params['label'][:80]}})
-    engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
-    engine.call('engine.execute', {'command': params['command'], 'params': params.get('params', {})})
+    copies = local_copies(state, photo)
+    area = area_of(params['label'])
+    if params['command'] == 'filter.cameraRaw' and params.get('region') and area:
+        for layer in copies:
+            if area_of(layer['name']) == area and merge_camera_raw(engine, layer, params.get('params', {}),
+                                                                   params['label']):
+                engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+                return {'layer': layer['id'], 'merged': True}
+    copy = fresh_copy(engine, state, photo, copies)
+    ex(engine, 'layer.select', {'layer': copy})
+    ex(engine, 'layer.layerMask.revealSelection')
+    ex(engine, 'layer.renameLayer', {'layer': copy, 'name': params['label'][:80]})
+    ex(engine, 'select.deselect')
+    ex(engine, params['command'], params.get('params', {}))
     if photo.get('hasMask') and any(layer['name'] == 'Backdrop' for layer in state['layers']):
-        engine.call('engine.execute', {'command': 'layer.setProps', 'params': {'layer': copy['layer'],
-                                                                                'clipped': True}})
-    return {'layer': copy['layer']}
+        ex(engine, 'layer.setProps', {'layer': copy, 'clipped': True})
+    return {'layer': copy}
+
+
+def select_outline(engine, folder, params, context):
+    """Select what is inside the boxes along its real outline. PhotoCraft's own object and
+    subject selections took a rectangular block of curtain beside a man's head and cut into his
+    hair; SAM 2.1 (the studio's outliner) traces him cleanly, and its outline is handed to
+    PhotoCraft as lasso selections. Without SAM, PhotoCraft's object selection is used."""
+    import numpy as np
+
+    from image_studio.services import segment
+
+    state = inspect(engine)
+    width, height = state['width'], state['height']
+    boxes = [box for box in params['boxes'] if box[2] > 1 and box[3] > 1]
+    mode = params.get('mode', 'replace')
+    if segment.available() and boxes:
+        if context.get('progress'):
+            context['progress'](desc=f'Outlining {params.get("what", "the subject")}…')
+        probe = folder / '_outline.png'
+        engine.call('doc.render', {'path': str(probe), 'maxSide': min(1536, max(width, height))})
+        with Image.open(probe) as picture:
+            image = picture.convert('RGB')
+        probe.unlink(missing_ok=True)
+        scale = image.width / width
+        missing = []
+        mask = segment.tidy(segment.outline(image, [
+            (round(x * scale), round(y * scale), round((x + w) * scale), round((y + h) * scale))
+            for x, y, w, h in boxes], missing))
+        rings = outline_rings(np.asarray(mask) > 127, 1 / scale)
+        if rings:
+            for number, (points, cut) in enumerate(rings):
+                ex(engine, 'select.lasso', {'points': points, 'antiAlias': True,
+                                            'mode': 'subtract' if cut else mode if number == 0 else 'add'})
+            # A box SAM found nothing in falls back to PhotoCraft's own selection, not a rectangle.
+            for index in missing:
+                ex(engine, 'select.object', {'rect': boxes[index], 'mode': 'add', 'sampleAllLayers': True})
+            return {'coverage': float((np.asarray(mask) > 127).mean()), 'outlined': True}
+    for number, box in enumerate(boxes):
+        ex(engine, 'select.object', {'rect': box, 'mode': mode if number == 0 else 'add', 'sampleAllLayers': True})
+    return {}
+
+
+def outline_rings(mask, scale):
+    """[(points in document pixels, is_hole)] for a boolean mask, outer shapes before the holes
+    inside them, then islands inside holes, so applying them in order rebuilds the mask."""
+    import cv2
+    import numpy as np
+
+    found, hierarchy = cv2.findContours(mask.astype(np.uint8), cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    if hierarchy is None:
+        return []
+    smallest = mask.size * 0.0003
+    depth = []
+    for index in range(len(found)):
+        level, parent = 0, hierarchy[0][index][3]
+        while parent >= 0:
+            level, parent = level + 1, hierarchy[0][parent][3]
+        depth.append(level)
+    rings = []
+    for index in sorted(range(len(found)), key=lambda i: depth[i]):
+        if cv2.contourArea(found[index]) < smallest:
+            continue
+        simple = cv2.approxPolyDP(found[index], 0.8, True).reshape(-1, 2)
+        if len(simple) >= 3:
+            rings.append(([[round(float(x) * scale, 1), round(float(y) * scale, 1)] for x, y in simple],
+                          depth[index] % 2 == 1))
+    if rings and rings[0][1]:
+        return []
+    return rings
 
 
 def _layer(state, layer_id):
@@ -287,7 +430,10 @@ def ai_layer(engine, folder, params, context):
         picture = rendered.convert('RGB').resize((width, height), Image.LANCZOS)
     mask = None
     boxes = params.get('boxes') or []
-    if boxes:
+    if params.get('area'):
+        from .photocraft_area import mask_for
+        mask = mask_for(params['area'], width, height)
+    elif boxes:
         mask = Image.new('L', (width, height), 0)
         draw = ImageDraw.Draw(mask)
         for x, y, w, h in boxes:
@@ -355,6 +501,7 @@ def ai_layer(engine, folder, params, context):
 
 
 HANDLERS = {
+    'studio.select_marked': select_marked,
     'studio.ai_layer': ai_layer,
     'studio.select_photo': select_photo,
     'studio.select_insert': select_insert,
@@ -363,6 +510,7 @@ HANDLERS = {
     'studio.develop': develop,
     'studio.retouch_fill': retouch_fill,
     'studio.local_filter': local_filter,
+    'studio.select_outline': select_outline,
     'studio.text': text,
 }
 

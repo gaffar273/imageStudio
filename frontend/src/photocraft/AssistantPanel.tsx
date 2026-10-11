@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import {
   AlertTriangle,
+  Brush,
+  Eraser,
+  Lasso,
+  Undo2,
   Check,
   ChevronDown,
   ChevronRight,
@@ -13,7 +17,7 @@ import {
   Sparkles,
   X,
 } from 'lucide-react';
-import type { CraftDocument, Plan, Revision } from './types';
+import type { AreaTool, CraftDocument, Plan, Revision } from './types';
 
 const EXAMPLES = [
   'Professional polish',
@@ -45,6 +49,16 @@ interface Props {
   onApply: (partial: boolean) => void;
   onDiscard: () => void;
   onHighlight: (requirement: number | null) => void;
+  areaEnabled: boolean;
+  areaAvailable: boolean;
+  areaTool: AreaTool;
+  markCount: number;
+  brushSize: number;
+  onAreaEnabled: (enabled: boolean) => void;
+  onAreaTool: (tool: AreaTool) => void;
+  onBrushSize: (size: number) => void;
+  onUndoMark: () => void;
+  onClearMarks: () => void;
 }
 
 function ResultCheck({ revision }: { revision: Revision }) {
@@ -122,6 +136,16 @@ export function AssistantPanel({
   onApply,
   onDiscard,
   onHighlight,
+  areaEnabled,
+  areaAvailable,
+  areaTool,
+  markCount,
+  brushSize,
+  onAreaEnabled,
+  onAreaTool,
+  onBrushSize,
+  onUndoMark,
+  onClearMarks,
 }: Props) {
   const [prompt, setPrompt] = useState('');
   const [showSteps, setShowSteps] = useState(false);
@@ -135,6 +159,80 @@ export function AssistantPanel({
         <h2>Describe your edit</h2>
         <p>Say what to change, where, and how much. Name what must stay untouched. Every detail is read.</p>
       </div>
+      <section className="pc-area-controls" aria-label="Edit area">
+        <span className="eyebrow">APPLY PROMPT TO</span>
+        <div className="pc-area-buttons">
+          <button disabled={busy} aria-pressed={!areaEnabled} onClick={() => onAreaEnabled(false)}>
+            Whole image
+          </button>
+          <button
+            disabled={busy || !document || !areaAvailable}
+            aria-pressed={areaEnabled}
+            onClick={() => onAreaEnabled(true)}
+          >
+            <Lasso size={14} /> Mark an area
+          </button>
+        </div>
+        {!areaAvailable && (
+          <small>Restart the studio after the current edit finishes to enable area marking.</small>
+        )}
+        {areaEnabled && (
+          <>
+            <div className="pc-area-buttons" role="group" aria-label="Marking tools">
+              {(
+                [
+                  { id: 'brush', label: 'Brush', icon: Brush },
+                  { id: 'lasso', label: 'Lasso', icon: Lasso },
+                  { id: 'erase', label: 'Erase', icon: Eraser },
+                ] as const
+              ).map(({ id, label, icon: Icon }) => (
+                <button
+                  key={id}
+                  disabled={busy}
+                  aria-pressed={areaTool === id}
+                  onClick={() => onAreaTool(id)}
+                >
+                  <Icon size={14} />
+                  {label}
+                </button>
+              ))}
+            </div>
+            {areaTool !== 'lasso' && (
+              <label className="pc-area-size">
+                Brush size{' '}
+                <input
+                  aria-label="Area brush size"
+                  type="range"
+                  min="0.003"
+                  max="0.15"
+                  step="0.001"
+                  value={brushSize}
+                  disabled={busy}
+                  onChange={(event) => onBrushSize(Number(event.target.value))}
+                />
+              </label>
+            )}
+            <p>
+              {areaTool === 'lasso'
+                ? 'Draw a closed loop around each spot.'
+                : 'Paint over the spots you want to change.'}{' '}
+              You can mark several spots. Only the green area will be edited.
+            </p>
+            <div className="pc-area-buttons">
+              <button disabled={busy || !markCount} onClick={onUndoMark}>
+                <Undo2 size={13} />
+                Undo mark
+              </button>
+              <button disabled={busy || !markCount} onClick={onClearMarks}>
+                Clear marks
+              </button>
+            </div>
+            <small role="status">
+              {markCount ? 'Marked area only · outside protected' : 'Mark the photo before planning.'}
+            </small>
+          </>
+        )}
+      </section>
       <label className="pc-prompt">
         <textarea
           aria-label="PhotoCraft instructions"
@@ -148,7 +246,8 @@ export function AssistantPanel({
               event.key === 'Enter' &&
               prompt.trim() &&
               document &&
-              !busy
+              !busy &&
+              (!areaEnabled || markCount > 0)
             )
               onPlan(prompt);
           }}
@@ -159,7 +258,7 @@ export function AssistantPanel({
           </small>
           <button
             className="pc-send"
-            disabled={!document || busy || !prompt.trim()}
+            disabled={!document || busy || !prompt.trim() || (areaEnabled && !markCount)}
             onClick={() => onPlan(prompt)}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />}

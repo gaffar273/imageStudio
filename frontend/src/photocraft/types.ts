@@ -120,7 +120,19 @@ export interface Region {
   boxes: number[][];
 }
 
+export type AreaTool = 'brush' | 'lasso' | 'erase';
+export interface AreaMark {
+  tool: AreaTool;
+  points: [number, number][];
+  /** Diameter relative to the document width. */
+  size: number;
+}
+export interface MarkedArea {
+  marks: AreaMark[];
+}
+
 export interface Plan {
+  area?: MarkedArea | null;
   id: string;
   revision: string;
   prompt: string;
@@ -146,6 +158,7 @@ export interface CraftJob {
 }
 
 export interface Capabilities {
+  marked_area?: boolean;
   installed: boolean;
   brain: boolean;
   discovered: number;

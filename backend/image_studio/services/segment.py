@@ -101,15 +101,19 @@ BOXES_SCHEMA = {
 
 def find_boxes_brain(image, target):
     """Boxes from the editing brain (Qwen3.5-9B), which finds every separate object: on a
-    town photo it boxed the buildings one by one, where the 2B assistant gave one box."""
+    town photo it boxed the buildings one by one, where the 2B assistant gave one box. The wording
+    is measured: with “(each building, each person...)” it found no box for the hair of a
+    portrait, and adding a line about parts of a person to that lost the beard and glasses too;
+    this one found hair, beard, glasses, chairs, a plant and three separate curtains."""
     from image_studio.services import brain
 
     answer = brain.chat(
         'You locate objects in photos precisely. Coordinates are on a 0-1000 scale: x from the left, '
         'y from the top.',
         [brain.image_part(image), {'type': 'text', 'text':
-            f'Locate {target}. Give one tight box [x1, y1, x2, y2] for each separate one (each building, '
-            'each person...), or one box when it is a single thing such as the sky. JSON: {"boxes": [...]}'}],
+            f'Locate {target}. Give one tight box [x1, y1, x2, y2] for each separate one, or one box when it '
+            'is a single thing. Parts of a person (hair, face, hands, beard, clothing) count. '
+            'JSON: {"boxes": [...]}'}],
         schema=BOXES_SCHEMA, max_tokens=800, temperature=0.0)
     return parse_boxes(json.dumps([{'bbox_2d': box} for box in answer.get('boxes') or []]), *image.size)
 
@@ -132,9 +136,9 @@ def tidy(mask):
     return Image.fromarray(array * 255)
 
 
-def outline(image, boxes):
+def outline(image, boxes, missing=None):
     """One mask (L) covering what SAM finds inside each box; a box SAM cannot outline
-    is used as it is."""
+    is used as it is, or, given a `missing` list, left out and its index added there."""
     import numpy as np
     import os
 
@@ -148,10 +152,15 @@ def outline(image, boxes):
     # The editing brain fills most of the GPU while it is kept; SAM then runs on the processor
     # rather than stopping the brain, which takes about 20 s to start again.
     device = 'cpu' if assistant.kept_kind() == 'brain' else None
+    pixels = np.asarray(image.convert('RGB'))
+    found = []
     try:
-        result = model(np.asarray(image.convert('RGB')), bboxes=[list(box) for box in boxes], verbose=False,
-                       device=device)[0]
-        found = result.masks.data.cpu().numpy() if result.masks is not None else []
+        # One box per call: ultralytics' SAM 2 fails an assertion when given several boxes at
+        # once (image_embeddings.shape[0] == tokens.shape[0]).
+        for box in boxes:
+            result = model(pixels, bboxes=[list(box)], verbose=False, device=device)[0]
+            masks = result.masks.data.cpu().numpy() if result.masks is not None else []
+            found.append(masks[0] if len(masks) else np.zeros(pixels.shape[:2], dtype=bool))
     finally:
         del model
         import torch
@@ -162,6 +171,9 @@ def outline(image, boxes):
             piece = Image.fromarray((found[index] > 0.5).astype('uint8') * 255).resize(
                 image.size, Image.NEAREST
             )
+        elif missing is not None:
+            missing.append(index)
+            continue
         else:
             piece = Image.new('L', image.size, 0)
             piece.paste(255, box)

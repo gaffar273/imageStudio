@@ -2,7 +2,31 @@
 
 A private image workspace with a React + TypeScript interface and a local Python/FastAPI backend. Generate images, edit photos with painted masks, browse and search your saved images, and work with the Krita AI panel.
 
-## Open the studio
+## Desktop app (Windows; Linux next)
+
+Double-click **Start Image Studio app.bat**. It opens Image Studio as a native Qt window (no browser), starts the engine, and stops it again when you close the window, which frees the GPU. If the app ends abruptly, Windows closes the engine with it. Krita and PhotoCraft windows opened from the studio stay open.
+
+- **Create image**, **Edit image**, **PhotoCraft studio**, **My library** and **This PC** are fully native. Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
+- **Edit image** takes a photo you drop on it, paste (Ctrl + V), choose from a file, or pick from your recent creations; **Edit image** in a picture's details opens it there too. PhotoCraft changes light and color across the whole photo and saves a layered PSD; AI content editing (FLUX.1 Kontext) changes what is in the picture, and can be limited to an area you paint (Ctrl + Z takes back a stroke). Before and After compare the result with the photo it came from, and **Keep editing** carries on from the result. Ctrl + Enter applies the edit.
+- **PhotoCraft studio** is native too, with everything described in [PhotoCraft studio](#photocraft-studio) below: the Assistant (describe an edit, optionally only inside an area you mark with a brush or lasso, review the plan, apply it and see the result check), the Adjust, Looks, Crop, Select, Text, Filters and All tools panels, layers and history, Compare (drag the split), zoom, and Export to a file you choose. **Open** opens a photo or layered document from the PC (or drop one on the screen), a picture from your library (a PhotoCraft edit opens with its layers), a recent document, or a new blank canvas. **Open full PhotoCraft workspace** on Edit image brings the photo on screen along. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter plans, Ctrl + O opens. In a narrow window the tool panel and the layers take turns (the layers button switches).
+- This PC shows which graphics card will be used, whether the local models will run on it, the engine's state, and the models and library folders.
+- Krita and Settings are being rebuilt for the desktop in a later phase. Until then their button opens that screen in the web version, which uses the same engine and library.
+- The status bar shows live GPU memory and load. **Free GPU** unloads every model, so a game gets the video memory back.
+
+The app needs Qt for Python: `pip install -e .[desktop]`. Run it with `python -m image_studio.desktop` or the `image-studio-app` command.
+
+### Where files are kept
+
+Each folder is taken from an environment variable, then from the settings file the app writes, then from a default:
+
+| Folder | Variable | Default |
+| --- | --- | --- |
+| Models | `IMAGE_STUDIO_WORK` | `%LOCALAPPDATA%\Image Studio\models` (Linux: `~/.local/share/image-studio/models`) |
+| Library | `IMAGE_STUDIO_LIBRARY` | `Pictures\Image Studio` |
+
+Settings live in `%APPDATA%\Image Studio\settings.json` (Linux: `~/.config/image-studio/settings.json`), and the engine log in `%LOCALAPPDATA%\Image Studio\logs\engine.log`. A source checkout next to an existing `../../work` folder keeps using it and its `images/` folder, so older setups need no changes.
+
+## Open the studio in the browser
 
 Double-click **Start image generator.bat**, then open **http://127.0.0.1:7860**. Use **Stop image generator.bat** to shut down the server and release the GPU. **Start Krita with AI.bat** starts the studio and Krita together.
 

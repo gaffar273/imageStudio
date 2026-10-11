@@ -7,7 +7,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from image_studio.integrations import photocraft_workspace as workspace
-from image_studio.services import workflows
+from image_studio.integrations.photocraft_area import MarkedArea
+from image_studio.services import library, workflows
 from image_studio.services.jobs import BusyError, store
 
 router = APIRouter(prefix='/api/photocraft')
@@ -22,6 +23,7 @@ class NewDocument(BaseModel):
 class PromptRequest(BaseModel):
     revision: str = Field(pattern='^[a-f0-9]{32}$')
     prompt: str = Field(min_length=1, max_length=6000)
+    area: MarkedArea | None = None
 
 
 class Operation(BaseModel):
@@ -106,6 +108,25 @@ async def import_document(file: Annotated[UploadFile, File()]):
     return submit(run)
 
 
+class LibraryDocument(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+
+@router.post('/workspaces/from-library', status_code=202)
+def library_document(request: LibraryDocument):
+    """Open a library picture without a download and upload; a PhotoCraft edit opens with its layers."""
+    image = guarded(lambda: library.image_path(request.name))
+    layered = image.with_suffix('.psd')
+    source = layered if image.name.startswith('photocraft_') and layered.is_file() else image
+
+    def run(progress, update):
+        progress(0.1, desc='Opening the picture and reading its layers…')
+        result = workspace.create(source.read_bytes(), source.name, cancelled=workflows.engine.cancelled)
+        update(workspace=result, message='Document ready. Describe your edit.')
+
+    return submit(run)
+
+
 @router.get('/workspaces/{workspace_id}')
 def get_workspace(workspace_id: str):
     return guarded(lambda: workspace.public(workspace.load(workspace_id)))
@@ -127,7 +148,8 @@ def plan(workspace_id: str, request: PromptRequest):
 
     def run(progress, update):
         result = workspace.smart_plan(
-            workspace_id, request.revision, request.prompt, progress, workflows.engine.cancelled
+            workspace_id, request.revision, request.prompt, progress, workflows.engine.cancelled,
+            area=request.area.model_dump() if request.area else None,
         )
         update(
             plan=result,

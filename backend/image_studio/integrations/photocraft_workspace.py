@@ -226,6 +226,7 @@ def capabilities():
     return {
         'installed': photocraft.available(),
         'brain': brain.available(),
+        'marked_area': True,
         'commands': commands,
         'discovered': len(commands),
         'runnable': sum(item['runnable'] for item in commands),
@@ -348,6 +349,22 @@ def require_revision(data, expected):
         raise ValueError('The document changed. Review a fresh plan before applying it.')
 
 
+def trust_measurements(verdicts, checks):
+    """The visual review cannot see small tone changes (it called a measured +8 of 255 on a shirt
+    “identical”), so where every measurement of a requirement passed, its “not done” becomes unclear."""
+    measured = {}
+    for check in checks:
+        if check.get('measured'):
+            measured.setdefault(check['requirement'], []).append(check['passed'])
+    for verdict in verdicts:
+        results = measured.get(verdict['requirement'])
+        if verdict['verdict'] == 'not done' and results and all(results):
+            verdict['verdict'] = 'unclear'
+            verdict['note'] = (f'{verdict["note"]} The measurement above did find the change, so trust it; '
+                               'small tone changes are hard to see.').strip()
+    return verdicts
+
+
 def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
     """Run every step in one engine session; history only advances when all succeed. With a
     plan, the result is measured against each requirement and reviewed by the brain."""
@@ -361,6 +378,12 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
         context = {'progress': lambda desc='', **kwargs: progress(0.4, desc=desc)}
         with Engine(folder, cancelled) as engine:
             engine.call('doc.open', {'path': str(folder / f'{expected}.pcraft')})
+            area = plan.get('area') if plan else None
+            if area:
+                from .photocraft_area import mask_for
+                mask_for(area, before['width'], before['height'])
+                engine.call('doc.render', {'path': str(folder / '_area-before.png'),
+                                          'maxSide': max(before['width'], before['height'])})
             for index, step in enumerate(steps):
                 progress(0.05 + 0.6 * index / max(1, len(steps)), desc=step.get('label') or step['command'])
                 params = step.get('params', {})
@@ -382,12 +405,18 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
                         outcomes[('text', requirement)] = result
             if engine.call('doc.inspect').get('hasSelection'):
                 engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+            if area:
+                from .photocraft_area import check_boundary
+                check_boundary(engine, folder, area, folder / '_area-before.png', before['width'], before['height'])
             revision = snapshot(engine, folder, label[:200], steps)
         check_cancel(cancelled)
         if plan and plan.get('edits'):
             canvas = photocraft_intents.Canvas(*(plan.get('result_size') or (0, 0)))
             revision['checks'] = photocraft_intents.verify(
                 plan['edits'], before, revision['state'], canvas, outcomes)
+            if area:
+                revision['checks'].append({'requirement': 0, 'measured': True, 'passed': True,
+                                           'check': 'Pixels outside your marked area are unchanged (full resolution)'})
             revision['requirements'] = plan['requirements']
             geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
             with Image.open(folder / f'{expected}.png') as old, Image.open(folder / f'{revision["id"]}.png') as new:
@@ -411,7 +440,7 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
                         for verdict in verdicts:
                             if verdict['requirement'] is not None:
                                 verdict['requirement'] = applied[verdict['requirement']]
-                        revision['review'] = verdicts
+                        revision['review'] = trust_measurements(verdicts, revision['checks'])
                 except (RuntimeError, ValueError, OSError) as exc:
                     revision['review_error'] = str(exc)[:300]
         check_cancel(cancelled)
@@ -587,19 +616,28 @@ def explain(edit, steps, index):
     return ' → '.join(own[:4]) or 'Not planned'
 
 
-def compile_plan(data, prompt, edits, preserve, questions, notes, preview, planner, boxes=None):
+def compile_plan(data, prompt, edits, preserve, questions, notes, preview, planner, boxes=None, area=None):
     """Compile normalized edits against the current document; finds objects when needed."""
     state = current(data)['state']
     boxes = dict(boxes or {})
-    wanted = {query for query in (photocraft_planner.needs_boxes(edit) for edit in edits) if query}
+    wanted = set() if area else {query for query in (photocraft_planner.needs_boxes(edit) for edit in edits) if query}
     missing = sorted(query for query in wanted if query.lower() not in boxes)
     if missing:
         if not brain.available():
             raise ValueError('Finding objects needs the editing brain. Install it, or choose the whole image.')
         hints = {photocraft_planner.needs_boxes(edit): edit['quote'] for edit in edits}
         boxes.update(photocraft_planner.locate(preview, missing, state, hints))
-    steps, compile_notes, blocking, regions, expert_indices, canvas = photocraft_intents.compile_edits(
-        edits, state, fonts(), boxes, photocraft_macros.ai_available())
+    if area:
+        from .photocraft_area import compile_area
+        steps, compile_notes, blocking, regions, expert_indices, canvas = compile_area(
+            edits, state, area, fonts(), photocraft_macros.ai_available())
+        edits = [{**edit, 'target': 'area', 'object': 'Marked area',
+                  'action': 'blur' if edit['action'] == 'blur_background' else edit['action']} for edit in edits]
+        preserve = [*preserve, 'Everything outside your marked area']
+        notes = [*notes, 'Your marked area overrides automatic target detection for every change in this plan.']
+    else:
+        steps, compile_notes, blocking, regions, expert_indices, canvas = photocraft_intents.compile_edits(
+            edits, state, fonts(), boxes, photocraft_macros.ai_available())
     for index in expert_indices:
         edit = edits[index]
         if not brain.available():
@@ -626,6 +664,7 @@ def compile_plan(data, prompt, edits, preserve, questions, notes, preview, plann
         'boxes': boxes,
         'planner': planner,
         'result_size': [canvas.width, canvas.height],
+        'area': area,
     }
 
 
@@ -658,7 +697,7 @@ def rule_edits(prompt):
     return edits
 
 
-def smart_plan(workspace_id, expected, prompt, progress, cancelled):
+def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
     data = load(workspace_id)
     require_revision(data, expected)
     folder = folder_for(workspace_id)
@@ -669,18 +708,21 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled):
     preset = photocraft_intents.presets(prompt)
     instant = rule_edits(prompt)
     if preset:
-        result = compile_plan(data, prompt, preset, [], [], [], preview, 'preset')
+        result = compile_plan(data, prompt, preset, [], [], [], preview, 'preset', area=area)
     elif instant:
-        result = compile_plan(data, prompt, instant, [], [], [], preview, 'rules')
+        result = compile_plan(data, prompt, instant, [], [], [], preview, 'rules', area=area)
     elif brain.available():
         progress(0.1, desc='Reading your image and every part of your request…')
-        edits, preserve, questions, notes = photocraft_planner.understand(prompt, preview, state)
+        edits, preserve, questions, notes = photocraft_planner.understand(prompt, preview, state, area=area)
         check_cancel(cancelled)
         if not edits:
             raise ValueError('I could not find an edit in that request. Describe what should change.')
         progress(0.45, desc='Finding the things you named and measuring the document…')
-        result = compile_plan(data, prompt, edits, preserve, questions, notes, preview, 'Qwen3.5 vision')
+        result = compile_plan(data, prompt, edits, preserve, questions, notes, preview, 'Qwen3.5 vision', area=area)
     else:
+        if area:
+            raise ValueError('Try “make it brighter and warmer” in the marked area, or install the editing brain '
+                             'for more detailed requests.')
         # Without the brain, only requests the instant rules fully understand are planned.
         quick = photocraft.plan(prompt)
         result = {

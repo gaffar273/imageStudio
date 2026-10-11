@@ -50,7 +50,9 @@ app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost
 
 @app.middleware('http')
 async def local_requests(request, call_next):
-    # Browsers on other websites cannot submit GPU work or desktop commands.
+    # Browsers on other websites cannot submit GPU work or desktop commands. The engine's own
+    # address is allowed too: the desktop app may run it on another port when 7860 is taken
+    # (the Host header is already limited to this machine by TrustedHostMiddleware).
     origin = request.headers.get('origin')
     if (
         request.method not in ('GET', 'HEAD', 'OPTIONS')
@@ -61,6 +63,7 @@ async def local_requests(request, call_next):
             'http://localhost:7860',
             'http://127.0.0.1:5173',
             'http://localhost:5173',
+            f'http://{request.headers.get("host", "")}',
         }
     ):
         return JSONResponse({'detail': 'Only the local studio can submit requests.'}, status_code=403)

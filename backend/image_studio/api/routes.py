@@ -17,7 +17,8 @@ from image_studio.api.schemas import (
     PersonalLoraRequest,
 )
 from image_studio.core.catalog import MODELS, SIZES, DEFAULT_NEGATIVE, KONTEXT, EDIT_QUALITY
-from image_studio.core.paths import CACHE
+from image_studio.core.paths import CACHE, IMAGES, WORK
+from image_studio.services.runtime import render_session
 from image_studio.services import workflows, library, assistant, search, repair, faces, memory, personal
 from image_studio.services.jobs import store, BusyError
 from image_studio.integrations import bridge, photocraft
@@ -79,6 +80,31 @@ def config():
         photocraft=photocraft.available(),
         active_job=store.active,
     )
+
+
+@router.get('/system')
+def system():
+    """What the running engine uses, for the desktop app (it reads the hardware itself)."""
+    return dict(
+        models_dir=str(WORK),
+        library_dir=str(IMAGES),
+        loaded=workflows.engine.model_key,
+        assistant=assistant.kept_kind(),
+        active_job=store.active,
+    )
+
+
+@router.post('/system/release')
+def release_gpu():
+    """Unload every model so games and other programs get the video memory back."""
+    if store.active or not render_session.acquire(blocking=False):
+        raise HTTPException(409, 'A job is running. Stop it first, then free the GPU.')
+    try:
+        workflows.engine.unload()
+        assistant.release()
+    finally:
+        render_session.release()
+    return system()
 
 
 @router.get('/library')
@@ -200,7 +226,7 @@ def edit(request: EditRequest):
             if result:
                 update(
                     message='PhotoCraft edit ready. Download the PSD to adjust its layers.',
-                    understood='; '.join(label for _, _, label in commands),
+                    understood='; '.join(dict.fromkeys(label for _, _, label in commands)),  # a preset names each step
                     images=[library.item(result)],
                 )
 

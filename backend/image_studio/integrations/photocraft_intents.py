@@ -32,17 +32,19 @@ DIRECTIONS = ['increase', 'decrease', 'none']
 SIZES = ['small', 'medium', 'large', 'huge']
 LUTS = ['warm', 'cool', 'tealOrange', 'bleachBypass', 'fadedFilm', 'dayForNight', 'monoContrast', 'crossProcess']
 
-# Camera Raw parameters: (engine name, moderate amount, lowest, highest).
+# Camera Raw parameters: (engine name, moderate amount, lowest, highest). PhotoCraft's scales are
+# gentle: temperature 7.5 moves skin by ~2.6 of 255 and shadows 15 lifts dark cloth by ~3, which
+# nobody sees, so these amounts are measured to be visible at “slightly”.
 RAW = {
     'exposure': ('exposure', 0.5, -5, 5),
-    'highlights': ('highlights', 30, -100, 100),
-    'shadows': ('shadows', 30, -100, 100),
+    'highlights': ('highlights', 40, -100, 100),
+    'shadows': ('shadows', 40, -100, 100),
     'whites': ('whites', 20, -100, 100),
     'blacks': ('blacks', 20, -100, 100),
     'clarity': ('clarity', 20, -100, 100),
-    'texture': ('texture', 20, -100, 100),
+    'texture': ('texture', 30, -100, 100),
     'dehaze': ('dehaze', 15, -100, 100),
-    'temperature': ('temperature', 15, -100, 100),
+    'temperature': ('temperature', 30, -100, 100),
     'tint': ('tint', 10, -100, 100),
     'sharpen': ('sharpenAmount', 40, 0, 150),
     'noise_reduction': ('noiseLuminance', 30, 0, 100),
@@ -55,7 +57,7 @@ ADJUST = {
     'brightness': ('brightnessContrast', 'brightness', 25, -150, 150),
     'contrast': ('brightnessContrast', 'contrast', 20, -50, 100),
     'saturation': ('hueSaturation', 'saturation', 20, -100, 100),
-    'vibrance': ('vibrance', 'vibrance', 25, -100, 100),
+    'vibrance': ('vibrance', 'vibrance', 35, -100, 100),
     'hue_shift': ('hueSaturation', 'hue', 30, -180, 180),
     'posterize': ('posterize', 'levels', 6, 2, 255),
     'threshold': ('threshold', 'level', 128, 1, 255),
@@ -182,7 +184,12 @@ RECIPES = {
     'matte': {'curves': [[0, 28], [64, 68], [192, 196], [255, 240]]},
     'hdr': {'raw': {'highlights': -45, 'shadows': 45, 'clarity': 30, 'vibrance': 12}},
 }
-LEVEL = {'subtle': 0.5, 'moderate': 1.0, 'strong': 2.0}
+LEVEL = {'subtle': 0.6, 'moderate': 1.0, 'strong': 2.0}
+# “Keep me sharp”, “leave the face as it is”: a promise to protect, not an edit. A clause that
+# also asks for a change (“keep the colors but make them warmer”) is still an edit.
+KEEP_ONLY = re.compile(
+    r"^\W*(?:keep|leave|preserve|protect|don['’]?t (?:change|touch|edit)|do not (?:change|touch|edit))\b"
+    r"(?!.*\b(?:make|add|but|while|turn|warmer|cooler|brighter|darker|more|less)\b)", re.IGNORECASE)
 
 # ---- Understanding helpers ------------------------------------------------------------------
 
@@ -322,6 +329,11 @@ def normalize(edit, prompt):
     if ACTIONS[action][0] == 'layer' and not re.search(r'\blayers?\b', quote, re.IGNORECASE):
         result['action'] = 'keep'
         notes.append(f'Read “{quote}” as something to keep, not a layer change.')
+    elif action not in ('keep', 'crop_aspect', 'crop_to_object') and KEEP_ONLY.match(quote):
+        # “Keep me sharp” protects the person; sharpening them put a copy of the untouched photo
+        # over the earlier shirt and skin edits.
+        result['action'] = 'keep'
+        notes.append(f'Read “{quote}” as something to keep unchanged, not an edit.')
     if action == 'add_text':
         result['text'] = exact_text(result['text'], quote, prompt)
         if not result['text']:
@@ -555,10 +567,10 @@ class Compiler:
                     self.blocking.append(f'Could not find {key or "the object"} in the picture. Describe it '
                                          'differently.')
                 return False
-            for number, box in enumerate(boxes):
-                self.add(index, 'select.object', {'rect': box, 'mode': 'replace' if number == 0 else 'add',
-                                                  'sampleAllLayers': True},
-                         f'Select {key}' if number == 0 else 'Add to the selection')
+            # The studio traces the outline (SAM 2.1): PhotoCraft's object selection took a block of
+            # the backdrop beside a man's head, cut into his hair, and for “the beard” took the
+            # whole lower face, cheeks and lips included.
+            self.add(index, 'studio.select_outline', {'boxes': boxes, 'what': key}, f'Select {key}')
             self.regions.append({'requirement': index, 'label': key,
                                  'boxes': [[b[0] / self.canvas.width, b[1] / self.canvas.height,
                                             b[2] / self.canvas.width, b[3] / self.canvas.height] for b in boxes]})
@@ -922,11 +934,32 @@ class Compiler:
             for key, value in params.items():
                 current[key] = current.get(key, 0) + value
             return
-        if self.selection(index, edit):
-            self.add(index, 'studio.local_filter',
-                     {'command': 'filter.cameraRaw', 'params': params, 'label': short_label(edit)},
-                     f'{short_label(edit)} on its own masked layer')
-            self.end_selection(index)
+        self.local_develop(index, edit, params, short_label(edit), f'{short_label(edit)} on its own masked layer')
+
+    def local_develop(self, index, edit, params, label, description):
+        """Camera Raw settings for one area, on a masked copy of the photo. A second request for
+        the same area joins that copy: two copies with one mask would hide the lower one."""
+        region = region_key(edit)
+        for step in reversed(self.steps):
+            settings = step['params']
+            if step['command'] != 'studio.local_filter' or settings.get('region') != region or \
+                    settings['command'] != 'filter.cameraRaw':
+                continue
+            for key, value in params.items():
+                settings['params'][key] = round(settings['params'].get(key, 0) + value, 2)
+            settings['label'] = merged_label(settings['label'], label)
+            step['label'] = f'{settings["label"]} on its own masked layer'
+            step['requirements'].append(index)
+            first = step['requirements'][0]
+            self.regions += [{**area, 'requirement': index} for area in self.regions
+                             if area['requirement'] == first]
+            return True
+        if not self.selection(index, edit):
+            return False
+        self.add(index, 'studio.local_filter', {'command': 'filter.cameraRaw', 'params': params,
+                                                'label': label, 'region': region}, description)
+        self.end_selection(index)
+        return True
 
     def adjustment(self, index, edit, command, params, name):
         targeted = edit['target'] not in ('whole image', 'layer')
@@ -1040,12 +1073,10 @@ class Compiler:
             if local:
                 # “Make the sky dramatic” develops only the sky, on a masked copy of the photo.
                 params.pop('vignetteAmount', None)
-                if not self.selection(index, edit):
+                if not self.local_develop(index, edit, params, short_label(edit),
+                                          'Develop: ' + ', '.join(f'{k} {v:+g}' for k, v in params.items())
+                                          + f' · {edit["target"]}'):
                     return
-                self.add(index, 'studio.local_filter', {'command': 'filter.cameraRaw', 'params': params,
-                                                        'label': short_label(edit)},
-                         'Develop: ' + ', '.join(f'{k} {v:+g}' for k, v in params.items()) + f' · {edit["target"]}')
-                self.end_selection(index)
             else:
                 self.raw[index] = params
                 self.flush_raw()
@@ -1291,10 +1322,25 @@ def position_xy(position):
 def short_label(edit):
     words = {'increase': 'More', 'decrease': 'Less', 'none': ''}[edit['direction']]
     action = edit['action'].replace('_', ' ')
-    target = '' if edit['target'] in ('whole image', 'layer') else (
-        f' · {edit["object"] or edit["target"]}' if edit['target'] in ('object',) else f' · {edit["target"]}')
+    # The part after “ · ” names the area; a later request for the same area joins its layer.
+    area = {'object': edit['object'] or 'object', 'area': f'{edit["position"] or "center"} area',
+            'color': f'{edit["color"] or edit["object"]} tones'.strip()}.get(edit['target'], edit['target'])
+    target = '' if edit['target'] in ('whole image', 'layer') else f' · {area}'
     value = f' {edit["value"]:g}' if edit['value'] is not None else ''
     return f'{words} {action}{value}{target}'.strip().capitalize()
+
+
+def region_key(edit):
+    """Which area an edit selects: edits with the same key get the same mask."""
+    query = subject_query(edit) if edit['target'] in ('main subject', 'background', 'object') else ''
+    return '|'.join([edit['target'], query.lower(), edit['position'] or '', edit['color'] or ''])
+
+
+def merged_label(first, second):
+    """“More shadows · the shirt” + “Less texture · the shirt” → “More shadows, less texture · the shirt”."""
+    head, _, area = first.partition(' · ')
+    extra = second.partition(' · ')[0]
+    return f'{head}, {extra[:1].lower() + extra[1:]}' + (f' · {area}' if area else '')
 
 
 def compile_edits(edits, state, fonts=(), boxes=None, ai=False):
@@ -1397,6 +1443,123 @@ def removal_score(before, after, box):
     old = contrast(before)
     new = contrast(after.resize(before.size) if after.size != before.size else after)
     return new / old if old > 0.04 else 0.0
+
+
+LOCAL_TONE = {'brightness': 'brightness', 'exposure': 'brightness', 'shadows': 'shadow brightness',
+              'highlights': 'highlight brightness', 'temperature': 'warmth', 'saturation': 'saturation',
+              'vibrance': 'saturation', 'texture': 'fine detail', 'clarity': 'fine detail'}
+
+
+def local_tone_check(index, edit, pairs, before, after, others=()):
+    """Did a tone or color edit on one area move that area the asked way? Measured on the pixels
+    that changed inside its boxes (the mask), so the rest of each box does not dilute it, leaving
+    out boxes of other areas: the hands' box overlaps a shirt that was edited the other way."""
+    import numpy as np
+
+    action, name = edit['action'], LOCAL_TONE[edit['action']]
+    olds, news, masks, everything = [], [], [], []
+    for original, final in pairs:
+        crop = _pixels(original, before.size)
+        old = before.convert('RGB').crop(crop)
+        new = after.convert('RGB').crop(_pixels(final, after.size)).resize(old.size)
+        a = np.asarray(old, dtype=np.float32) / 255
+        b = np.asarray(new, dtype=np.float32) / 255
+        changed = np.abs(a - b).max(axis=2) > 1.5 / 255
+        mine = changed.copy()
+        for box in others:
+            x0, y0, x1, y1 = _pixels(box, before.size)
+            mine[max(0, y0 - crop[1]):max(0, y1 - crop[1]), max(0, x0 - crop[0]):max(0, x1 - crop[0])] = False
+        olds.append(a)
+        news.append(b)
+        masks.append(mine)
+        everything.append(changed)
+    if sum(int(m.sum()) for m in masks) < 0.2 * sum(int(m.sum()) for m in everything):
+        masks = everything  # the area lies almost wholly inside another one: measure it all
+    share = sum(int(m.sum()) for m in masks) / max(1, sum(m.size for m in masks))
+    what = edit['object'] or edit['target']
+    if share < 0.01:
+        return {'requirement': index, 'check': f'Measured: {what} did not change', 'passed': False,
+                'measured': True}
+
+    def value(images):
+        total, weight = 0.0, 0
+        if action in ('texture', 'clarity'):
+            # Detail relative to brightness: darkening the same beard also shrinks its pixel
+            # differences, which read as “less definition” when measured absolutely.
+            light = 0.0
+            for rgb, mask in zip(images, masks):
+                lum = rgb.mean(axis=2)
+                detail = np.abs(np.diff(lum, axis=0))[:, :-1] + np.abs(np.diff(lum, axis=1))[:-1, :]
+                inside = mask[:-1, :-1]
+                total += float(detail[inside].sum())
+                light += float(lum[:-1, :-1][inside].sum())
+            return total / max(light, 1e-6)
+        for rgb, mask, reference in zip(images, masks, olds):
+            lum = rgb.mean(axis=2)
+            inside = mask
+            if action == 'shadows':
+                dark = mask & (reference.mean(axis=2) < 0.35)
+                inside = dark if dark.any() else mask
+            elif action == 'highlights':
+                bright = mask & (reference.mean(axis=2) > 0.65)
+                inside = bright if bright.any() else mask
+            if action == 'temperature':
+                values = rgb[..., 0] - rgb[..., 2]
+            elif action in ('saturation', 'vibrance'):
+                high, low = rgb.max(axis=2), rgb.min(axis=2)
+                values = np.where(high > 0, (high - low) / np.maximum(high, 1e-6), 0)
+            else:
+                values = lum
+            total += float(values[inside].sum())
+            weight += int(inside.sum())
+        return total / max(1, weight)
+
+    old, new = value(olds), value(news)
+    rising = edit['direction'] == 'increase'
+    if action in ('texture', 'clarity'):
+        moved = (new - old) / max(old, 1e-6)  # detail is relative: −10% reads the same on any photo
+        passed = moved > 0.02 if rising else moved < -0.02
+        detail = f'{name} {moved:+.0%}'
+    else:
+        moved = new - old
+        passed = moved > 0.004 if rising else moved < -0.004
+        detail = f'{name} {old * 255:.0f} → {new * 255:.0f} of 255'
+        if passed and abs(moved) < 0.012:
+            detail += ' (a small change)'
+    return {'requirement': index, 'check': f'Measured: {what} {detail}', 'passed': passed, 'measured': True}
+
+
+def blur_checks(index, boxes, before, after):
+    """A background blur: fine detail outside the subject's boxes drops, and the middle of the
+    subject (away from its edge, which the soft mask touches) stays as it was."""
+    import numpy as np
+
+    def gray(img):
+        return np.asarray(img.convert('L').resize(before.size), dtype=np.float32) / 255
+
+    old, new = gray(before), gray(after)
+    height, width = old.shape
+    outside = np.ones_like(old, dtype=bool)
+    for x, y, w, h in boxes:
+        outside[round(y * height):round((y + h) * height), round(x * width):round((x + w) * width)] = False
+
+    def detail(img):
+        edges = np.abs(np.diff(img, axis=0))[:, :-1] + np.abs(np.diff(img, axis=1))[:-1, :]
+        return float(edges[outside[:-1, :-1]].mean()) if outside[:-1, :-1].any() else 0.0
+
+    checks = []
+    if outside.mean() > 0.05 and detail(old) > 0:
+        drop = 1 - detail(new) / detail(old)
+        checks.append({'requirement': index, 'check': f'Measured: background detail {-drop:+.0%}',
+                       'passed': drop > 0.1, 'measured': True})
+    moved = []
+    for box in boxes:
+        x0, y0, x1, y1 = _pixels(_core(box, 0.5), (width, height))
+        moved.append(float(np.abs(old[y0:y1, x0:x1] - new[y0:y1, x0:x1]).mean()))
+    change = max(moved) * 255
+    checks.append({'requirement': index, 'check': f'Measured: the subject stayed sharp (changed {change:.1f} of 255)',
+                   'passed': change < 3, 'measured': True})
+    return checks
 
 
 def measure(edits, regions, before, after, geometry_changed):
@@ -1518,6 +1681,14 @@ def measure(edits, regions, before, after, geometry_changed):
                 passed = new > old + 0.004 if edit['direction'] == 'increase' else new < old - 0.004
                 checks.append({'requirement': index, 'check': f'Measured: {family} saturation {old:.3f} → {new:.3f}',
                                'passed': passed, 'measured': True})
+            elif action in LOCAL_TONE and edit['target'] in ('object', 'main subject', 'area') and \
+                    originals.get(index) and not geometry_changed and edit['direction'] != 'none':
+                own = {region['label'] for region in regions if region['requirement'] == index}
+                others = [box for region in regions if region['label'] not in own
+                          for box in region.get('final', region['boxes'])]
+                checks.append(local_tone_check(index, edit, originals[index], before, after, others))
+            elif action == 'blur_background' and boxes and not geometry_changed:
+                checks += blur_checks(index, boxes, before, after)
             elif action == 'remove_object' and boxes and not geometry_changed:
                 score = max(removal_score(before, after, box) for box in boxes)
                 checks.append({'requirement': index, 'check': f'Measured: the area now matches its surroundings '

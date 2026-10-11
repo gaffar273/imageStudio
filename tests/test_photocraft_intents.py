@@ -38,6 +38,16 @@ class UnderstandingTests(unittest.TestCase):
         self.assertEqual(result['direction'], 'decrease')
         self.assertEqual(intents.amount(result, 20, -100, 100), -20)
 
+    def test_keep_clauses_protect_instead_of_editing(self):
+        prompt = 'Blur the background a little so I stand out. Keep me sharp.'
+        kept, notes = intents.normalize({'action': 'sharpen', 'quote': 'Keep me sharp', 'target': 'main subject'},
+                                        prompt)
+        self.assertEqual(kept['action'], 'keep')
+        self.assertTrue(notes)
+        edit_too, _ = intents.normalize({'action': 'temperature', 'quote': 'keep the colors but make them warmer'},
+                                        'keep the colors but make them warmer')
+        self.assertEqual(edit_too['action'], 'temperature')
+
     def test_title_keeps_the_exact_words_and_case(self):
         prompt = 'Add the title "Home Sweet Home" at the bottom'
         result, _ = intents.normalize({'action': 'add_text', 'quote': prompt, 'text': 'home sweet home'}, prompt)
@@ -105,9 +115,9 @@ class GeometryTests(unittest.TestCase):
             STATE, boxes={'the car': [[300, 300, 100, 100]]})
         self.assertFalse(blocking)
         commands = [step['command'] for step in steps]
-        self.assertLess(commands.index('select.object'), commands.index('image.crop'))
-        select = next(step for step in steps if step['command'] == 'select.object')
-        self.assertEqual(select['params']['rect'], [300, 300, 100, 100])
+        self.assertLess(commands.index('studio.select_outline'), commands.index('image.crop'))
+        select = next(step for step in steps if step['command'] == 'studio.select_outline')
+        self.assertEqual(select['params']['boxes'], [[300, 300, 100, 100]])
         self.assertEqual((canvas.width, canvas.height), (800, 800))
         self.assertEqual(regions[0]['final'], [[200 / 800, 300 / 800, 100 / 800, 100 / 800]])
 
@@ -132,7 +142,26 @@ class CompileTests(unittest.TestCase):
                                            edit('vignette', direction='decrease', strength='subtle')], STATE)
         develop = [step for step in steps if step['command'] == 'studio.develop']
         self.assertEqual(len(develop), 1)
-        self.assertEqual(develop[0]['params']['params'], {'clarity': 20.0, 'vignetteAmount': -12.5})
+        self.assertEqual(develop[0]['params']['params'], {'clarity': 20.0, 'vignetteAmount': -15.0})
+
+    def test_local_raw_edits_on_one_area_share_one_masked_copy(self):
+        # Two copies with the same mask would hide the lower one's edit completely.
+        steps, _, _, regions, *_ = intents.compile_edits(
+            [edit('temperature', target='object', object='the face', direction='increase'),
+             edit('texture', target='object', object='the face', direction='decrease', quote='smooth the skin'),
+             edit('shadows', target='object', object='the shirt', direction='increase')],
+            STATE, boxes={'the face': [[400, 100, 200, 250]], 'the shirt': [[300, 350, 400, 450]]})
+        local = [step for step in steps if step['command'] == 'studio.local_filter']
+        self.assertEqual(len(local), 2)
+        self.assertEqual(local[0]['params']['params'], {'temperature': 30.0, 'texture': -30.0})
+        self.assertEqual(local[0]['params']['label'], 'More temperature, less texture · the face')
+        self.assertEqual(local[0]['requirements'], [0, 1])
+        self.assertEqual(sorted(region['requirement'] for region in regions), [0, 1, 2])
+        self.assertEqual(len([step for step in steps if step['command'] == 'studio.select_outline']), 2)
+
+    def test_area_labels_name_the_area(self):
+        self.assertEqual(intents.short_label(edit('temperature', target='area', position='top',
+                                                  direction='increase')), 'More temperature · top area')
 
     def test_local_edits_are_masked_and_deselected(self):
         steps, *_ = intents.compile_edits([edit('saturation', target='sky', direction='increase')], STATE)
@@ -157,8 +186,8 @@ class CompileTests(unittest.TestCase):
         boxes = {'the mug': [[600, 300, 200, 200]], intents.FOREGROUND: [[100, 300, 200, 200], [600, 300, 200, 200]]}
         steps, *_ = intents.compile_edits([edit('remove_object', target='object', object='the mug'),
                                            edit('black_and_white', target='background')], STATE, boxes=boxes, ai=True)
-        kept = [step['params']['rect'] for step in steps if step['command'] == 'select.object']
-        self.assertEqual(kept, [[100, 300, 200, 200]])
+        kept = [step['params']['boxes'] for step in steps if step['command'] == 'studio.select_outline']
+        self.assertEqual(kept, [[[100, 300, 200, 200]]])
 
     def test_empty_object_selections_stop_the_edit(self):
         steps, *_ = intents.compile_edits([edit('recolor', target='object', object='the car', color='red')], STATE,
@@ -220,6 +249,78 @@ class MeasureTests(unittest.TestCase):
         self.assertTrue(intents.measure(edits, [], dark, light, False)[0]['passed'])
         self.assertFalse(intents.measure(edits, [], light, dark, False)[0]['passed'])
 
+    def test_local_warmth_is_measured_inside_the_area(self):
+        edits = [edit('temperature', target='object', object='the face', direction='increase')]
+        regions = [{'requirement': 0, 'label': 'the face', 'boxes': [[0.25, 0.25, 0.5, 0.5]]}]
+        before = self.picture((150, 110, 90))
+        warmer = self.picture((156, 110, 84))
+        good = intents.measure(edits, regions, before, warmer, False)
+        unchanged = intents.measure(edits, regions, before, before.copy(), False)
+        self.assertIs(good[0]['passed'], True, good)
+        self.assertIn('warmth', good[0]['check'])
+        self.assertEqual(unchanged[0]['check'], 'Measured: the face did not change')
+        self.assertFalse(unchanged[0]['passed'])
+
+    def test_local_shadow_lift_is_measured_on_the_dark_part(self):
+        edits = [edit('shadows', target='object', object='the shirt', direction='increase')]
+        regions = [{'requirement': 0, 'label': 'the shirt', 'boxes': [[0.25, 0.25, 0.5, 0.5]]}]
+        checks = intents.measure(edits, regions, self.picture((20, 25, 60)), self.picture((24, 30, 70)), False)
+        self.assertIs(checks[0]['passed'], True, checks)
+
+    def test_another_areas_edit_does_not_dilute_the_measurement(self):
+        # The face warms while the shirt around it cools; the face's box half overlaps the shirt's.
+        before = Image.new('RGB', (200, 100), (150, 110, 90))
+        after = before.copy()
+        ImageDraw.Draw(after).rectangle((0, 0, 199, 49), fill=(158, 110, 82))
+        ImageDraw.Draw(after).rectangle((0, 50, 199, 99), fill=(130, 110, 120))
+        edits = [edit('temperature', target='object', object='the face', direction='increase'),
+                 edit('temperature', target='object', object='the shirt', direction='decrease')]
+        regions = [{'requirement': 0, 'label': 'the face', 'boxes': [[0, 0, 1, 1]]},
+                   {'requirement': 1, 'label': 'the shirt', 'boxes': [[0, 0.5, 1, 0.5]]}]
+        checks = intents.measure(edits, regions, before, after, False)
+        self.assertIs(checks[0]['passed'], True, checks)
+
+    def test_outlines_become_lasso_rings_with_holes(self):
+        from image_studio.integrations.photocraft_macros import outline_rings
+
+        mask = Image.new('L', (200, 200), 0)
+        draw = ImageDraw.Draw(mask)
+        draw.rectangle((20, 20, 180, 180), fill=255)
+        draw.rectangle((70, 70, 130, 130), fill=0)  # the gap between an arm and the body
+        draw.rectangle((90, 90, 110, 110), fill=255)  # something inside that gap
+        import numpy as np
+
+        rings = outline_rings(np.asarray(mask) > 127, 2.0)
+        self.assertEqual([cut for _, cut in rings], [False, True, False])
+        xs = [x for x, _ in rings[0][0]]
+        self.assertEqual((min(xs), max(xs)), (40.0, 360.0))  # scaled to document pixels
+
+    def test_background_blur_is_measured(self):
+        sharp = Image.new('L', (200, 100), 0)
+        draw = ImageDraw.Draw(sharp)
+        for x in range(0, 200, 4):
+            draw.line((x, 0, x, 99), fill=255)  # fine stripes: detail everywhere
+        from PIL import ImageFilter
+
+        blurred = sharp.filter(ImageFilter.GaussianBlur(3))
+        blurred.paste(sharp.crop((60, 20, 140, 80)), (60, 20))  # the subject stays sharp
+        boxes = [[0.3, 0.2, 0.4, 0.6]]
+        good = intents.measure([edit('blur_background')], [{'requirement': 0, 'label': 'the man', 'boxes': boxes}],
+                               sharp.convert('RGB'), blurred.convert('RGB'), False)
+        self.assertEqual([c['passed'] for c in good], [True, True], good)
+        smeared = intents.measure([edit('blur_background')], [{'requirement': 0, 'label': 'the man', 'boxes': boxes}],
+                                  sharp.convert('RGB'), sharp.filter(ImageFilter.GaussianBlur(3)).convert('RGB'), False)
+        self.assertEqual([c['passed'] for c in smeared], [True, False], smeared)
+
+    def test_measurements_overrule_a_review_that_saw_nothing(self):
+        from image_studio.integrations.photocraft_workspace import trust_measurements
+
+        verdicts = [{'requirement': 0, 'verdict': 'not done', 'note': 'Identical.'},
+                    {'requirement': 1, 'verdict': 'not done', 'note': 'Identical.'}]
+        checks = [{'requirement': 0, 'check': 'Measured: …', 'passed': True, 'measured': True}]
+        result = trust_measurements(verdicts, checks)
+        self.assertEqual([v['verdict'] for v in result], ['unclear', 'not done'])
+
 
 class SpecTests(unittest.TestCase):
     def test_specs_become_typed_fields(self):
@@ -269,6 +370,65 @@ class EngineTests(unittest.TestCase):
         self.assertIn('Photo', names)
         checks = result['history'][-1]['checks']
         self.assertTrue(checks and all(check['passed'] for check in checks), checks)
+
+    def run_plan(self, edits):
+        data = self.ws.load(self.document['id'])
+        revision = data['history'][data['cursor']]['id']
+        with Image.open(self.ws.folder_for(self.document['id']) / f'{revision}.png') as image:
+            plan = self.ws.compile_plan(data, 'test', [intents.blank(e.pop('action'), **e) for e in edits],
+                                        [], [], [], image.copy(), 'manual')
+        self.assertFalse(plan['unresolved'])
+        return self.ws.apply(self.document['id'], revision, plan['steps'], 'test', lambda *a, **k: None,
+                             threading.Event(), plan)
+
+    def test_local_edits_on_one_area_join_one_layer_and_new_areas_go_on_top(self):
+        def copies(result):
+            return [layer for layer in result['state']['layers'] if layer['kind'] == 'Smart Object'
+                    and layer['hasMask']]
+
+        first = self.run_plan([{'action': 'temperature', 'target': 'area', 'position': 'bottom',
+                                'direction': 'increase'},
+                               {'action': 'texture', 'target': 'area', 'position': 'bottom', 'direction': 'decrease'}])
+        layers = copies(first)
+        self.assertEqual(len(layers), 1, layers)
+        self.assertEqual(layers[0]['smartFilters'][0]['params'], {'temperature': 30.0, 'texture': -30.0})
+        warmth = [c for c in first['history'][-1]['checks'] if 'warmth' in c['check']]
+        self.assertTrue(warmth and warmth[0]['passed'], first['history'][-1]['checks'])
+
+        # A later request for the same area adds to that layer instead of covering it.
+        second = self.run_plan([{'action': 'shadows', 'target': 'area', 'position': 'bottom',
+                                 'direction': 'increase'}])
+        layers = copies(second)
+        self.assertEqual(len(layers), 1, layers)
+        self.assertEqual(layers[0]['smartFilters'][0]['params']['shadows'], 40.0)
+        self.assertEqual(layers[0]['smartFilters'][0]['params']['temperature'], 30.0)
+
+        # A different area gets its own copy, above the earlier one so it is never hidden.
+        third = self.run_plan([{'action': 'temperature', 'target': 'area', 'position': 'top',
+                                'direction': 'decrease'}])
+        layers = copies(third)
+        self.assertEqual([layer['name'] for layer in layers],
+                         ['Less temperature · top area', layers[1]['name']])
+        self.assertIn('bottom area', layers[1]['name'])
+
+    def test_a_new_area_keeps_the_edits_beneath_it(self):
+        # The bottom half is warmed, then the center (which overlaps it) is brightened: the
+        # overlap must stay warm, not show the untouched photo again.
+        folder = self.ws.folder_for(self.document['id'])
+
+        def pixel(result, x, y):
+            with Image.open(folder / f'{result["history"][-1]["id"]}.png') as image:
+                return image.convert('RGB').getpixel((x, y))
+
+        original = Image.open(folder / f'{self.document["revision"]}.png').convert('RGB').getpixel((500, 550))
+        warm = self.run_plan([{'action': 'temperature', 'target': 'area', 'position': 'bottom',
+                               'direction': 'increase', 'strength': 'strong'}])
+        warmed = pixel(warm, 500, 550)
+        self.assertGreater(warmed[0] - warmed[2], original[0] - original[2] + 3)
+        bright = self.run_plan([{'action': 'shadows', 'target': 'area', 'position': 'center',
+                                 'direction': 'increase', 'strength': 'strong'}])
+        both = pixel(bright, 500, 550)
+        self.assertGreater(both[0] - both[2], original[0] - original[2] + 3, (original, warmed, both))
 
 
 if __name__ == '__main__':

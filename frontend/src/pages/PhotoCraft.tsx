@@ -35,7 +35,16 @@ import {
   SelectPanel,
   TextPanel,
 } from '../photocraft/ToolPanels';
-import type { Actions, Capabilities, CraftDocument, CraftJob, Edit, Plan } from '../photocraft/types';
+import type {
+  Actions,
+  AreaMark,
+  AreaTool,
+  Capabilities,
+  CraftDocument,
+  CraftJob,
+  Edit,
+  Plan,
+} from '../photocraft/types';
 import '../photocraft.css';
 
 interface Props {
@@ -94,12 +103,29 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   const [compare, setCompare] = useState(false);
   const [zoom, setZoom] = useState(0);
   const [highlight, setHighlight] = useState<number | null>(null);
+  const [areaEnabled, setAreaEnabled] = useState(false);
+  const [areaTool, setAreaTool] = useState<AreaTool>('brush');
+  const [marks, setMarks] = useState<AreaMark[]>([]);
+  const [brushSize, setBrushSize] = useState(0.03);
+  const [drawing, setDrawing] = useState(false);
   const [library, setLibrary] = useState(false);
   const [inspector, setInspector] = useState(true);
   const [menu, setMenu] = useState<'' | 'export' | 'new' | 'recent'>('');
   const uploadInput = useRef<HTMLInputElement>(null);
   const importedSource = useRef('');
   const busy = pending || job?.state === 'running';
+
+  useEffect(() => {
+    setMarks([]);
+    setDrawing(false);
+    setAreaEnabled(false);
+  }, [document?.id, document?.revision]);
+
+  function changeMarks(next: AreaMark[]) {
+    setMarks(next);
+    setPlan(null);
+    setHighlight(null);
+  }
 
   function remember(next: CraftDocument) {
     setDocument(next);
@@ -464,14 +490,40 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
           {tool === 'assistant' && (
             <AssistantPanel
               document={document}
-              busy={busy}
+              busy={busy || drawing}
               brain={!!capabilities?.brain}
               plan={plan}
-              onPlan={(prompt) => {
-                if (!document) return;
+              areaEnabled={areaEnabled}
+              areaAvailable={!!capabilities?.marked_area}
+              areaTool={areaTool}
+              markCount={marks.length}
+              brushSize={brushSize}
+              onAreaEnabled={(enabled) => {
+                setAreaEnabled(enabled);
+                setCompare(false);
                 setPlan(null);
                 setHighlight(null);
-                submit(`/photocraft/workspaces/${document.id}/plan`, { revision: document.revision, prompt });
+              }}
+              onAreaTool={(next) => {
+                setAreaTool(next);
+                setCompare(false);
+              }}
+              onBrushSize={setBrushSize}
+              onUndoMark={() => changeMarks(marks.slice(0, -1))}
+              onClearMarks={() => changeMarks([])}
+              onPlan={(prompt) => {
+                if (!document || drawing || (areaEnabled && !marks.length)) return;
+                if (areaEnabled && !capabilities?.marked_area) {
+                  error('Restart the studio to enable marked-area edits.');
+                  return;
+                }
+                setPlan(null);
+                setHighlight(null);
+                submit(`/photocraft/workspaces/${document.id}/plan`, {
+                  revision: document.revision,
+                  prompt,
+                  area: areaEnabled ? { marks } : null,
+                });
               }}
               onApply={(partial) => plan && operation({ plan_id: plan.id, partial })}
               onDiscard={() => setPlan(null)}
@@ -500,6 +552,11 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
             regions={regions}
             highlight={highlight}
             busy={busy}
+            marks={areaEnabled && tool === 'assistant' ? marks : []}
+            areaTool={areaEnabled && tool === 'assistant' ? areaTool : null}
+            brushSize={brushSize}
+            onMarks={changeMarks}
+            onDrawing={setDrawing}
             onOpen={() => uploadInput.current?.click()}
             onLibrary={() => setLibrary(true)}
             onDrop={upload}

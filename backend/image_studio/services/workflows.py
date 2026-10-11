@@ -23,7 +23,6 @@ from PIL import Image, ImageChops, ImageOps
 from image_studio.core.engine import (
     Cancelled,
     ImageEngine,
-    ROOT,
     WORK,
     DETAIL_DEFAULT,
     DETAIL_STRENGTH,
@@ -43,9 +42,7 @@ from image_studio.core.catalog import (
     REALISM_DEFAULT,
     KRITA,
 )
-
-
-IMAGES = ROOT / 'images'
+from image_studio.core.paths import IMAGES
 
 
 HISTORY_LIMIT = 30
@@ -58,7 +55,7 @@ lock = threading.Lock()
 
 
 def recent_images():
-    IMAGES.mkdir(exist_ok=True)
+    IMAGES.mkdir(parents=True, exist_ok=True)
     files = sorted(IMAGES.glob('*.png'), key=lambda path: path.stat().st_mtime, reverse=True)
     # Called whenever a new picture is saved: image search reads it now, not at the next search.
     search.index_new_images()
@@ -798,18 +795,14 @@ def krita_running():
 
 def launch_krita(path=None):
     """Start Krita with the AI panel installed (and open `path`)."""
-    import subprocess
+    from image_studio.core.processes import launch_detached
     from image_studio.integrations import install_krita_plugin
 
     if not KRITA.exists():
         raise ValueError('Krita is not installed in the work folder.')
     # Krita rewrites its settings when it exits, so the panel is installed while it is closed.
     install_krita_plugin.main()
-    subprocess.Popen(
-        [str(KRITA)] + ([str(path)] if path else []),
-        cwd=str(KRITA.parent),
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-    )
+    launch_detached([str(KRITA)] + ([str(path)] if path else []), cwd=str(KRITA.parent))
 
 
 def open_in_krita(path):

@@ -11,7 +11,6 @@ import time
 from pathlib import Path
 from PIL import Image
 from image_studio.core.catalog import (
-    ROOT,
     WORK,
     MODELS,
     SIZES,
@@ -20,6 +19,7 @@ from image_studio.core.catalog import (
     EDIT_QUALITY,
     REALISM_LORA,
 )
+from image_studio.core.paths import IMAGES
 
 # The personal style LoRA, trained from the Library's favorites (services/personal.py).
 PERSONAL_LORA = WORK / 'personal-lora' / 'final'
@@ -30,8 +30,8 @@ os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '120')
 
 
 def new_output(seed, folder=None):
-    folder = ROOT / 'images' if folder is None else Path(folder)
-    folder.mkdir(exist_ok=True)
+    folder = IMAGES if folder is None else Path(folder)
+    folder.mkdir(parents=True, exist_ok=True)
     return folder / (time.strftime('%Y%m%d-%H%M%S') + f'-{seed}-{time.time_ns() % 1000000:06d}.png')
 
 

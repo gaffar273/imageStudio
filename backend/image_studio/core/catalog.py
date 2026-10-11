@@ -1,5 +1,7 @@
 """Available local models and measured-size generation presets."""
 
+import os
+
 from image_studio.core.paths import ROOT as ROOT, WORK
 
 MODELS = {
@@ -89,7 +91,7 @@ SEARCH = {
     'repo': 'google/embeddinggemma-2',
     'revision': '914f7f89142e33e77833254d9c9b90c3cef7303b',
     'folder': WORK / 'image-search',
-    'python': WORK / 'search-env' / 'Scripts' / 'python.exe',
+    'python': WORK / 'search-env' / ('Scripts/python.exe' if os.name == 'nt' else 'bin/python'),
     'index': WORK / 'image-search-index',
 }
 
