@@ -1,0 +1,8 @@
+# Image search environment (../../work/search-env), separate from the image models'
+# environment: EmbeddingGemma 2 needs transformers 5. CPU PyTorch keeps the GPU free.
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch==2.14.1+cpu
+transformers==5.19.0
+sentence-transformers[image]==6.1.0
+pillow==12.3.0
+numpy==2.5.3

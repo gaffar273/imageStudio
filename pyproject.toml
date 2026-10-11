@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "local-image-studio"
+version = "2.0.0"
+description = "A React creative workspace powered by local image models"
+requires-python = ">=3.10"
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "pillow>=11,<12", "psutil>=5.9", "python-multipart>=0.0.18"]
+
+[project.optional-dependencies]
+dev = ["httpx>=0.27", "ruff>=0.9"]
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+
+[project.scripts]
+image-studio = "image_studio.cli.manage:main"
+
+[tool.ruff]
+line-length = 110
+
+[tool.ruff.format]
+quote-style = "single"

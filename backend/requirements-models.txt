@@ -1,0 +1,12 @@
+# Install inside the project environment with CUDA PyTorch already available.
+diffusers==0.37.1
+transformers==4.57.6
+accelerate==1.15.0
+safetensors==0.8.0
+huggingface-hub==0.36.2
+Pillow==11.3.0
+gguf==0.19.0
+sentencepiece==0.2.2
+protobuf==7.36.1
+ultralytics==8.4.174
+peft==0.21.2

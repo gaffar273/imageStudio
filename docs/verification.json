@@ -1,0 +1,31 @@
+{
+  "version": "2.0.0",
+  "date": "2026-10-08",
+  "frontend_build": "passed",
+  "backend_tests": {
+    "passed": 10
+  },
+  "browser_tests": {
+    "passed": 3,
+    "browser": "Microsoft Edge",
+    "viewports": [
+      "1440x1050",
+      "390x844"
+    ]
+  },
+  "python_unused_imports_and_names": "passed",
+  "launcher_stop_start": "passed",
+  "real_inference": {
+    "model": "SDXL Turbo",
+    "image": "20261008-231505-271828-309700.png",
+    "seed": 271828,
+    "result": "saved PNG and JSON successfully"
+  },
+  "screenshots": [
+    "screenshots/react-studio-desktop.png",
+    "screenshots/react-studio-mobile.png"
+  ],
+  "limits": [
+    "Full model-quality evaluation, FLUX editing inference and live Krita desktop round-trip were not rerun as part of this UI migration."
+  ]
+}

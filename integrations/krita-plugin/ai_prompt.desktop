@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Service
+ServiceTypes=Krita/PythonPlugin
+X-KDE-Library=ai_prompt
+X-Python-2-Compatible=false
+X-Krita-Manual=Manual.html
+Name=AI (Local Image Studio)
+Comment=Edit pictures by prompt with Krita's tools and Image Studio's AI on this computer, and let Image Studio's browser app drive Krita.
