@@ -1,8 +1,8 @@
 """Copy the AI Prompt panel into Krita's plugin folder and switch it on.
 
-Krita reads Python plugins from %APPDATA%\\krita\\pykrita and remembers which are
-enabled in %LOCALAPPDATA%\\kritarc. Close Krita before running this; it rewrites
-kritarc when it exits."""
+Krita reads Python plugins from %APPDATA%\\krita\\pykrita (Linux: ~/.local/share/krita/pykrita)
+and remembers which are enabled in %LOCALAPPDATA%\\kritarc (Linux: ~/.config/kritarc). Close
+Krita before running this; it rewrites kritarc when it exits."""
 
 import os
 import shutil
@@ -11,8 +11,12 @@ from pathlib import Path
 from image_studio.core.paths import ROOT
 
 SOURCE = ROOT / 'integrations' / 'krita-plugin'
-PYKRITA = Path(os.environ['APPDATA']) / 'krita' / 'pykrita'
-KRITARC = Path(os.environ['LOCALAPPDATA']) / 'kritarc'
+if os.name == 'nt':
+    PYKRITA = Path(os.environ.get('APPDATA') or Path.home() / 'AppData' / 'Roaming') / 'krita' / 'pykrita'
+    KRITARC = Path(os.environ.get('LOCALAPPDATA') or Path.home() / 'AppData' / 'Local') / 'kritarc'
+else:
+    PYKRITA = Path(os.environ.get('XDG_DATA_HOME') or Path.home() / '.local' / 'share') / 'krita' / 'pykrita'
+    KRITARC = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config') / 'kritarc'
 SETTING = 'enable_ai_prompt=true'
 
 
@@ -25,6 +29,7 @@ def enable():
         lines.insert(lines.index('[python]') + 1, SETTING)
     else:
         lines += ['', '[python]', SETTING]
+    KRITARC.parent.mkdir(parents=True, exist_ok=True)
     KRITARC.write_text('\n'.join(lines) + '\n', encoding='utf-8')
 
 

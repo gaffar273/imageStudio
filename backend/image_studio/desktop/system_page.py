@@ -184,7 +184,7 @@ class SystemPage(QWidget):
 
     def show_engine(self, state, message):
         names = {'ready': ('Running', ''), 'starting': ('Starting', 'warn'), 'failed': ('Stopped', 'off'),
-                 'stopped': ('Stopped', 'off')}
+                 'stopped': ('Stopped', 'off'), 'setup': ('Not set up', 'warn')}
         name, tone = names.get(state, (state, 'off'))
         self.engine_badge.setText(name)
         self.engine_badge.setProperty('tone', tone)

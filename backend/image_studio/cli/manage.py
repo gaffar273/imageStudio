@@ -30,24 +30,23 @@ def running_process():
 
 def start_krita():
     """Start Krita with the latest AI panel (installed while Krita is closed)."""
-    from image_studio.core.catalog import KRITA
+    from image_studio.core.catalog import krita_executable
 
-    if not KRITA.exists():
-        print('Krita is not installed in the work folder.')
+    krita = krita_executable()
+    if krita is None:
+        print('Krita is not installed. Get it free from krita.org.')
         return
     if any(
-        (process.info.get('name') or '').lower() == 'krita.exe' for process in psutil.process_iter(['name'])
+        (process.info.get('name') or '').lower() in ('krita.exe', 'krita')
+        for process in psutil.process_iter(['name'])
     ):
         print('Krita is already open.')
         return
+    from image_studio.core.processes import launch_detached
     from image_studio.integrations import install_krita_plugin
 
     install_krita_plugin.main()
-    subprocess.Popen(
-        [str(KRITA)],
-        cwd=str(KRITA.parent),
-        creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
-    )
+    launch_detached([str(krita)], cwd=str(krita.parent))
     print('Starting Krita...')
 
 
@@ -61,7 +60,9 @@ def main():
     existing = running_process()
     if args.stop:
         if existing:
-            children = existing.children(recursive=True)
+            from image_studio.core.processes import own_family
+
+            children = own_family(existing)[1:]  # Krita and PhotoCraft stay open
             for child in children:
                 child.terminate()
             existing.terminate()

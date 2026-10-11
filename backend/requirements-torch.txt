@@ -1,0 +1,5 @@
+# PyTorch with CUDA 12.8 for the engine, the build the studio is tested with (it also runs
+# RTX 50-series cards). Installed first, from PyTorch's own index, by cli/setup_engine.py.
+--index-url https://download.pytorch.org/whl/cu128
+torch==2.11.0+cu128
+torchvision==0.26.0+cu128

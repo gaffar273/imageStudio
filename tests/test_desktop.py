@@ -974,3 +974,407 @@ class PhotoCraftScreenTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class KritaEngineTests(unittest.TestCase):
+    def test_krita_is_found_where_it_is_installed(self):
+        from image_studio.core import catalog
+
+        with tempfile.TemporaryDirectory() as folder:
+            program = Path(folder) / 'krita.exe'
+            program.write_bytes(b'')
+            with patch.dict(os.environ, {'IMAGE_STUDIO_KRITA': str(program)}):
+                self.assertEqual(catalog.krita_executable(), program)
+            with patch.dict(os.environ, {'IMAGE_STUDIO_KRITA': str(Path(folder) / 'missing.exe')}):
+                self.assertIsNone(catalog.krita_executable())  # an override is never second-guessed
+            with patch.dict(os.environ, {'ProgramFiles': folder}), patch.object(catalog, 'KRITA', Path(folder) / 'x'), \
+                    patch.object(catalog.shutil, 'which', return_value=None):
+                os.environ.pop('IMAGE_STUDIO_KRITA', None)
+                installed = Path(folder) / 'Krita (x64)' / 'bin' / 'krita.exe'
+                installed.parent.mkdir(parents=True)
+                installed.write_bytes(b'')
+                if os.name == 'nt':
+                    self.assertEqual(catalog.krita_executable(), installed)
+
+    def test_stopping_the_engine_leaves_krita_and_photocraft_open(self):
+        from image_studio.core import processes
+
+        class Stand:
+            def __init__(self, name, *children):
+                self.process_name, self.kids = name, list(children)
+
+            def name(self):
+                return self.process_name
+
+            def children(self):
+                return self.kids
+
+        cli = Stand('photocraft-cli.exe')
+        brain = Stand('llama-server.exe')
+        engine = Stand('python.exe', Stand('krita.exe', Stand('python.exe')), Stand('photocraft.exe'), cli, brain)
+        self.assertEqual(processes.own_family(engine), [engine, cli, brain])
+
+    def test_without_krita_the_studio_says_where_to_get_it(self):
+        with patch.object(workflows, 'krita_executable', return_value=None), \
+                patch('image_studio.integrations.install_krita_plugin.main') as install:
+            with self.assertRaisesRegex(ValueError, 'krita.org'):
+                workflows.launch_krita()
+        install.assert_not_called()
+        client = TestClient(app)
+        with patch('image_studio.api.routes.krita_executable', return_value=None):
+            config = client.get('/api/config').json()
+        self.assertIs(config['krita'], False)
+        for key in ('brain', 'segment', 'face_model'):
+            self.assertIn(key, config)
+
+
+@unittest.skipUnless(HAS_QT, 'PySide6 is not installed')
+class InstallRulesTests(unittest.TestCase):
+    def test_download_progress_is_read_from_the_progress_bar(self):
+        from image_studio.desktop import installs
+
+        output = ('Downloading SG161222/RealVisXL_V5.0 (about 6.94 GB).\n'
+                  'unet/model.fp16.safetensors:  12%|#2        | 0.62G/5.14G [00:20<02:30, 30.1MB/s]\r'
+                  'unet/model.fp16.safetensors:  45%|####5     | 2.31G/5.14G [01:23<01:40, 28.1MB/s]\r')
+        line = installs.last_line(output)
+        self.assertEqual(installs.progress_of(line),
+                         ('unet/model.fp16.safetensors · 2.31G/5.14G · 28.1MB/s', 45))
+        self.assertEqual(installs.progress_of('  0%|          | 0.00/5.14G [00:00<?, ?B/s]'),
+                         ('Downloading · 0.00/5.14G', 0))
+        self.assertEqual(installs.progress_of('Converting the text encoder to 8-bit storage...'),
+                         ('Converting the text encoder to 8-bit storage...', None))
+
+    def test_steps_already_done_are_skipped(self):
+        from image_studio.desktop import installs
+
+        with tempfile.TemporaryDirectory() as folder:
+            faces = installs.BY_KEY['faces']
+            self.assertEqual(len(installs.plan(faces, {}, folder)), 2)
+            remaining = installs.plan(faces, dict(face_model=True), folder)
+            self.assertEqual([step.gpu for step in remaining], [True])  # only the portraits are left
+            search = installs.BY_KEY['search']
+            steps = installs.plan(search, {}, folder)
+            self.assertEqual(steps[0].args, ['-m', 'venv', str(Path(folder) / 'search-env')])
+            self.assertTrue(steps[1].args[-1].endswith('requirements-search.txt'))
+            python = installs.search_python(folder)
+            python.parent.mkdir(parents=True)
+            python.write_bytes(b'')
+            self.assertEqual(len(installs.plan(search, {}, folder)), 2)  # the environment is there already
+
+    def test_every_part_says_whether_it_is_installed(self):
+        from image_studio.desktop import installs
+
+        ready = dict(CONFIG, editing=True, assistant=True, brain=True, segment=True, repair=True, search=True,
+                     references=True)
+        ready['models'] = [dict(model, ready=True) for model in CONFIG['models']]
+        for part in installs.PARTS:
+            with self.subTest(part=part.key):
+                self.assertTrue(part.ready(ready))
+                self.assertFalse(part.ready(dict(models=[])))
+                self.assertTrue(part.steps and part.page.startswith('https://'))
+
+    def run_steps(self, *codes):
+        """Run an Installer over python -c steps; returns its progress texts and how it finished."""
+        from PySide6.QtCore import QCoreApplication
+        from image_studio.desktop import installs
+
+        desktop()
+        installer = installs.Installer()
+        texts, endings = [], []
+        installer.progress.connect(lambda key, text, percent: texts.append((text, percent)))
+        installer.finished.connect(lambda key, ok, message: endings.append((ok, message)))
+        part = installs.Part('test', 'Test', '', 0, '', 'https://example.org', lambda config: False,
+                             steps=[installs.Step('Step', ['-c', code]) for code in codes])
+        with tempfile.TemporaryDirectory() as folder:
+            installer.start(part, {}, folder)
+            deadline = __import__('time').monotonic() + 30
+            while not endings and not installer.retry_timer.isActive() and __import__('time').monotonic() < deadline:
+                QCoreApplication.processEvents()
+            if installer.retry_timer.isActive():
+                installer.cancel()
+        return installer, texts, endings
+
+    def test_steps_run_in_order_and_report_progress(self):
+        bar = 'print("model.gguf:  50%|#####     | 1.00G/2.00G [00:01<00:01, 9.0MB/s]")'
+        installer, texts, endings = self.run_steps(bar, 'print("done")')
+        self.assertEqual(endings, [(True, 'Installed.')])
+        self.assertIn(('model.gguf · 1.00G/2.00G · 9.0MB/s', 50), texts)
+        self.assertIn(('Step (2 of 2)…', None), texts)
+        self.assertFalse(installer.running)
+
+    def test_a_dropped_download_is_retried_and_a_licence_stops_it(self):
+        from image_studio.desktop import installs
+
+        _, texts, endings = self.run_steps('import sys; sys.exit(1)')
+        self.assertTrue(any(text.startswith('Connection dropped') for text, _ in texts))
+        self.assertEqual(endings, [(False, 'Stopped. Install again to resume where it stopped.')])
+        _, _, endings = self.run_steps(f'import sys; print("needs a {installs.GATED}"); sys.exit(1)')
+        self.assertEqual(endings, [(False, installs.GATED)])
+
+    def test_a_step_that_cannot_succeed_is_not_retried(self):
+        from image_studio.desktop import installs
+
+        _, texts, endings = self.run_steps(f'import sys; print("No matching wheel"); sys.exit({installs.FINAL})')
+        self.assertFalse(any(text.startswith('Connection dropped') for text, _ in texts))
+        self.assertEqual(endings, [(False, 'No matching wheel')])
+
+    def test_the_engine_is_set_up_by_the_apps_own_python(self):
+        from image_studio.desktop import installs
+
+        steps = installs.plan(installs.ENGINE, {}, tempfile.gettempdir())
+        self.assertEqual([(step.python, step.args) for step in steps],
+                         [('app', ['-m', 'image_studio.cli.setup_engine'])])
+        self.assertIs(installs.BY_KEY['engine'], installs.ENGINE)
+        self.assertNotIn(installs.ENGINE, installs.PARTS)  # its own card, above the models
+
+
+KRITA_DOCUMENT = dict(
+    name='import-' + 'a' * 32 + '.png', width=800, height=600, selection=True,
+    layers=[dict(name='Warm light', visible=True, active=True, depth=1),
+            dict(name='Background', visible=False, active=False, depth=0)],
+)
+
+
+@unittest.skipUnless(HAS_QT, 'PySide6 is not installed')
+class KritaScreenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.window = desktop()
+
+    def setUp(self):
+        self.page = page = self.window.krita
+        page.poller.stop()
+        page.ready, page.lost, page.sending = True, False, False
+        page.prompt.clear()
+        page.preview.set_pixmap(None)
+        page.preview_version = None
+        page.configured(dict(CONFIG, krita=True))
+        page.got_state(dict(connected=False, state=None, events=[], preview=False, preview_version=0))
+
+    def connect(self, version=1, **document):
+        fetched = []
+        with patch.object(self.page.client, 'bytes', side_effect=lambda *args, **kwargs: fetched.append(args)):
+            self.page.got_state(dict(connected=True, state=dict(KRITA_DOCUMENT, **document), preview=True,
+                                     preview_version=version, events=[dict(kind='done', text='Grade applied')]))
+        return fetched
+
+    def post(self, action):
+        posted = []
+        with patch.object(self.page.client, 'post', side_effect=lambda *args, **kwargs: posted.append(args)):
+            action()
+        return posted
+
+    def test_without_krita_it_offers_the_download(self):
+        page = self.page
+        page.configured(dict(CONFIG, krita=False))
+        self.assertFalse(page.get_krita.isHidden())
+        self.assertFalse(page.launch.isEnabled())
+        self.assertFalse(page.open_file.isEnabled())
+        self.assertIn('not installed', page.connection.text())
+
+    def test_follows_the_live_canvas(self):
+        page = self.page
+        self.assertEqual(page.title.text(), 'Start with an image')
+        self.assertFalse(page.send.isEnabled())
+        fetched = self.connect()
+        self.assertEqual([args[0] for args in fetched], ['/api/krita/preview?v=1'])
+        fetched[0][1](png(80, 60)[1])
+        self.assertIs(page.stage.currentWidget(), page.preview)
+        self.assertEqual(page.title.text(), 'Imported image')
+        self.assertEqual(page.dimensions.text(), '800 × 600')
+        self.assertFalse(page.selection.isHidden())
+        self.assertEqual(page.layer_count.text(), '2')
+        self.assertIn('Grade applied', page.activity.header.text())
+        self.assertEqual(self.connect(), [])  # the same picture is not fetched again
+        self.assertEqual(len(self.connect(version=2)), 1)
+        page.poll_failed('timeout')
+        self.assertIn('Connection lost', page.connection.text())
+        self.assertFalse(page.undo.isEnabled())
+
+    def test_sending_an_edit(self):
+        page = self.page
+        self.connect()
+        page.prompt.setPlainText('  make it warmer ')
+        self.assertTrue(page.send.isEnabled())
+        posted = self.post(page.send_prompt)
+        self.assertEqual(posted[0][:2], ('/api/krita', dict(action='prompt', text='make it warmer')))
+        self.assertFalse(page.send.isEnabled())  # one command at a time
+        with patch.object(page, 'poll'):
+            posted[0][2](dict(message='Sent to Krita.'))
+        self.assertEqual(page.prompt.toPlainText(), '')
+        self.assertEqual(self.post(lambda: page.command('undo'))[0][1], dict(action='undo'))
+
+    def test_opening_pictures(self):
+        page = self.page
+        posted = self.post(lambda: page.open_item(dict(name='a.png', metadata=dict(prompt='A fox'))))
+        self.assertEqual(posted[0][1], dict(action='open', image='a.png'))
+        page.sending = False
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / 'photo.png'
+            path.write_bytes(png(40, 30)[1])
+            posted = []
+            with patch.object(page.client, 'post', side_effect=lambda *args, **kwargs: posted.append(args)):
+                page.import_file(str(path))
+                deadline = __import__('time').monotonic() + 10
+                while not posted and __import__('time').monotonic() < deadline:
+                    self.app.processEvents()
+        self.assertEqual(posted[0][1]['action'], 'import')
+        self.assertTrue(posted[0][1]['image'].startswith('data:image/png;base64,'))
+
+
+LEARNED = dict(
+    words=[dict(phrase='make it pop', means='more contrast', source='taught', used=1)],
+    strength={'grade': 0.8},
+    favorites=7,
+    profile=dict(model='accurate', size='832 × 1216', finish='Film', realism=0.4),
+    personal=dict(ready=False, state='idle', message='', progress=0, favorites=7, minimum=10, trained_at=None,
+                  trained_on=0, changed=7, nightly=True, minutes=25),
+)
+
+
+@unittest.skipUnless(HAS_QT, 'PySide6 is not installed')
+class SettingsScreenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.window = desktop()
+
+    def setUp(self):
+        self.page = page = self.window.studio_settings
+        page.ready = True
+        page.models_dir = tempfile.gettempdir()
+        page.messages.clear()
+        page.configured(dict(CONFIG))
+        page.got_learned(json.loads(json.dumps(LEARNED)))
+
+    def post(self, action):
+        posted = []
+        with patch.object(self.page.client, 'post', side_effect=lambda *args, **kwargs: posted.append(args)):
+            action()
+        return posted
+
+    def test_what_was_learned(self):
+        page = self.page
+        self.assertIn('Mark 3 more', page.style_text.text())
+        self.assertFalse(page.train.isEnabled())
+        self.assertTrue(page.nightly.isChecked())
+        self.assertIn('Accurate · 832 × 1216 · Film finish · realism 0.4', page.usual_text.text())
+        self.assertIn('light and color looks: 80% of normal', page.strength_text.text())
+        self.assertEqual(page.words.count(), 1)
+        posted = self.post(lambda: page.words.itemAt(0).widget().findChild(type(page.train)).click())
+        self.assertEqual(posted[0][1], dict(action='forget', phrase='make it pop'))
+
+    def test_training_is_followed_until_it_ends(self):
+        page = self.page
+        learned = json.loads(json.dumps(LEARNED))
+        learned['personal'].update(state='training', progress=0.5, message='Step 40 of 80', favorites=12)
+        page.got_learned(learned)
+        self.assertTrue(page.poll.isActive())
+        self.assertEqual(page.style_bar.value(), 50)
+        self.assertEqual(page.train.text(), 'Learning…')
+        learned['personal'].update(state='idle', ready=True, trained_at=1_790_000_000, trained_on=12, changed=0)
+        page.got_learned(learned)
+        self.assertFalse(page.poll.isActive())
+        self.assertIn('Learned from 12 favorites', page.style_text.text())
+        self.assertEqual(page.train.text(), 'Retrain now')
+
+    def test_teaching_a_word(self):
+        page = self.page
+        page.phrase.setText('mo')
+        page.means.setText('moody')
+        self.assertFalse(page.teach_button.isEnabled())  # at least three letters
+        page.phrase.setText('moodier')
+        posted = self.post(page.teach)
+        self.assertEqual(posted[0][1], dict(action='teach', phrase='moodier', means='moody'))
+        posted[0][2](json.loads(json.dumps(LEARNED)))
+        self.assertEqual(page.phrase.text(), '')
+
+    def test_usual_settings_load_into_create(self):
+        create = self.window.create
+        create.configured(dict(CONFIG, sizes=CONFIG['sizes'] + [dict(id='Tall · 832 × 1216', width=832,
+                                                                        height=1216)]))
+        self.window.use_profile(LEARNED['profile'])
+        self.assertIs(self.window.pages.currentWidget(), create)
+        self.assertEqual(create.settings['model'], 'accurate')
+        self.assertEqual(create.settings['size'], 'Tall · 832 × 1216')
+        self.assertEqual(create.settings['photo_finish'], 'Film')
+        self.assertEqual(create.settings['realism'], 0.4)
+
+    def test_models_show_what_is_installed(self):
+        page = self.page
+        rows = page.rows
+        self.assertEqual(rows['realistic'].badge.text(), 'Installed')
+        self.assertTrue(rows['realistic'].install.isHidden())
+        self.assertEqual(rows['turbo'].badge.text(), 'Not installed')
+        self.assertTrue(rows['turbo'].install.isEnabled())
+        page.configured(dict(CONFIG, references=False, models=[dict(id='realistic', label='', ready=False)]))
+        self.assertFalse(rows['faces'].install.isEnabled())  # it paints with the realistic model
+        self.assertIn('Realistic', rows['faces'].message.text())
+        self.assertEqual(page.apps['krita'].text(), 'Not found')
+
+    def test_installing_and_a_licence_to_accept(self):
+        from image_studio.desktop import settings_page
+
+        page = self.page
+        with patch.object(page.installer, 'start') as start, patch.object(settings_page.installs, 'free_gb',
+                                                                         return_value=500):
+            page.install('turbo')
+        start.assert_called_once()
+        self.assertEqual(start.call_args[0][0].key, 'turbo')
+        with patch.object(settings_page.TokenDialog, 'exec', return_value=0) as asked:
+            page.install_finished('kontext', False, settings_page.installs.GATED)
+        asked.assert_called_once()
+        self.assertIn('licence', page.rows['kontext'].message.text())
+        with patch.object(page, 'installed') as installed, patch.object(page, 'refresh'):
+            page.install_finished('turbo', True, 'Installed.')
+        installed.assert_called_once()
+
+    def test_an_installed_copy_sets_up_its_engine_first(self):
+        from image_studio.desktop import settings_page
+
+        page = self.page
+        self.assertTrue(page.engine_frame.isHidden())  # a source checkout runs on its own Python
+        try:
+            with patch.object(settings_page.paths, 'INSTALLED', True):
+                page.engine_status, page.ready, page.nvidia = 'missing', False, None
+                page.show_parts()
+                self.assertFalse(page.engine_frame.isHidden())
+                self.assertEqual(page.engine_row.badge.text(), 'Not installed')
+                self.assertTrue(page.engine_row.install.isEnabled())
+                self.assertEqual(page.rows['turbo'].install.toolTip(), 'Set up the engine first.')
+                page.nvidia = []
+                page.show_parts()
+                self.assertFalse(page.engine_row.install.isEnabled())
+                self.assertIn('NVIDIA', page.engine_row.message.text())
+                page.nvidia = [dict(name='RTX 4070')]
+                page.engine_status = 'update'
+                page.show_parts()
+                self.assertIn('An update changed', page.engine_row.message.text())
+                with patch.object(page.installer, 'start') as start, patch.object(settings_page.installs, 'free_gb',
+                                                                                 return_value=500):
+                    page.install_engine()
+                self.assertIs(start.call_args[0][0], settings_page.installs.ENGINE)
+                page.progress.pop('engine', None)
+                started = []
+                with patch.object(page, 'start_engine', lambda: started.append(True)), \
+                        patch.object(settings_page.engine_env, 'status', return_value='ready'):
+                    page.install_finished('engine', True, 'Installed.')
+                self.assertEqual(started, [True])
+                self.assertEqual(page.engine_row.badge.text(), 'Installed')
+        finally:
+            page.engine_status, page.ready = 'ready', True
+            page.show_parts()
+
+    def test_the_window_opens_settings_when_the_engine_needs_setting_up(self):
+        from contextlib import ExitStack
+
+        window = self.window
+        window.navigate('create')
+        with ExitStack() as stack:
+            for page in (window.library, window.create, window.edit, window.photocraft, window.krita,
+                         window.studio_settings):
+                stack.enter_context(patch.object(page, 'engine_gone'))
+                stack.enter_context(patch.object(page, 'engine_ready'))
+            window.engine_changed('setup', 'Set up the engine in Studio settings to start creating.')
+            self.assertIs(window.pages.currentWidget(), window.studio_settings)
+            self.assertIn('not set up', window.library.empty_title.text())
+            window.engine_changed('ready', 'Engine ready.')

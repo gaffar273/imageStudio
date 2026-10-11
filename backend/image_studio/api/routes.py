@@ -16,10 +16,11 @@ from image_studio.api.schemas import (
     MemoryRequest,
     PersonalLoraRequest,
 )
-from image_studio.core.catalog import MODELS, SIZES, DEFAULT_NEGATIVE, KONTEXT, EDIT_QUALITY
+from image_studio.core.catalog import MODELS, SIZES, DEFAULT_NEGATIVE, KONTEXT, EDIT_QUALITY, krita_executable
 from image_studio.core.paths import CACHE, IMAGES, WORK
 from image_studio.services.runtime import render_session
 from image_studio.services import workflows, library, assistant, search, repair, faces, memory, personal
+from image_studio.services import brain, segment
 from image_studio.services.jobs import store, BusyError
 from image_studio.integrations import bridge, photocraft
 
@@ -78,6 +79,10 @@ def config():
         personal_lora=personal.ready(),
         editing=(KONTEXT['folder'] / 'model_index.json').exists(),
         photocraft=photocraft.available(),
+        krita=krita_executable() is not None,
+        brain=brain.available(),
+        segment=segment.available(),
+        face_model=faces.downloaded(),
         active_job=store.active,
     )
 

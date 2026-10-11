@@ -40,12 +40,13 @@ from image_studio.core.catalog import (
     EDIT_QUALITY,
     REALISM_LORA,
     REALISM_DEFAULT,
-    KRITA,
+    krita_executable,
 )
 from image_studio.core.paths import IMAGES
 
 
 HISTORY_LIMIT = 30
+KRITA_MISSING = 'Krita is not installed. Get it free from krita.org, then try again.'
 
 
 engine = ImageEngine()
@@ -788,7 +789,7 @@ def krita_running():
     import psutil
 
     for process in psutil.process_iter(['name']):
-        if (process.info.get('name') or '').lower() == 'krita.exe':
+        if (process.info.get('name') or '').lower() in ('krita.exe', 'krita'):
             return True
     return False
 
@@ -798,11 +799,12 @@ def launch_krita(path=None):
     from image_studio.core.processes import launch_detached
     from image_studio.integrations import install_krita_plugin
 
-    if not KRITA.exists():
-        raise ValueError('Krita is not installed in the work folder.')
+    krita = krita_executable()
+    if krita is None:
+        raise ValueError(KRITA_MISSING)
     # Krita rewrites its settings when it exits, so the panel is installed while it is closed.
     install_krita_plugin.main()
-    launch_detached([str(KRITA)] + ([str(path)] if path else []), cwd=str(KRITA.parent))
+    launch_detached([str(krita)] + ([str(path)] if path else []), cwd=str(krita.parent))
 
 
 def open_in_krita(path):

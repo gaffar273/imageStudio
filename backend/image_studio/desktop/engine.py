@@ -4,7 +4,8 @@ The engine is the same local server the web version uses, run as a child process
 models live outside the window's process (a crash in one never takes down the other).
 The app starts it when it opens and stops it when it closes, which frees the GPU. An
 engine that is already running (started by the web launcher) is used as it is and left
-running afterwards.
+running afterwards. An installed copy whose engine is not set up yet waits in the 'setup'
+state until Studio settings installs it.
 """
 
 import json
@@ -13,13 +14,14 @@ import socket
 import subprocess
 import sys
 import threading
-from pathlib import Path
 
 import psutil
 from PySide6.QtCore import QObject, QTimer, QUrl, Signal
 from PySide6.QtNetwork import QHttpMultiPart, QHttpPart, QNetworkAccessManager, QNetworkReply, QNetworkRequest
 
-from image_studio.core import paths
+from image_studio.core import engine_env, paths
+from image_studio.core.engine_env import engine_python
+from image_studio.core.processes import own_family
 
 TITLE = 'Local Image Studio'
 DEFAULT_PORT = 7860
@@ -133,16 +135,6 @@ def in_background(work, done):
     threading.Thread(target=run, daemon=True).start()
 
 
-def engine_python():
-    """The interpreter for the engine; python.exe rather than pythonw.exe when the app runs windowless."""
-    executable = Path(sys.executable)
-    if executable.stem.lower() == 'pythonw':
-        console = executable.with_name('python.exe')
-        if console.exists():
-            return str(console)
-    return str(executable)
-
-
 def port_free(port):
     with socket.socket() as probe:
         try:
@@ -247,6 +239,11 @@ class Engine(QObject):
         return int(paths.load_settings().get('port') or DEFAULT_PORT)
 
     def start(self):
+        if engine_env.needs_setup():
+            missing = engine_env.status() == 'missing'
+            self.set_state('setup', 'Set up the engine in Studio settings to start creating.' if missing else
+                           'An update changed the engine. Finish it in Studio settings.')
+            return
         self.set_state('starting', 'Connecting to the engine…')
         self.client.base = f'http://127.0.0.1:{self.port}'
         if port_free(self.port):  # nothing there: start at once (probing a closed port is slow on Windows)
@@ -323,14 +320,13 @@ class Engine(QObject):
             self.set_state('ready', 'Engine ready.')
 
     def stop(self):
-        """Stop the engine if the app started it (its children too, so the GPU is freed)."""
+        """Stop the engine if the app started it (its workers too, so the GPU is freed; never Krita or PhotoCraft)."""
         self.timer.stop()
         process, self.process = self.process, None
         if process is None or process.poll() is not None:
             return
         try:
-            parent = psutil.Process(process.pid)
-            family = [parent, *parent.children(recursive=True)]
+            family = own_family(psutil.Process(process.pid))
         except psutil.Error:
             return
         for member in family:
@@ -352,7 +348,7 @@ class Engine(QObject):
         existing = manage.running_process()
         if existing is None:
             return False
-        family = [existing, *existing.children(recursive=True)]
+        family = own_family(existing)
         for member in family:
             try:
                 member.terminate()

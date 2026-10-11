@@ -1,0 +1,23 @@
+# What the installed app's own Python carries: the window (Qt) and the engine's web server.
+# Pinned to the versions the studio is tested with. The engine's GPU libraries are not here;
+# the app installs them on first run (backend/requirements-torch.txt, requirements-models.txt).
+PySide6-Essentials==6.12.0
+shiboken6==6.12.0
+fastapi==0.142.2
+starlette==0.52.1
+opentelemetry-api==1.45.1
+pydantic==2.12.3
+pydantic-core==2.41.4
+uvicorn==0.54.0
+h11==0.16.0
+click==8.5.0
+colorama==0.4.6; sys_platform == 'win32'
+anyio==4.15.1
+idna==3.20
+python-multipart==0.0.32
+pillow==11.3.0
+psutil==7.2.2
+annotated-doc==0.0.5
+annotated-types==0.8.0
+typing-extensions==4.16.0
+typing-inspection==0.4.4

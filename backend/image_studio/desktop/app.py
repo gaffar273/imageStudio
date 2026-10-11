@@ -6,8 +6,8 @@ screens, and stops the engine again when it closes so the GPU is freed.
 
 import sys
 
-from PySide6.QtCore import QSettings, QSize, Qt, QTimer, QUrl
-from PySide6.QtGui import QColor, QDesktopServices, QFont, QGuiApplication, QPalette
+from PySide6.QtCore import QSettings, QSize, Qt, QTimer
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -26,61 +26,26 @@ from image_studio.desktop import theme
 from image_studio.desktop.create import CreatePage
 from image_studio.desktop.edit import EditPage
 from image_studio.desktop.engine import Client, Engine, in_background
+from image_studio.desktop.krita import KritaPage
 from image_studio.desktop.library import LibraryPage
 from image_studio.desktop.photocraft import PhotoCraftPage
+from image_studio.desktop.settings_page import SettingsPage
 from image_studio.desktop.system_page import SystemPage
 from image_studio.desktop.theme import label
 
-# (id, label, icon, phase that brings it to the desktop app; None = already here)
+# (id, label, icon)
 SCREENS = [
-    ('create', 'Create image', 'sparkles', None),
-    ('edit', 'Edit image', 'square-pen', None),
-    ('photocraft', 'PhotoCraft studio', 'layers', None),
-    ('library', 'My library', 'folder-heart', None),
-    ('krita', 'Krita canvas', 'image-plus', 5),
+    ('create', 'Create image', 'sparkles'),
+    ('edit', 'Edit image', 'square-pen'),
+    ('photocraft', 'PhotoCraft studio', 'layers'),
+    ('library', 'My library', 'folder-heart'),
+    ('krita', 'Krita canvas', 'image-plus'),
 ]
 FOOTER = [
-    ('system', 'This PC', 'cpu', None),
-    ('settings', 'Studio settings', 'sliders-horizontal', 5),
+    ('system', 'This PC', 'cpu'),
+    ('settings', 'Studio settings', 'sliders-horizontal'),
 ]
 USAGE_SECONDS = 3
-
-
-class PendingPage(QWidget):
-    """A screen not yet rebuilt for the desktop; it opens in the web version meanwhile."""
-
-    def __init__(self, client, route, title, icon, phase):
-        super().__init__()
-        outer = QVBoxLayout(self)
-        outer.addStretch(1)
-        box = QWidget()
-        box.setFixedWidth(540)  # wrapped labels need a definite width to measure their height
-        outer.addWidget(box, 0, Qt.AlignmentFlag.AlignHCenter)
-        outer.addStretch(2)
-        layout = QVBoxLayout(box)
-        layout.setSpacing(8)
-        symbol = QPushButton(theme.icon(icon, theme.LIME), '')
-        symbol.setProperty('kind', 'flat')
-        symbol.setIconSize(QSize(44, 44))
-        symbol.setEnabled(False)
-        layout.addWidget(symbol, 0, Qt.AlignmentFlag.AlignHCenter)
-        for widget in (
-            label(f'ARRIVING IN PHASE {phase}', 'eyebrow'),
-            label(title, 'title'),
-            label(
-                'This screen is being rebuilt for the desktop app. Until then it works in the web '
-                'version, with the same engine and the same library.',
-                'muted',
-                wrap=True,
-            ),
-        ):
-            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            layout.addWidget(widget)
-        layout.addSpacing(10)
-        self.button = QPushButton(theme.icon('external-link', theme.INK), 'Open in the web version')
-        self.button.setProperty('kind', 'primary')
-        self.button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(f'{client.base}/#{route}')))
-        layout.addWidget(self.button, 0, Qt.AlignmentFlag.AlignHCenter)
 
 
 class MainWindow(QMainWindow):
@@ -114,16 +79,16 @@ class MainWindow(QMainWindow):
             self.open_photocraft,
         )
         self.photocraft = PhotoCraftPage(self.client, self.library, self.notify, lambda: self.settings)
+        self.krita = KritaPage(self.client, self.library, self.notify)
+        self.studio_settings = SettingsPage(self.client, self.notify, self.use_profile, self.parts_installed,
+                                            self.engine.start)
         self.library.reuse = self.reuse
         self.library.edit = self.edit_picture
-        self.screens = {}
-        for route, title, icon, phase in SCREENS + FOOTER:
-            built = {'create': self.create, 'edit': self.edit, 'photocraft': self.photocraft, 'library': self.library,
-                     'system': self.system}
-            page = built.get(route) or PendingPage(
-                self.client, route, title, icon, phase
-            )
-            self.screens[route] = page
+        self.screens = {
+            'create': self.create, 'edit': self.edit, 'photocraft': self.photocraft, 'library': self.library,
+            'krita': self.krita, 'system': self.system, 'settings': self.studio_settings,
+        }
+        for page in self.screens.values():
             self.pages.addWidget(page)
         self.status_bar()
 
@@ -178,10 +143,10 @@ class MainWindow(QMainWindow):
             self.nav_buttons[route] = (button, icon)
             column.addWidget(button)
 
-        for route, title, icon, _ in SCREENS:
+        for route, title, icon in SCREENS:
             add(route, title, icon)
         column.addStretch()
-        for route, title, icon, _ in FOOTER:
+        for route, title, icon in FOOTER:
             add(route, title, icon)
         return bar
 
@@ -238,31 +203,55 @@ class MainWindow(QMainWindow):
         elif source.get('image') is not None:
             self.photocraft.open_image(source['image'], source.get('name') or 'photo.png')
 
+    def use_profile(self, profile):
+        """Your usual settings, from Studio settings, loaded into Create."""
+        config = self.create.config
+        if not config:
+            self.notify('The engine is not ready yet.', error=True)
+            return
+        values = {}
+        if profile.get('model'):
+            values['model'] = profile['model']
+        size = profile.get('size') and next(
+            (item['id'] for item in config['sizes'] if item['id'].endswith(profile['size'])), None)
+        if size:
+            values['size'] = size
+        if profile.get('finish'):
+            values['photo_finish'] = profile['finish']
+        if profile.get('realism') is not None:
+            values['realism'] = profile['realism']
+        self.navigate('create')
+        self.create.update_settings(**values)
+        self.notify('Your usual settings are loaded.')
+
+    def parts_installed(self):
+        """A model or tool was installed from Studio settings: the other screens see it at once."""
+        if self.engine.state == 'ready':
+            for page in (self.library, self.create, self.edit, self.photocraft, self.krita):
+                page.engine_ready()
+
     def notify(self, text, error=False):
         self.message.setText(text)
         self.message.setStyleSheet(f'color: {theme.DANGER if error else theme.TEXT};')
         self.message_timer.start(9000 if error else 5000)
 
     def engine_changed(self, state, message):
-        colors = {'ready': theme.LIME, 'starting': theme.WARN}
+        colors = {'ready': theme.LIME, 'starting': theme.WARN, 'setup': theme.WARN}
         dot = colors.get(state, theme.DANGER)
         self.engine_label.setText(f'<span style="color:{dot}">●</span>&nbsp; {message}')
         self.free.setEnabled(state == 'ready')
-        for page in self.screens.values():
-            if isinstance(page, PendingPage):
-                page.button.setEnabled(state == 'ready')
+        pages = (self.library, self.create, self.edit, self.photocraft, self.krita, self.studio_settings)
         if state == 'ready':
-            self.library.engine_ready()
-            self.create.engine_ready()
-            self.edit.engine_ready()
-            self.photocraft.engine_ready()
+            for page in pages:
+                page.engine_ready()
         else:
-            self.library.engine_gone()
-            self.create.engine_gone()
-            self.edit.engine_gone()
-            self.photocraft.engine_gone()
+            for page in pages:
+                page.engine_gone()
             if state == 'failed':
                 self.library.waiting('The engine is not running.', message + ' Use This PC to restart it.')
+            elif state == 'setup':
+                self.library.waiting('The engine is not set up yet.', message)
+                self.navigate('settings')  # its first row installs it
 
     def measure(self):
         if self.isMinimized():
@@ -285,6 +274,17 @@ class MainWindow(QMainWindow):
         self.ram_label.setText(f'RAM {usage["ram_used_gb"]:.0f} / {usage["ram_gb"]:.0f} GB')
 
     def closeEvent(self, event):
+        installer = self.studio_settings.installer
+        if installer.running:
+            answer = QMessageBox.question(
+                self, 'An install is running',
+                'Closing the app stops the install. It resumes where it stopped when you install again. '
+                'Close anyway?',
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
+            installer.cancel()
         if self.engine.owned and self.job_running:
             answer = QMessageBox.question(
                 self, 'A job is running', 'Closing the app stops the engine and the current job. Close anyway?'
@@ -331,6 +331,7 @@ def build():
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID('ImageStudio.Desktop')
     QApplication.setOrganizationName('Image Studio')
     QApplication.setApplicationName('Image Studio')
+    QGuiApplication.setDesktopFileName('image-studio')  # Linux: the menu entry packaging/linux/install.sh adds
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
     QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)

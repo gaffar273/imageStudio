@@ -10,3 +10,5 @@ images/
 .env
 *.tsbuildinfo
 .ruff_cache/
+build/
+dist/

@@ -576,7 +576,7 @@ class LibraryPage(QWidget):
         self.visual.setToolTip(
             'Find pictures by what is in them, not only their prompt words.'
             if self.visual.isEnabled()
-            else 'Visual search needs the image search model. It will be installable from the Models page.'
+            else 'Visual search needs the image search model. Install it in Studio settings.'
         )
 
     def got_favorites(self, answer):

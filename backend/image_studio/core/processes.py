@@ -2,6 +2,33 @@
 
 import subprocess
 import sys
+from pathlib import Path
+
+import psutil
+
+# Apps the person works in. The engine starts them, so they are its child processes, but
+# stopping the engine must never close them (unsaved work). photocraft-cli is the engine's own.
+APPS = {'krita', 'photocraft'}
+
+
+def is_app(process):
+    try:
+        return Path(process.name()).stem.lower() in APPS
+    except psutil.Error:
+        return False
+
+
+def own_family(parent):
+    """A process and everything it started, except the apps the person works in (and what they started)."""
+    family = [parent]
+    try:
+        children = parent.children()
+    except psutil.Error:
+        return family
+    for child in children:
+        if not is_app(child):
+            family += own_family(child)
+    return family
 
 
 def launch_detached(args, **options):

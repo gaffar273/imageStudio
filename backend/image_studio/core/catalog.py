@@ -1,6 +1,8 @@
 """Available local models and measured-size generation presets."""
 
 import os
+import shutil
+from pathlib import Path
 
 from image_studio.core.paths import ROOT as ROOT, WORK
 
@@ -127,3 +129,18 @@ BRAIN = {
 
 # Krita 6 (portable copy) with the AI panel (krita-plugin/), driven from the browser too.
 KRITA = WORK / 'krita' / 'krita-x64-6.0.4' / 'bin' / 'krita.exe'
+
+
+def krita_executable():
+    """Krita: IMAGE_STUDIO_KRITA, else the portable copy in the models folder, else a normal installation."""
+    override = os.environ.get('IMAGE_STUDIO_KRITA')
+    if override:
+        candidates = [override]
+    else:
+        candidates = [KRITA, shutil.which('krita')]
+        if os.name == 'nt':
+            for base in (os.environ.get('ProgramFiles'), os.environ.get('ProgramW6432'), 'C:/Program Files'):
+                candidates.append(base and Path(base) / 'Krita (x64)' / 'bin' / 'krita.exe')
+            if os.environ.get('LOCALAPPDATA'):
+                candidates.append(Path(os.environ['LOCALAPPDATA']) / 'Programs' / 'Krita (x64)' / 'bin' / 'krita.exe')
+    return next((Path(path) for path in candidates if path and Path(path).is_file()), None)

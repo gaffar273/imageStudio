@@ -1,0 +1,6 @@
+#!/bin/sh
+# Starts Image Studio with the Python bundled next to this script, wherever the folder is.
+here="$(dirname "$(readlink -f "$0")")"
+unset PYTHONHOME PYTHONPATH
+export PYTHONNOUSERSITE=1
+exec "$here/runtime/bin/python3" -m image_studio.desktop "$@"

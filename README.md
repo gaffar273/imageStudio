@@ -6,14 +6,33 @@ A private image workspace with a React + TypeScript interface and a local Python
 
 Double-click **Start Image Studio app.bat**. It opens Image Studio as a native Qt window (no browser), starts the engine, and stops it again when you close the window, which frees the GPU. If the app ends abruptly, Windows closes the engine with it. Krita and PhotoCraft windows opened from the studio stay open.
 
-- **Create image**, **Edit image**, **PhotoCraft studio**, **My library** and **This PC** are fully native. Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
+- Every screen is native: **Create image**, **Edit image**, **PhotoCraft studio**, **My library**, **Krita canvas**, **This PC** and **Studio settings**. Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
 - **Edit image** takes a photo you drop on it, paste (Ctrl + V), choose from a file, or pick from your recent creations; **Edit image** in a picture's details opens it there too. PhotoCraft changes light and color across the whole photo and saves a layered PSD; AI content editing (FLUX.1 Kontext) changes what is in the picture, and can be limited to an area you paint (Ctrl + Z takes back a stroke). Before and After compare the result with the photo it came from, and **Keep editing** carries on from the result. Ctrl + Enter applies the edit.
 - **PhotoCraft studio** is native too, with everything described in [PhotoCraft studio](#photocraft-studio) below: the Assistant (describe an edit, optionally only inside an area you mark with a brush or lasso, review the plan, apply it and see the result check), the Adjust, Looks, Crop, Select, Text, Filters and All tools panels, layers and history, Compare (drag the split), zoom, and Export to a file you choose. **Open** opens a photo or layered document from the PC (or drop one on the screen), a picture from your library (a PhotoCraft edit opens with its layers), a recent document, or a new blank canvas. **Open full PhotoCraft workspace** on Edit image brings the photo on screen along. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter plans, Ctrl + O opens. In a narrow window the tool panel and the layers take turns (the layers button switches).
 - This PC shows which graphics card will be used, whether the local models will run on it, the engine's state, and the models and library folders.
-- Krita and Settings are being rebuilt for the desktop in a later phase. Until then their button opens that screen in the web version, which uses the same engine and library.
+- **Krita canvas** opens a picture in Krita (from a file, a drop, Ctrl + V or your library) or a blank canvas, shows Krita's live canvas, layers and activity, and sends typed edits to it (Ctrl + Enter), with Undo, Stop and Save to library. Krita is found as the portable copy in the models folder, a normal installation, or `IMAGE_STUDIO_KRITA`; without it the screen links to krita.org.
+- **Studio settings** shows what the studio has learned from you: your style training (train now, or overnight), the words you taught, how strong you like edits, and your usual settings (**Use these** loads them into Create). Its **Models and tools** list installs each model with one click: it downloads from the maker into your models folder, shows progress, resumes after a dropped connection, and can be stopped and resumed later. FLUX.1 Kontext first asks you to accept its licence on Hugging Face and paste a read token, which is used for that download only. It also shows whether PhotoCraft and Krita were found.
 - The status bar shows live GPU memory and load. **Free GPU** unloads every model, so a game gets the video memory back.
 
 The app needs Qt for Python: `pip install -e .[desktop]`. Run it with `python -m image_studio.desktop` or the `image-studio-app` command.
+
+### Installing it (Windows)
+
+Run **ImageStudio-<version>-Setup.exe**. It installs for your user only (no administrator prompt) and adds Image Studio to the Start menu. The installer is small because it carries only the app and its own Python. On first start the app opens **Studio settings**, where the **Engine** row installs PyTorch with CUDA and the model libraries in one click (about 3.5 GB to download). After that, install the models you want from the same page. The engine needs an NVIDIA graphics card.
+
+The installer is not code-signed yet, so Windows SmartScreen asks once before it runs (**More info**, then **Run anyway**). Uninstalling removes the app and the engine's libraries. Your models, pictures and settings stay.
+
+### Building the installer
+
+```powershell
+python packaging\build.py
+```
+
+This works with any Python 3.10 or newer. It downloads a standalone Python (checked against its published SHA-256) and installs the window's pinned libraries (`packaging/requirements-app.txt`). It copies the studio, removes unused parts of Qt, builds the launcher with the C# compiler that ships with Windows, and checks that the whole window opens. The app folder lands in `build\windows\Image Studio`. **Inno Setup 6** (`winget install JRSoftware.InnoSetup`) then turns it into `dist\ImageStudio-<version>-Setup.exe`. Use `--no-installer` to stop after the app folder.
+
+On Linux, `python3 packaging/build.py` makes `dist/image-studio-<version>-linux-x86_64.tar.gz`. Unpack it anywhere and run `./install.sh` to add a menu entry, or `./image-studio` to start it. Qt needs `libxcb-cursor0` on X11. The Linux build has not been tested yet.
+
+In an installed copy the engine runs on its own environment in `%LOCALAPPDATA%\Image Studio\engine` (Linux: `~/.local/share/image-studio/engine`, or `IMAGE_STUDIO_ENGINE_ENV`). `python -m image_studio.cli.setup_engine` sets it up or refreshes it from the command line. When an update pins different libraries, Studio settings asks to finish the engine update, and only what changed downloads.
 
 ### Where files are kept
 
@@ -45,6 +64,7 @@ text-to-image/
 │   │   ├── workers/         # Isolated image-search worker
 │   │   ├── cli/             # Start/stop and model download commands
 │   │   └── __main__.py      # Local server entry point
+│   ├── requirements-torch.txt   # CUDA PyTorch for the engine
 │   ├── requirements-models.txt
 │   └── requirements-search.txt
 ├── frontend/
@@ -57,6 +77,7 @@ text-to-image/
 │   ├── public/             # Static assets
 │   └── dist/               # Built assets served by Python (generated)
 ├── integrations/krita-plugin/
+├── packaging/              # Installer build: Python runtime, launcher, Inno Setup, Linux files
 ├── training/lora/           # Data preparation, captions, training, evaluation
 ├── scripts/windows/        # Model download and face-pool shortcuts
 ├── tests/                  # Backend integration and job-lifecycle tests
@@ -108,7 +129,7 @@ The tests use Microsoft Edge in headless mode and save desktop/mobile screenshot
 For formatting, run `npx prettier --write src` inside `frontend`, or `python -m ruff format backend tests`
 with the backend's optional `dev` dependencies installed.
 
-Install `backend/requirements-models.txt` into an environment that already has CUDA PyTorch when setting up another computer. Image search uses a separate environment; its setup shortcut is in `scripts/windows/`.
+To set up another computer from source, install `backend/requirements-torch.txt`, then `backend/requirements-models.txt`. Image search uses a separate environment; its setup shortcut is in `scripts/windows/`.
 
 ## Using the workspace
 
@@ -116,7 +137,7 @@ Install `backend/requirements-models.txt` into an environment that already has C
 - **Edit image:** upload or select a library image, describe the change, and optionally paint a mask. Download the result or continue editing it.
 - **My library:** filter saved prompts, search images visually, sort, favorite, download, or reuse settings. Favorites and draft settings are kept in the current browser.
 - **Krita canvas:** upload or drop an image, or choose one from your library, to open a new document in Krita. Follow the live canvas and layers, send editing instructions (Ctrl+Enter), create a blank canvas, undo, stop, or save to the library. Paint, select areas, and manage layers in Krita. Imports are normalized to PNG in `studio-cache/krita-imports` without changing the source file.
-- **Studio settings:** inspect installed models and optional tools.
+- **Studio settings:** review and change what the studio has learned, and install models and optional tools.
 
 ## PhotoCraft studio
 
