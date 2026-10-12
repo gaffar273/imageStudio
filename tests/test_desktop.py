@@ -1378,3 +1378,18 @@ class SettingsScreenTests(unittest.TestCase):
             self.assertIs(window.pages.currentWidget(), window.studio_settings)
             self.assertIn('not set up', window.library.empty_title.text())
             window.engine_changed('ready', 'Engine ready.')
+
+    def test_other_rows_stay_quiet_while_one_installs(self):
+        from image_studio.desktop import settings_page
+
+        page = self.page
+        page.installer.key = 'turbo'
+        try:
+            page.show_parts()
+            row = page.rows['kontext']
+            self.assertFalse(row.install.isEnabled())
+            self.assertEqual(row.install.toolTip(), settings_page.BUSY)
+            self.assertTrue(row.message.isHidden())
+        finally:
+            page.installer.key = None
+            page.show_parts()

@@ -29,6 +29,7 @@ MODEL_NAMES = {'realistic': 'Realistic', 'accurate': 'Accurate', 'turbo': 'Turbo
 STEP_NAMES = {'grade': 'light and color looks'}
 KRITA_DOWNLOAD = 'https://krita.org/en/download/'
 TOKENS = 'https://huggingface.co/settings/tokens'
+BUSY = 'Another install is running.'  # the Install button's tooltip only; rows stay quiet
 
 
 def profile_text(profile):
@@ -549,11 +550,11 @@ class SettingsPage(QWidget):
             elif config is None or not self.models_dir:
                 blocked = 'Installing needs the engine running.'
             elif self.installer.running and not running:
-                blocked = 'Another install is running. One at a time keeps each one quick.'
+                blocked = BUSY
             elif part.needs and not installs.BY_KEY[part.needs].ready(config):
                 blocked = f'Install {installs.BY_KEY[part.needs].title} first.'
             text, percent = self.progress.get(key, ('', None)) if running else (self.messages.get(key, ''), None)
-            if blocked and not ready and not running and not text and config is not None:
+            if blocked not in ('', BUSY) and not ready and not running and not text and config is not None:
                 text = blocked
             row.show_state(ready, running, text, percent, blocked)
         for key, badge in self.apps.items():
@@ -574,7 +575,7 @@ class SettingsPage(QWidget):
         running = self.installer.key == 'engine'
         blocked = ''
         if self.installer.running and not running:
-            blocked = 'Another install is running. One at a time keeps each one quick.'
+            blocked = BUSY
         elif self.nvidia == []:
             blocked = ('The engine needs an NVIDIA graphics card, and none was found. This PC shows what '
                        'this computer has.')
@@ -582,7 +583,7 @@ class SettingsPage(QWidget):
                          (self.messages.get('engine', ''), None))
         if not text and not running and status == 'update':
             text = 'An update changed what the engine needs. Install to finish it; only what changed downloads.'
-        if blocked and not running and not text and status != 'ready':
+        if blocked not in ('', BUSY) and not running and not text and status != 'ready':
             text = blocked
         self.engine_intro.setVisible(status != 'ready')
         self.engine_row.show_state(status == 'ready', running, text, percent, blocked)
