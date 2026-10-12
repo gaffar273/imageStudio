@@ -80,6 +80,31 @@ Two safety rules came from real failures:
 - Colour ranges ("deepen the blues"): Hue/Saturation's own per-colour ranges, with blues including
   cyans. A selected "blues" range missed a turquoise sea completely (measured 0.383 → 0.383).
 
+## What a professional editor is asked for
+
+`scripts/planner_bench.py` holds 138 requests a working photo editor gets, each on a photo it suits,
+with the edits a correct plan must contain. It runs the real planner (nothing is applied) and caches the
+brain's answers, so a rerun after a code change only re-asks what changed. Some cases expect a question
+back (a mug with no free space beside it). The first run planned 90 of 137 correctly; now all 138 pass.
+The gaps it exposed became these edits:
+
+| Area | Requests | How it is done |
+|---|---|---|
+| Print and ID | passport, visa, ID, stamp size; 4x6, 8x10, A4, letter; 300 dpi; CMYK | The head is boxed hair-to-chin and framed (head 68% of a passport, 52% of a headshot); print sizes become pixels at 300 ppi and turn to match the photo; dpi alone changes only the resolution |
+| Social and screens | Instagram post, story, YouTube thumbnail, LinkedIn and Facebook covers, 4K, wallpaper, 2x, half | A table of named formats; a new shape is cut around the main subject before resizing; “fit” pads with bars instead of cutting |
+| Portrait retouching | smooth skin, blemishes, wrinkles, even tone, dark circles, shine, teeth, eyes, red eye, dodge and burn | Each job on its own masked layer: Camera Raw on the face outline narrowed to the skin colours measured in the middle of the face (so lips, brows and lashes stay sharp), feathered ellipses under and on the eyes, a de-yellowing Hue/Saturation layer on the teeth (only when the brain confirms teeth are showing; it boxes closed lips as teeth), PhotoCraft's red-eye tool on each pupil; blemishes, wrinkles and tone go to Kontext on the face only, or Dust & Scratches without AI |
+| Backgrounds | plain colour, transparent, gradient studio backdrop | “Change the background to light grey” is a cut-out on a new backdrop, not a grey tint |
+| Geometry | straighten, perspective, lens distortion, fringes | The horizon tilt and upright edges are measured with a Hough transform (`photocraft_lines.py`), never guessed; edges that fit no camera tilt (a splayed chair leg leaning 7° near the middle) are dropped; Adaptive Wide Angle makes the rest vertical and the empty edges it leaves are cropped off. On a café photo tilted 9% for the test, the building edge went from 3.2° to 0.0° |
+| Objects | move, enlarge, shrink, duplicate; centre the product | The object is lifted from the picture onto its own layer, the hole is rebuilt (Kontext or content-aware fill) and the copy is transformed to its new box. A move or copy lands in the nearest free gap among the things standing level with it (found with the foreground boxes); in a tight row of mugs it asks instead of stacking one on another, unless the request says “in front of” |
+| Product | contact shadow, white backdrop, tight crop, centred margins | An elliptical shadow where each object touches down, multiplied and masked out from the object |
+| Restoration | old photo, scratches, colourise | Kontext repairs damage on its own layer, then tone and noise; colourising is a Kontext edit |
+| Effects | glow, zoom and spin blur, mirror, rain, snow, pop art and other looks | Built the way they are made by hand (a screened blurred copy, noise streaked by motion blur, a flipped half) |
+| Graphics | watermark, darkening gradient behind text, rounded corners | Semi-transparent text, a multiplied gradient fill, a smoothed selection |
+
+Requests too technical to misread (a dpi, CMYK, lens fringes, red eye) are also recognised from the
+words themselves, because the planner once filed “set the resolution to 300 dpi without changing the
+pixels” as only a keep-note.
+
 ## Checking
 
 After applying, the workspace records:

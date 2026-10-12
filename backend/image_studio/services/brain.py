@@ -119,4 +119,10 @@ def chat(system, content, schema=None, max_tokens=2500, temperature=0.2, thinkin
     text = reply['choices'][0]['message'].get('content') or ''
     if schema is None:
         return text
-    return json.loads(text[text.find('{'):text.rfind('}') + 1])
+    try:
+        return json.loads(text[text.find('{'):text.rfind('}') + 1])
+    except ValueError:
+        if temperature >= 0.3:
+            raise
+        # A rare answer breaks off mid-string (“glitch effect”); a second, slightly freer try is whole.
+        return chat(system, content, schema, max_tokens, temperature + 0.3, thinking)

@@ -31,6 +31,8 @@ from image_studio.services import brain
 
 ROOT = CACHE / 'photocraft-workspaces'
 LOCK = threading.RLock()
+# Up to 16 edits per request, each a few engine steps (select, check, filter, deselect).
+MAX_STEPS = 64
 EDIT_FAMILIES = {
     'edit',
     'select',
@@ -239,8 +241,8 @@ def capabilities():
 
 
 def validate_steps(steps, folder):
-    if not isinstance(steps, list) or not 1 <= len(steps) <= 32:
-        raise ValueError('An edit must contain between 1 and 32 commands.')
+    if not isinstance(steps, list) or not 1 <= len(steps) <= MAX_STEPS:
+        raise ValueError(f'An edit must contain between 1 and {MAX_STEPS} commands.')
     lookup = {command['id']: command for command in registry()}
 
     def inspect(value, key='', depth=0):
@@ -616,16 +618,39 @@ def explain(edit, steps, index):
     return ' → '.join(own[:4]) or 'Not planned'
 
 
+def measure_lines(edits, preview, state, boxes=None):
+    """Facts measured from the pixels, only when an edit needs them: the horizon tilt, upright
+    edges, and whether the teeth box really shows teeth (the brain boxes closed lips as teeth)."""
+    from .photocraft_lines import tilt, verticals
+
+    analysis = {}
+    if (boxes or {}).get(photocraft_intents.TEETH) and any(
+            photocraft_intents.TEETH in photocraft_planner.queries_for(edit) for edit in edits):
+        analysis['teeth'] = photocraft_planner.teeth_showing(preview)
+        analysis['teeth_colors'] = photocraft_intents.teeth_colors(preview, boxes[photocraft_intents.TEETH], state)
+    if (boxes or {}).get(photocraft_intents.FACES) and any(
+            photocraft_intents.FACES in photocraft_planner.queries_for(edit) for edit in edits):
+        analysis['skin_colors'] = photocraft_intents.skin_colors(preview, boxes[photocraft_intents.FACES], state)
+    if any(edit['action'] == 'auto_fix' for edit in edits):
+        analysis['levels'] = photocraft_intents.measure_levels(preview)
+    if any(edit['action'] == 'straighten' and edit['value'] is None for edit in edits):
+        analysis['tilt'] = tilt(preview)
+    if any(edit['action'] == 'perspective' for edit in edits):
+        sx, sy = state['width'] / preview.width, state['height'] / preview.height
+        analysis['verticals'] = [[[round(x * sx), round(y * sy)] for x, y in line] for line in verticals(preview)]
+    return analysis
+
+
 def compile_plan(data, prompt, edits, preserve, questions, notes, preview, planner, boxes=None, area=None):
     """Compile normalized edits against the current document; finds objects when needed."""
     state = current(data)['state']
     boxes = dict(boxes or {})
-    wanted = set() if area else {query for query in (photocraft_planner.needs_boxes(edit) for edit in edits) if query}
+    wanted = set() if area else {query for edit in edits for query in photocraft_planner.queries_for(edit)}
     missing = sorted(query for query in wanted if query.lower() not in boxes)
     if missing:
         if not brain.available():
             raise ValueError('Finding objects needs the editing brain. Install it, or choose the whole image.')
-        hints = {photocraft_planner.needs_boxes(edit): edit['quote'] for edit in edits}
+        hints = {query: edit['quote'] for edit in edits for query in photocraft_planner.queries_for(edit)}
         boxes.update(photocraft_planner.locate(preview, missing, state, hints))
     if area:
         from .photocraft_area import compile_area
@@ -637,7 +662,8 @@ def compile_plan(data, prompt, edits, preserve, questions, notes, preview, plann
         notes = [*notes, 'Your marked area overrides automatic target detection for every change in this plan.']
     else:
         steps, compile_notes, blocking, regions, expert_indices, canvas = photocraft_intents.compile_edits(
-            edits, state, fonts(), boxes, photocraft_macros.ai_available())
+            edits, state, fonts(), boxes, photocraft_macros.ai_available(),
+            measure_lines(edits, preview, state, boxes))
     for index in expert_indices:
         edit = edits[index]
         if not brain.available():

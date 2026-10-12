@@ -12,6 +12,7 @@ from unittest.mock import patch
 
 from image_studio.integrations import photocraft
 from image_studio.integrations import photocraft_intents as intents
+from image_studio.integrations import photocraft_planner as planner
 from image_studio.integrations import photocraft_specs as specs
 from PIL import Image, ImageDraw
 
@@ -221,6 +222,229 @@ class CompileTests(unittest.TestCase):
         _, _, blocking, *_ = intents.compile_edits([edit('generate', quote='add a dog')], STATE, ai=False)
         self.assertTrue(blocking)
 
+    def test_passport_photo_frames_the_head_on_white_at_print_size(self):
+        prompt = 'make a passfort size pic ; 3 inch X4inch'
+        planned, _ = intents.normalize({'action': 'crop_aspect', 'quote': prompt, 'aspect': '3:4'}, prompt)
+        self.assertEqual(planned['action'], 'passport_photo')
+        edits = intents.expand([planned])
+        self.assertEqual([e['action'] for e in edits], ['passport_photo', 'remove_background'])
+        self.assertEqual(edits[1]['color'], 'white')
+        state = {**STATE, 'width': 959, 'height': 1279}
+        steps, notes, blocking, _, _, canvas = intents.compile_edits(
+            edits, state, boxes={"the person's head": [[330, 230, 230, 340]],
+                                 'the main subject': [[100, 200, 760, 1079]]})
+        self.assertFalse(blocking)
+        commands = [step['command'] for step in steps]
+        self.assertLess(commands.index('layer.arrange.sendToBack'), commands.index('image.crop'))
+        crop = next(step['params'] for step in steps if step['command'] == 'image.crop')
+        self.assertAlmostEqual(crop['width'] / crop['height'], 3 / 4, places=2)
+        self.assertAlmostEqual(340 / crop['height'], intents.PASSPORT_HEAD_SHARE, places=2)
+        self.assertAlmostEqual(crop['x'] + crop['width'] / 2, 330 + 115, delta=1)
+        size = next(step['params'] for step in steps if step['command'] == 'image.imageSize')
+        self.assertEqual((size['width'], size['height'], size['resolution']), (900, 1200, 300))
+        self.assertEqual((canvas.width, canvas.height), (900, 1200))
+        self.assertTrue(any('enlarged' in note for note in notes))
+
+    def test_passport_sizes_and_spellings(self):
+        self.assertEqual(intents.print_size('35x45mm'), (35, 45, 'mm'))
+        self.assertEqual(intents.print_size('2 x 2 inches'), (2, 2, 'in'))
+        self.assertEqual(intents.print_size('600x600 px'), (600, 600, 'px'))
+        self.assertEqual(intents.aspect_from('crop to 3 inch x 4 inch'), (3, 4))
+        for words in ('passport photo', 'passfotsize image', 'pasport pic', 'pass photo', 'visa photo'):
+            self.assertTrue(intents.PASSPORT.search(words), words)
+        for words in ('password', 'passage', 'compass portrait'):
+            self.assertFalse(intents.PASSPORT.search(words), words)
+
+    def test_passport_without_a_size_uses_35_by_45_mm(self):
+        _, notes, blocking, _, _, canvas = intents.compile_edits(
+            [edit('passport_photo', quote='passport photo')], STATE,
+            boxes={"the person's head": [[400, 100, 200, 260]]})
+        self.assertFalse(blocking)
+        self.assertEqual((canvas.width, canvas.height), (413, 531))
+        self.assertTrue(any('35×45 mm' in note for note in notes))
+
+    def test_named_sizes_print_sizes_and_multiples(self):
+        size = intents.output_size
+        self.assertEqual(size('make it an instagram post', 1536, 1024)['size'], (1080, 1080))
+        self.assertEqual(size('linkedin banner', 1536, 1024)['size'], (1584, 396))
+        # Print sizes turn to match the photo and carry 300 ppi.
+        self.assertEqual(size('4x6 inch print', 1536, 1024)['size'], (1800, 1200))
+        self.assertEqual(size('an 8x10 print', 1024, 1536)['size'], (2400, 3000))
+        a4 = size('make it A4 size for printing', 1024, 1536)
+        self.assertEqual((a4['size'], a4['ppi']), ((2480, 3508), 300))
+        self.assertEqual(size('make it 2x bigger', 1000, 800)['size'], (2000, 1600))
+        self.assertEqual(size('reduce the size to half', 1000, 800)['size'], (500, 400))
+        self.assertEqual(size('enlarge it by 50%', 1000, 800)['size'], (1500, 1200))
+        self.assertEqual(size('upscale to 4k', 1536, 1024)['size'], (3840, 2560))
+        dpi = size('set the resolution to 300 dpi', 1000, 800)
+        self.assertEqual((dpi['size'], dpi['ppi']), ((1000, 800), 300))
+
+    def test_resolution_alone_keeps_the_pixels(self):
+        steps, *_ = intents.compile_edits([edit('resize', quote='set 300 dpi')], STATE)
+        self.assertEqual(steps[-1]['params'], {'width': 1000, 'height': 800, 'resolution': 300, 'resample': 'none'})
+
+    def test_a_format_is_cut_around_the_subject_then_sized(self):
+        steps, _, blocking, _, _, canvas = intents.compile_edits(
+            [edit('resize', quote='instagram post')], STATE, boxes={'the main subject': [[650, 200, 200, 400]]})
+        self.assertFalse(blocking)
+        crop = next(step['params'] for step in steps if step['command'] == 'image.crop')
+        self.assertEqual((crop['x'], crop['width'], crop['height']), (200, 800, 800))
+        self.assertEqual((canvas.width, canvas.height), (1080, 1080))
+
+    def test_fit_pads_without_cutting(self):
+        steps, *_, canvas = intents.compile_edits([edit('fit_canvas', quote='fit in a square with white bars')],
+                                                  STATE)
+        self.assertEqual(steps[0]['command'], 'image.canvasSize')
+        self.assertEqual((canvas.width, canvas.height), (1000, 1000))
+
+    def test_backgrounds_become_plain_backdrops(self):
+        prompt = 'change the background to light grey'
+        planned, _ = intents.normalize({'action': 'color_filter', 'quote': prompt, 'target': 'background',
+                                        'color': 'grey'}, prompt)
+        self.assertEqual((planned['action'], planned['color']), ('remove_background', 'light grey'))
+        prompt = 'make the background warmer'
+        planned, _ = intents.normalize({'action': 'color_filter', 'quote': prompt, 'target': 'background'}, prompt)
+        self.assertEqual(planned['action'], 'color_filter')
+        # The cut-out keeps the subject, so the subject is what must be found.
+        self.assertEqual(intents.subject_query(edit('remove_background', target='background')), 'the main subject')
+
+    def test_requests_land_on_the_right_tool(self):
+        cases = [
+            ('remove pimples and blemishes from his face', 'remove_object', 'retouch_portrait'),
+            ('whiten his teeth', 'relight', 'retouch_portrait'),
+            ('fix the perspective so the walls are vertical', 'straighten', 'perspective'),
+            ('remove chromatic aberration', 'other', 'lens_correction'),
+            ('make the cat bigger', 'resize', 'transform_object'),
+            ('add rain', 'other', 'weather'),
+            ('professional headshot for linkedin', 'passport_photo', 'headshot'),
+            ('fit the whole photo in a square, do not crop', 'canvas_border', 'fit_canvas'),
+            ('darken the background so he stands out', 'shadows', 'exposure'),
+            ('make the sky bluer', 'temperature', 'saturation'),
+            ('colorize this black and white photo', 'other', 'generate'),
+            ('fix the orange skin tone', 'saturation', 'saturation'),
+        ]
+        for prompt, chosen, wanted in cases:
+            raw = {'action': chosen, 'quote': prompt, 'object': 'the cat' if 'cat' in prompt else ''}
+            planned, _ = intents.normalize(raw, prompt)
+            self.assertEqual(planned['action'], wanted, prompt)
+        planned, _ = intents.normalize({'action': 'dehaze', 'quote': 'add fog'}, 'add fog')
+        self.assertEqual(planned['direction'], 'decrease')
+
+    def test_unmistakable_requests_are_rescued(self):
+        rescued = intents.rescue('set the resolution to 300 dpi without changing the pixels', [])
+        self.assertEqual([e['action'] for e in rescued], ['resize'])
+        self.assertEqual(intents.rescue('make it warmer', []), [])
+        # A passport photo already sets its print resolution.
+        self.assertEqual(intents.rescue('passport photo at 300 dpi', [edit('passport_photo')]), [])
+
+    def test_retouch_jobs_and_what_they_need(self):
+        self.assertEqual(intents.retouch_jobs('remove the dark circles under her eyes'), ['dark circles'])
+        self.assertEqual(intents.retouch_jobs('brighten her eyes and whiten her teeth'), ['teeth', 'eyes'])
+        self.assertEqual(intents.retouch_queries(edit('retouch_portrait', quote='smooth skin, brighten eyes')),
+                         [intents.FACES, intents.EYES])
+
+    def test_portrait_retouch_works_on_masked_layers(self):
+        boxes = {intents.FACES.lower(): [[400, 100, 200, 260]], intents.EYES.lower(): [[440, 180, 40, 20],
+                                                                                        [520, 180, 40, 20]],
+                 intents.TEETH.lower(): [[470, 300, 60, 15]]}
+        steps, _, blocking, *_ = intents.compile_edits(
+            [edit('retouch_portrait', quote='smooth skin, brighten her eyes and whiten her teeth')], STATE,
+            boxes=boxes, analysis={'teeth': True, 'teeth_colors': ['#e8e0d0']})
+        self.assertFalse(blocking)
+        commands = [step['command'] for step in steps]
+        self.assertIn('layer.newAdjustmentLayer.hueSaturation', commands)
+        self.assertEqual(sum(command == 'studio.local_filter' for command in commands), 2)
+        # Closed lips are not teeth: nothing is whitened.
+        _, _, blocking, *_ = intents.compile_edits([edit('retouch_portrait', quote='whiten teeth')], STATE,
+                                                   boxes=boxes, analysis={'teeth': False})
+        self.assertTrue(blocking)
+
+    def test_smoothing_keeps_to_the_skin(self):
+        face = Image.new('RGB', (200, 200), (40, 30, 25))  # dark hair all round
+        ImageDraw.Draw(face).ellipse((40, 30, 160, 190), fill=(200, 150, 120))
+        colors = intents.skin_colors(face, [[40, 30, 120, 160]], {'width': 200, 'height': 200})
+        self.assertTrue(colors)
+        self.assertNotIn('#281e19', colors)
+        boxes = {intents.FACES: [[40, 30, 120, 160]]}
+        steps, _, blocking, *_ = intents.compile_edits(
+            [edit('retouch_portrait', quote='smooth her skin', target='main subject')], STATE, boxes=boxes,
+            analysis={'skin_colors': colors})
+        self.assertFalse(blocking)
+        commands = [step['command'] for step in steps]
+        narrowed = commands.index('select.colorRange')
+        self.assertLess(commands.index('studio.select_outline'), narrowed)
+        self.assertLess(narrowed, commands.index('studio.local_filter'))
+        self.assertEqual(steps[narrowed]['params']['mode'], 'intersect')
+
+    def test_perspective_reads_lines_either_way_up(self):
+        # Upright edges traced bottom-first are still upright: nothing to correct.
+        upright = [[[100, 700], [100, 100]], [[800, 100], [801, 700]]]
+        steps, notes, blocking, *_ = intents.compile_edits([edit('perspective')], STATE,
+                                                           analysis={'verticals': upright})
+        self.assertFalse(steps or blocking)
+        self.assertTrue(notes)
+        leaning = [[[110, 100], [100, 700]], [[790, 100], [800, 700]]]
+        steps, *_ = intents.compile_edits([edit('perspective')], STATE, analysis={'verticals': leaning})
+        self.assertEqual([s['command'] for s in steps][-2:], ['filter.adaptiveWideAngle', 'studio.crop_empty'])
+
+    def test_straighten_uses_the_measured_tilt(self):
+        steps, notes, blocking, *_ = intents.compile_edits([edit('straighten')], STATE, analysis={'tilt': 0.0})
+        self.assertFalse(steps or blocking)
+        self.assertTrue(notes)
+        steps, *_ = intents.compile_edits([edit('straighten')], STATE, analysis={'tilt': 2.5})
+        self.assertEqual(steps[0]['params']['angle'], -2.5)
+        _, _, blocking, *_ = intents.compile_edits([edit('straighten')], STATE, analysis={'tilt': None})
+        self.assertTrue(blocking)
+
+    def test_center_and_move_objects(self):
+        steps, _, blocking, *_ = intents.compile_edits(
+            [edit('center_subject', target='main subject')], STATE, boxes={'the main subject': [[600, 300, 200, 300]]})
+        self.assertFalse(blocking)
+        crop = steps[0]['params']
+        self.assertEqual(crop['x'] + crop['width'] / 2, 700)
+        steps, _, blocking, *_ = intents.compile_edits(
+            [edit('transform_object', quote='move the mug to the left', object='the mug', position='left')],
+            STATE, boxes={'the mug': [[700, 400, 100, 120]]})
+        self.assertFalse(blocking)
+        moved = steps[0]['params']
+        # “To the left” shifts it by about its own width, not to the frame's edge.
+        self.assertEqual(moved['to'], [600, 400, 100, 120])
+
+    def test_moves_land_in_free_space(self):
+        move = edit('transform_object', quote='move the yellow mug to the left', object='the yellow mug',
+                    position='left')
+        self.assertEqual(planner.queries_for(move), ['the yellow mug', intents.FOREGROUND])
+        # The neighbour is too close for a full step: it stops in the gap, short of its neighbour.
+        row = [[100, 400, 100, 120], [520, 400, 100, 120], [700, 400, 100, 120]]
+        boxes = {'the yellow mug': [[700, 400, 100, 120]], intents.FOREGROUND: row}
+        steps, _, blocking, *_ = intents.compile_edits([move], STATE, boxes=boxes)
+        self.assertFalse(blocking)
+        tx = steps[0]['params']['to'][0]
+        self.assertTrue(620 < tx < 680, tx)
+        # A narrower gap: it jumps past the neighbour into the wide space beyond.
+        row[1] = [560, 400, 100, 120]
+        steps, *_ = intents.compile_edits([move], STATE, boxes=boxes)
+        tx = steps[0]['params']['to'][0]
+        self.assertTrue(200 < tx and tx + 100 < 560, tx)
+        # A tight row has no room: the person is asked instead of the mugs being stacked.
+        tight = {'the yellow mug': [[700, 400, 100, 120]],
+                 intents.FOREGROUND: [[0, 400, 220, 120], [230, 400, 220, 120], [460, 400, 220, 120],
+                                      [700, 400, 100, 120]]}
+        steps, _, blocking, *_ = intents.compile_edits([move], STATE, boxes=tight)
+        self.assertTrue(blocking)
+        self.assertFalse(steps)
+        # Unless overlapping is what they asked for.
+        over = {**move, 'quote': 'move the yellow mug left, in front of the blue one'}
+        steps, _, blocking, *_ = intents.compile_edits([over], STATE, boxes=tight)
+        self.assertFalse(blocking)
+        self.assertEqual(steps[0]['params']['to'][0], 600)
+        # A copy goes beside the original, clear of its neighbours.
+        copy = edit('transform_object', quote='duplicate the mug', object='the yellow mug', choice='duplicate')
+        steps, _, blocking, *_ = intents.compile_edits([copy], STATE, boxes=boxes)
+        self.assertFalse(blocking)
+        placed = steps[0]['params']['to']
+        self.assertFalse([box for box in row if intents.overlap(placed, box)], placed)
+
     def test_cutout_backdrop_goes_to_the_back(self):
         steps, *_ = intents.compile_edits([edit('remove_background', color='pastel pink')], STATE,
                                           boxes={'the main subject': [[200, 100, 400, 600]]})
@@ -234,6 +458,20 @@ class MeasureTests(unittest.TestCase):
         image = Image.new('RGB', (200, 100), (200, 200, 200))
         ImageDraw.Draw(image).rectangle((60, 30, 120, 90), fill=mug)
         return image
+
+    def test_a_flat_patch_is_not_a_clean_removal(self):
+        import random
+
+        random.seed(1)
+        textured = Image.new('RGB', (200, 100))
+        textured.putdata([(150 + random.randint(-30, 30),) * 3 for _ in range(200 * 100)])
+        before = textured.copy()
+        ImageDraw.Draw(before).rectangle((80, 30, 120, 70), fill=(40, 60, 200))
+        flat = textured.copy()
+        ImageDraw.Draw(flat).rectangle((80, 30, 120, 70), fill=(150, 150, 150))
+        box = [0.4, 0.3, 0.2, 0.4]
+        self.assertLess(intents.removal_score(before, textured, box), 0.45)
+        self.assertGreater(intents.removal_score(before, flat, box), 0.45)
 
     def test_recolor_is_measured_by_hue(self):
         edits = [edit('recolor', target='object', object='the mug', color='green')]

@@ -152,11 +152,7 @@ def understand(prompt, preview, state, area=None):
             'or “this area” mean that selection; do not ask where it is or guess a wider target. '
             'Choose target area. The engine protects everything outside the marks.'}]
     content.append({'type': 'text', 'text': f'{describe(state)}\n\nRequest: {prompt}'})
-    answer = brain.chat(
-        system_prompt(),
-        content,
-        schema=UNDERSTAND_SCHEMA, max_tokens=2600, temperature=0.0,
-    )
+    answer = brain.chat(system_prompt(), content, schema=UNDERSTAND_SCHEMA, max_tokens=2600, temperature=0.0)
     edits, notes = [], []
     preserve = [p for p in answer.get('preserve') or [] if p.strip()]
     for raw in answer.get('edits') or []:
@@ -166,14 +162,32 @@ def understand(prompt, preview, state, area=None):
             preserve.append(edit['quote'])
         else:
             edits.append(edit)
+    edits = intents.expand(edits + intents.rescue(prompt, edits), preserve)
     return edits, preserve, [q for q in answer.get('questions') or [] if q.strip()], notes
+
+
+def queries_for(edit):
+    """Everything that must be found in the picture for this edit (a retouch may need the faces
+    and the eyes)."""
+    if edit['action'] == 'retouch_portrait':
+        return intents.retouch_queries(edit)
+    query = needs_boxes(edit)
+    if query and intents.moves_among_others(edit):
+        return [query, intents.FOREGROUND]
+    return [query] if query else []
 
 
 def needs_boxes(edit):
     """The description of what must be found in the picture for this edit, or None."""
+    if edit['action'] == 'retouch_portrait':
+        return (intents.retouch_queries(edit) or [None])[0]
     if edit['action'] == 'remove_object':
         return edit['object'] or None
-    whole_picture = ('remove_background', 'blur_background', 'crop_to_object', 'crop_aspect')
+    if edit['action'] == 'resize':
+        # A format with another shape is cut around the subject.
+        return 'the main subject' if intents.resize_may_crop(edit['quote']) else None
+    whole_picture = ('remove_background', 'blur_background', 'crop_to_object', 'crop_aspect', 'passport_photo',
+                     'drop_shadow', 'center_subject', 'transform_object', 'headshot', 'reflection')
     if edit['target'] == 'sky' and edit['action'] not in whole_picture:
         return intents.FOREGROUND  # cut out of the sky so edits leave no halo around them
     if edit['target'] in ('color', 'shadows', 'midtones', 'highlights', 'area', 'layer') and \
@@ -182,6 +196,20 @@ def needs_boxes(edit):
     if edit['target'] == 'whole image' and edit['action'] not in whole_picture:
         return None
     return intents.subject_query(edit) or None
+
+
+def teeth_showing(preview):
+    """Whether any teeth are visible. The box finder boxes closed lips as “the teeth”, and pixel
+    tests could not tell small warm-lit smiles from lip highlights (measured 2026-10-11)."""
+    answer = brain.chat(
+        'You look at photos and answer exactly.',
+        [brain.image_part(preview), {'type': 'text', 'text':
+            'Are any teeth visible in this photo (a mouth open or smiling with teeth showing)? '
+            'JSON: {"teeth_visible": true or false}'}],
+        schema={'type': 'object', 'properties': {'teeth_visible': {'type': 'boolean'}},
+                'required': ['teeth_visible'], 'additionalProperties': False},
+        max_tokens=40, temperature=0.0)
+    return bool(answer.get('teeth_visible'))
 
 
 def phrase_for(query, quote):
@@ -204,6 +232,9 @@ def locate(preview, queries, state, hints=None):
         described = query
         if query == 'the main subject':
             described = 'the main subject of the photo (the person, animal or product it is about)'
+        elif query == intents.PASSPORT_HEAD:
+            # Measured on a portrait: “the person's head” alone found no box.
+            described = "the person's head, from the top of the hair to the chin"
         elif query == intents.FOREGROUND:
             described = 'every person, animal and object standing in front of the background, each one separately'
         boxes = find_boxes_brain(preview, described)
