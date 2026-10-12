@@ -164,7 +164,7 @@ class AreaCompiler(intents.Compiler):
         self.end_selection(index)
 
     def do_blur_background(self, index, edit):
-        self.group_effect(index, {**edit, 'action': 'blur'})
+        self.run('blur', index, {**edit, 'action': 'blur'})
 
 
 def compile_area(edits, state, area, fonts=(), ai=False):

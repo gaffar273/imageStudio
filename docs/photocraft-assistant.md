@@ -35,9 +35,11 @@ person's exact words:
  "position": "", "size": "", "aspect": "", "choice": ""}
 ```
 
-There are about 60 actions: geometry, raw development, adjustment layers, looks, filters, cut-outs,
-text and graphics, layer housekeeping, `other` (any registry command, with settings checked against
-its spec) and `generate` (new content painted by FLUX.1 Kontext). The guards are:
+Each `action` is the id of a registered pipeline: 115 of them, 24 of which are whole professional
+workflows (see [pipeline-engine.md](pipeline-engine.md) and the generated [pipelines.md](pipelines.md)).
+They cover geometry, raw development, adjustment layers, looks, filters, cut-outs, text and graphics,
+layer housekeeping, `generate` (new content painted by FLUX.1 Kontext) and `other` (up to three registry
+commands chosen by the model, run with their own default settings). The guards are:
 
 - **Numbers.** A `value` is kept only if that number appears in the request. Otherwise the strength
   word decides ("slightly" is subtle, "very" is strong).
@@ -47,6 +49,12 @@ its spec) and `generate` (new content painted by FLUX.1 Kontext). The guards are
   "Not understood", never silently dropped.
 - **Layer edits.** Layer actions are only accepted when the request talks about layers. Otherwise the
   clause becomes a keep-unchanged note.
+- **Fit.** A pipeline can declare what the words must say for it to fit (the colour-splash workflow needs
+  “black and white” or “in colour”). A choice that does not fit is asked again for that clause alone,
+  with the rejected pipeline off the menu: “make the water more turquoise” once came back as colour
+  splash and “make the sunset colours more vivid” as a shadow tint.
+- **Positions.** When a pipeline places something and the planner left the position empty, the words
+  give it (“move the yellow mug to the left”).
 
 ## Compiling
 

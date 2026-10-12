@@ -83,7 +83,7 @@ CASES = [
     ('portrait', 'man', 'professional headshot for linkedin', ['headshot']),
     ('portrait', 'woman', 'dodge and burn to add dimension to her face', ['retouch_portrait|contrast|clarity']),
     ('portrait', 'woman', 'remove the wrinkles', ['retouch_portrait|texture']),
-    ('portrait', 'man', 'sharpen his eyes', ['sharpen']),
+    ('portrait', 'man', 'sharpen his eyes', ['sharpen|high_pass_sharpen|retouch_portrait']),
     ('portrait', 'woman', 'warm up her skin tone slightly', ['temperature']),
     ('portrait', 'woman', 'fix the orange skin tone', ['temperature|hue_shift|saturation|auto_fix']),
     # Backgrounds
@@ -100,26 +100,26 @@ CASES = [
     # Color and tone
     ('color', 'room', 'fix the white balance', ['auto_fix|temperature']),
     ('color', 'room', 'auto enhance', ['auto_fix|look']),
-    ('color', 'room', 'the photo is too dark, brighten it', ['brightness|exposure']),
+    ('color', 'room', 'the photo is too dark, brighten it', ['brightness|exposure|exposure_fix']),
     ('color', 'town', 'recover the blown out sky', ['highlights']),
     ('color', 'town', 'make it pop', ['vibrance|saturation|clarity|contrast|look']),
-    ('color', 'town', 'teal and orange color grade', ['look|color_grade']),
+    ('color', 'town', 'teal and orange color grade', ['look|color_grade|split_tone']),
     ('color', 'town', 'golden hour look', ['look|color_filter|temperature']),
     ('color', 'woman', 'film look like kodak portra', ['look']),
     ('color', 'mugs', 'keep only the red mug in color and make everything else black and white',
-     ['black_and_white']),
+     ['black_and_white|keep_one_color|color_splash']),
     ('color', 'town', 'make the sky bluer', ['saturation|recolor|color_grade']),
     ('color', 'town', 'make the water more turquoise', ['recolor|hue_shift|color_grade']),
     ('color', 'room', 'remove the yellow color cast', ['auto_fix|temperature|color_filter']),
     ('color', 'room', 'lower the contrast and lift the blacks for a matte look', ['look|contrast|blacks']),
     ('color', 'town', 'make it look like night', ['look']),
-    ('color', 'woman', 'split tone with blue shadows and warm highlights', ['color_grade']),
+    ('color', 'woman', 'split tone with blue shadows and warm highlights', ['color_grade|split_tone']),
     ('color', 'town', 'HDR effect', ['look']),
     ('color', 'group', 'make the colors more natural', ['saturation|vibrance']),
     ('color', 'room', 'levels auto contrast', ['auto_fix|contrast']),
     # Restoration and technical
     ('repair', 'room', 'reduce the noise', ['noise_reduction']),
-    ('repair', 'woman', 'remove dust and scratches', ['restore|noise_reduction']),
+    ('repair', 'woman', 'remove dust and scratches', ['restore|noise_reduction|dust_cleanup']),
     ('repair', 'man', 'the photo is blurry, make it sharper', ['sharpen']),
     ('repair', 'town', 'straighten the horizon', ['straighten']),
     ('repair', 'street', 'fix the perspective so the walls are vertical', ['perspective']),
@@ -186,7 +186,7 @@ CASES = [
     ('graphics', 'town', 'add the text "Visit Italy" at the top in bold white', ['add_text']),
     ('graphics', 'man', 'add a watermark "© Abdul" in the bottom right corner, semi transparent', ['add_text']),
     ('graphics', 'room', 'add a thin white border', ['canvas_border|frame']),
-    ('graphics', 'woman', 'add a polaroid frame', ['canvas_border|picture_frame|frame']),
+    ('graphics', 'woman', 'add a polaroid frame', ['canvas_border|picture_frame|frame|polaroid']),
     ('graphics', 'town', 'add a dark gradient at the bottom so text is readable', ['gradient_overlay']),
     ('graphics', 'puppy', 'add a caption "Max, 3 months" at the bottom', ['add_text']),
     ('graphics', 'mugs', 'put a 20% OFF sale badge in the top right', ['add_text|badge']),
@@ -198,6 +198,47 @@ CASES = [
         'temperature|look', 'texture|retouch_portrait']),
     ('combined', 'town', 'straighten, crop to 16:9 and add "SUMMER 2026" at the bottom', [
         'straighten', 'crop_aspect', 'add_text']),
+    # Whole jobs: one professional workflow each (a plan made of the same procedures also passes)
+    ('workflow', 'mugs', 'get this product photo ready for Amazon', ['product_marketplace']),
+    ('workflow', 'mugs', 'cut out the mugs on a transparent background for my website',
+     ['product_transparent|remove_background']),
+    ('workflow', 'mugs', 'make the mugs look premium and crisp for the shop', ['product_polish|clarity|sharpen']),
+    ('workflow', 'woman', 'retouch this portrait professionally, magazine ready', ['portrait_finish|retouch_portrait']),
+    ('workflow', 'man', 'make a corporate headshot with a grey studio background', ['headshot_studio|headshot']),
+    ('workflow', 'room', 'edit this room for a real estate listing', ['real_estate_interior']),
+    ('workflow', 'street', 'edit this building photo for a property listing',
+     ['real_estate_exterior|real_estate_interior|perspective']),
+    ('workflow', 'town', 'enhance this landscape', ['landscape_enhance']),
+    ('workflow', 'town', 'make the sunset colors more vivid', ['sunset_enhance|saturation|vibrance']),
+    ('workflow', 'room', 'fix this photo', ['photo_correction']),
+    ('workflow', 'woman', 'give it a light and airy wedding edit', ['wedding_airy|look']),
+    ('workflow', 'street', 'turn it into a dramatic fine art black and white', ['fine_art_bw|black_and_white']),
+    ('workflow', 'man', 'make a youtube thumbnail with the title "I QUIT"', ['youtube_thumbnail|resize']),
+    ('workflow', 'town', 'get this ready to post on instagram', ['social_post|resize|crop_aspect']),
+    ('workflow', 'town', 'export it for my website', ['web_export|resize']),
+    ('workflow', 'town', 'prepare it for printing as an 8x10', ['print_prep|resize']),
+    ('workflow', 'woman', 'make her stand out from the background', ['subject_pop|blur_background|exposure']),
+    ('workflow', 'woman', 'keep only her in color and make the rest black and white', ['color_splash|black_and_white']),
+    ('workflow', 'street', 'make it look like a still from a movie', ['cinematic_film|look']),
+    ('workflow', 'puppy', 'make it look like an old polaroid', ['instant_photo|polaroid']),
+    ('workflow', 'town', 'make the town look like a miniature toy model', ['miniature_world|tilt_shift']),
+    ('workflow', 'puppy', 'make a nice pet portrait of the puppy', ['pet_portrait|blur_background']),
+    ('workflow', 'woman', 'clean up this old scanned print', ['scan_restore|restore']),
+    # Measured and technique pipelines
+    ('technique', 'room', 'this photo is too dark', ['exposure_fix|exposure|brightness']),
+    ('technique', 'town', 'add a graduated filter to darken the sky at the top', ['graduated_filter']),
+    ('technique', 'room', 'the window is blown out, bring back the view outside', ['window_pull|highlights']),
+    ('technique', 'group', 'the people are too dark against the bright sky', ['backlit_fix|shadows|exposure']),
+    ('technique', 'town', 'split tone with teal shadows and orange highlights', ['split_tone|color_grade']),
+    ('technique', 'mugs', 'make everything black and white except the red', ['keep_one_color']),
+    ('technique', 'town', 'add an S curve for more punch', ['tone_curve|contrast']),
+    ('technique', 'town', 'make the trees look autumnal', ['season|hue_shift']),
+    ('technique', 'room', 'crop it using the rule of thirds around the cat', ['compose']),
+    ('technique', 'mugs', 'use high pass sharpening on the mugs', ['high_pass_sharpen|sharpen']),
+    ('technique', 'town', 'add a warm light leak in the top right corner', ['light_leak']),
+    ('technique', 'street', 'add cinematic black bars at the top and bottom', ['letterbox']),
+    ('technique', 'puppy', 'give it a white polaroid frame', ['polaroid']),
+    ('technique', 'town', 'clean the dust spots off this scan', ['dust_cleanup|restore']),
 ]
 
 
@@ -240,7 +281,9 @@ def run_case(category, photo, prompt, expected, photos):
     except Exception as exc:  # noqa: BLE001 - a crash is a failure to report, not a reason to stop
         return {'category': category, 'photo': photo, 'prompt': prompt, 'expected': expected, 'passed': False,
                 'error': f'{type(exc).__name__}: {exc}', 'seconds': round(time.time() - started, 1)}
-    actions = [edit['action'] for edit in plan['edits']]
+    # A workflow counts by its own name too (its parts are the procedures it expanded into).
+    actions = [edit['action'] for edit in plan['edits']] + sorted(
+        {edit['workflow'] for edit in plan['edits'] if edit.get('workflow')})
     remaining = list(actions)
     missing = []
     asks = 'ask' in expected

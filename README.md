@@ -60,7 +60,8 @@ text-to-image/
 │   │   ├── api/             # FastAPI routes and request validation
 │   │   ├── core/            # Inference engine, model catalog, stable paths
 │   │   ├── services/        # Workflows, jobs, library, search, image processing
-│   │   ├── integrations/    # Krita bridge and plugin installer
+│   │   ├── pipelines/       # Every edit as a pipeline: registry, library/, measure, checks, models/
+│   │   ├── integrations/    # PhotoCraft planner, builder and workspace; Krita bridge and plugin installer
 │   │   ├── workers/         # Isolated image-search worker
 │   │   ├── cli/             # Start/stop and model download commands
 │   │   └── __main__.py      # Local server entry point
@@ -151,6 +152,10 @@ the tool rail:
   it found on the canvas, and lists what it will keep and anything it did not understand. After you
   apply it, a **result check** measures each requirement (aspect ratio, exact text and placement,
   colours, brightness direction…) and adds the vision model's review.
+- **Pipelines**: every professional procedure and whole job the engine knows (115 of them: product
+  listings, real-estate interiors, full portrait retouching, graduated filters, split toning, film
+  looks…). Pick one, fill in its few choices and run it. These are the same pipelines the assistant
+  chooses from.
 - **Adjust, Looks, Crop, Select, Text, Filters**: dedicated panels with sliders and choices. They use
   the same exact compiler as the assistant, so manual and typed edits behave the same.
 - **All tools**: all 858 PhotoCraft engine commands, with controls generated from their parameter
@@ -163,6 +168,28 @@ overwritten. Small blemishes are removed with content-aware fill. Larger objects
 content ("add a sailboat", "replace the sky"), are painted by FLUX.1 Kontext and come back as a masked
 layer, which needs the editing model installed. How requests are understood, compiled and checked is
 described in [docs/photocraft-assistant.md](docs/photocraft-assistant.md).
+
+### The pipeline engine and any model
+
+Every edit is a **pipeline** in code (`backend/image_studio/pipelines/`): what must be found and
+measured, the exact PhotoCraft commands and settings, the retoucher's order, and measured checks.
+The language model only chooses pipelines from a closed menu; it never writes a setting. The design,
+and what running every pipeline in the real engine taught, is in
+[docs/pipeline-engine.md](docs/pipeline-engine.md); the full list is generated into
+[docs/pipelines.md](docs/pipelines.md) by `python scripts/pipeline_catalog.py`.
+
+The model is replaceable per role (planner, grounder, checker): the bundled local model (default), any
+OpenAI-compatible server (Ollama, LM Studio, vLLM, OpenAI, Gemini, OpenRouter) or Claude. Answers are
+validated against the schema, repaired where that needs no guess, and asked for again otherwise; a
+choice whose pipeline does not fit the words is re-asked with that pipeline off the menu.
+
+```powershell
+# which model answers each role
+curl http://127.0.0.1:7860/api/photocraft/models
+# connect the planner to a local Ollama model (keys, when needed, stay in environment variables)
+curl -X PUT http://127.0.0.1:7860/api/photocraft/models -H "Content-Type: application/json" `
+     -d '{"role": "planner", "preset": "ollama", "model": "qwen2.5vl:7b"}'
+```
 
 **Edit image** still offers a one-step PhotoCraft light-and-colour option for quick presets.
 **Open desktop** hands a native copy to the PhotoCraft app; save there and use **Sync saved changes**

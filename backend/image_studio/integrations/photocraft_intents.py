@@ -17,6 +17,7 @@ text and graphics on the final canvas, where color changes cannot tint them.
 import colorsys
 import math
 import re
+from collections.abc import Mapping
 
 # ---- Vocabulary -----------------------------------------------------------------------------
 
@@ -63,114 +64,30 @@ ADJUST = {
     'threshold': ('threshold', 'level', 128, 1, 255),
 }
 
-ACTIONS = {
-    # layer housekeeping
-    'layer_opacity': ('layer', 'change an existing layer’s opacity (object = layer name, value = %)'),
-    'layer_visibility': ('layer', 'hide (decrease) or show (increase) an existing layer (object = layer name)'),
-    'layer_delete': ('layer', 'delete an existing layer (object = layer name)'),
-    'layer_rename': ('layer', 'rename an existing layer (object = old name, text = new name)'),
-    'layer_blend': ('layer', 'set an existing layer’s blend mode (object = layer name, choice = mode)'),
-    # geometry
-    'crop_aspect': ('geometry', 'crop to an aspect ratio (aspect like 1:1, 4:5, 16:9; position or main subject/object '
-                                'target says what to keep)'),
-    'crop_to_object': ('geometry', 'crop tightly around a named object or the main subject'),
-    'rotate': ('geometry', 'rotate by degrees (value; choice clockwise/counterclockwise)'),
-    'straighten': ('geometry', 'level a tilted horizon by a small number of degrees (value)'),
-    'flip': ('geometry', 'mirror the picture (choice horizontal/vertical)'),
-    'resize': ('geometry', 'output size, print size or resolution: pixels (1080x1350, 2000 px wide, 50%, 2x '
-                           'bigger, half), print (4x6 inch, A4, 300 dpi), formats (instagram post or story, youtube '
-                           'thumbnail, linkedin or facebook cover, 4k, wallpaper)'),
-    'center_subject': ('geometry', 'crop so the main subject or object sits exactly in the middle with even '
-                                   'margins'),
-    'perspective': ('geometry', 'make leaning walls, buildings or doors vertical (upright, keystone, perspective)'),
-    'lens_correction': ('geometry', 'fix lens faults: barrel or fisheye distortion, chromatic aberration (color '
-                                    'fringes), dark lens corners (choice = distortion, fringes, vignette or all)'),
-    'fit_canvas': ('geometry', 'fit the whole picture into a new shape (aspect) WITHOUT cutting anything, filling the '
-                               'empty sides with color (letterbox, white bars, padding to square)'),
-    'convert_mode': ('output', 'convert the document color mode (choice = cmyk, grayscale, rgb, 16-bit, 8-bit)'),
-    'canvas_border': ('geometry', 'add an outer border/padding around the picture (value = px, color)'),
-    'passport_photo': ('geometry', 'passport, ID or visa photo: head-and-shoulders crop on a plain backdrop at the '
-                                   'printed size in the quote (e.g. 35x45 mm, 2x2 inch); color = backdrop color'),
-    # pixel retouching
-    'remove_object': ('retouch', 'erase an object, person or thing and fill the area (object = what)'),
-    'transform_object': ('retouch', 'move, resize or duplicate one object (object = what; choice = move, bigger, '
-                                    'smaller or duplicate; position = where it goes)'),
-    'restore': ('retouch', 'restore an old or damaged photo: scratches, dust, stains, creases, fading'),
-    'retouch_portrait': ('retouch', 'portrait retouching of faces: choice = smooth skin, blemishes (pimples, acne, '
-                                    'spots), wrinkles, even skin tone, dark circles, shine, whiten teeth, brighten '
-                                    'eyes, red eye, sculpt (dodge and burn)'),
-    # raw development (global) or a local develop layer (targeted)
-    **{name: ('develop', label) for name, label in {
-        'exposure': 'exposure in stops (value in EV)',
-        'highlights': 'recover (decrease) or boost bright areas',
-        'shadows': 'lift (increase) or deepen shadow areas',
-        'whites': 'white point',
-        'blacks': 'black point',
-        'clarity': 'midtone local contrast, punch',
-        'texture': 'fine detail and skin texture (decrease to smooth skin)',
-        'dehaze': 'cut (increase) or add haze/fog',
-        'temperature': 'white balance warmer (increase) or cooler (decrease)',
-        'tint': 'white balance toward magenta (increase) or green (decrease)',
-        'sharpen': 'sharpen details',
-        'noise_reduction': 'reduce noise or grain',
-        'grain': 'add film grain',
-        'vignette': 'darken (decrease) or lighten (increase) the edges',
-    }.items()},
-    # adjustment layers (global or masked to the target)
-    'auto_fix': ('adjust', 'automatic correction measured from the photo: choice = tone (auto levels), contrast, '
-                           'or color (white balance, color cast)'),
-    'brightness': ('adjust', 'overall brightness'),
-    'contrast': ('adjust', 'contrast'),
-    'saturation': ('adjust', 'color saturation'),
-    'vibrance': ('adjust', 'vibrance, gentle saturation that protects skin'),
-    'hue_shift': ('adjust', 'rotate hues by degrees (value)'),
-    'recolor': ('adjust', 'change the color of the target to color (e.g. make the car red)'),
-    'color_grade': ('adjust', 'tint shadows/midtones/highlights toward color (target = tone)'),
-    'color_filter': ('adjust', 'photo filter: warm, cool, sepia or a colored filter (color or choice)'),
-    'look': ('adjust', 'a named look: choice = cinematic, vintage, moody, dramatic, bright and airy, matte, '
-                       'hdr, professional polish, warm portrait, pop art, golden hour, kodak portra, cyberpunk, '
-                       'high key, low key, orton, bleach bypass, ' + ', '.join(LUTS)),
-    'black_and_white': ('adjust', 'black and white (choice: neutral, high contrast, infrared; color = tint)'),
-    'sepia': ('adjust', 'sepia toned black and white'),
-    'duotone': ('adjust', 'two-color gradient map (color = "dark color and light color")'),
-    'invert': ('adjust', 'invert colors (negative)'),
-    'posterize': ('adjust', 'posterize into a number of levels (value)'),
-    'threshold': ('adjust', 'pure black and white threshold (value 1..255)'),
-    # filters and effects
-    'blur': ('effect', 'soften/blur the target'),
-    'blur_background': ('cutout', 'blur behind the main subject (portrait/bokeh look)'),
-    'motion_blur': ('effect', 'motion blur (value = distance)'),
-    'radial_blur': ('effect', 'zoom blur or spin blur from a point (choice = zoom or spin, position = center)'),
-    'glow': ('effect', 'soft glow or bloom (Orton effect, glowing lights or neon); target = what glows'),
-    'mirror': ('effect', 'mirror one half of the picture onto the other (choice = left, right, top or bottom = the '
-                         'half that is kept)'),
-    'drop_shadow': ('effect', 'soft contact shadow under the main subject or objects, as if standing on a surface'),
-    'reflection': ('effect', 'a mirror reflection of the subject or objects on the surface below them'),
-    'tilt_shift': ('effect', 'miniature tilt-shift blur, sharp band at position'),
-    'lens_flare': ('effect', 'lens flare at position'),
-    'relight': ('effect', 'add directional light coming from position (color = light color)'),
-    'artistic': ('effect', 'artistic filter, choice = oil paint, watercolor, pencil, cutout, dry brush, poster edges, '
-                           'ink outlines, sponge, emboss, find edges, solarize, pixelate, halftone…'),
-    # cut-outs
-    'remove_background': ('cutout', 'cut out the main subject; color = new backdrop color or transparent'),
-    # text and graphics
-    'add_text': ('graphics', 'add text: text = EXACT words, position, color, size or value in pt, choice = font '
-                             'or style (bold, italic, serif, script, shadow, outline, glow)'),
-    'edit_text': ('graphics', 'change the words of an existing text layer (object = current text, text = new)'),
-    'frame': ('graphics', 'draw a frame line inside the edges (value = px, color)'),
-    'gradient_overlay': ('graphics', 'a gradient that darkens (or tints with color) from one edge, e.g. behind '
-                                     'text (position = the darkest edge)'),
-    'round_corners': ('graphics', 'round the corners of the picture (color = what shows in the corners)'),
-    'weather': ('effect', 'add falling rain or snow (choice = rain or snow)'),
-    'headshot': ('geometry', 'professional headshot: head-and-shoulders crop with a gentle polish (aspect if '
-                             'named, square for profile pictures)'),
-    'picture_frame': ('graphics', 'decorative frame, choice = roses, ivy, bamboo, waves, dots, stars, hearts…'),
-    'color_overlay': ('graphics', 'semi-transparent color layer over the image (color, value = opacity %)'),
-    # the rest
-    'other': ('expert', 'any other PhotoCraft capability not listed (describe it in choice)'),
-    'generate': ('ai', 'new content painted by AI as its own layer: add an object or person, replace the sky '
-                       'with a new one, change clothing or materials (target says where)'),
-}
+class _Actions(Mapping):
+    """{pipeline id: (stage, what the planner reads)} for every registered pipeline. The edit
+    language's `action` is a pipeline id; image_studio.pipelines holds the pipelines themselves."""
+
+    _data = None
+
+    def _load(self):
+        if _Actions._data is None:
+            from image_studio.pipelines import REGISTRY
+
+            _Actions._data = {p.id: (p.stage, p.summary) for p in REGISTRY.values()}
+        return _Actions._data
+
+    def __getitem__(self, key):
+        return self._load()[key]
+
+    def __iter__(self):
+        return iter(self._load())
+
+    def __len__(self):
+        return len(self._load())
+
+
+ACTIONS = _Actions()
 GROUP_ORDER = ['layer', 'retouch', 'develop', 'ai', 'adjust', 'effect', 'cutout', 'geometry', 'graphics', 'output',
                'expert']
 AI_REMOVAL_AREA = 0.015  # larger objects are rebuilt by AI; content-aware fill smears them (measured)
@@ -806,7 +723,27 @@ def normalize(edit, prompt):
         result['text'] = exact_text(result['text'], quote, prompt)
         if not result['text']:
             notes.append('Which words should the text say? Put them in quotes.')
+    from image_studio.pipelines import get
+
+    pipeline = get(result['action'])
+    if not result['position'] and pipeline is not None and 'position' in pipeline.summary:
+        # “Move the yellow mug to the left” once came back with no position at all.
+        result['position'] = position_from_words(quote)
+    if result['action'] != 'keep' and pipeline is not None and not pipeline.fits(result):
+        result['misfit'] = True  # the planner is asked again for this clause (photocraft_planner.understand)
     return result, notes
+
+
+def position_from_words(text):
+    """A position the words name (“to the left”, “at the bottom right”, “in the top corner”), or ''."""
+    # Quoted words are a title's text (“Turn Right”), not where it goes.
+    lowered = re.sub(r'["“”«»][^"“”«»]*["“”«»]', ' ', (text or '').lower())
+    vertical = 'top' if re.search(r'\b(top|upper|up)\b', lowered) else \
+        'bottom' if re.search(r'\b(bottom|lower|down)\b', lowered) else ''
+    horizontal = 'left' if re.search(r'\bleft\b', lowered) else 'right' if re.search(r'\bright\b', lowered) else ''
+    if not (vertical or horizontal):
+        return 'center' if re.search(r'\b(cent(er|re)|middle)\b', lowered) else ''
+    return ' '.join(part for part in (vertical, horizontal) if part)
 
 
 RESCUES = [  # (words, action, fields): requests too technical to misread, kept even when the planner drops them
@@ -836,9 +773,32 @@ def rescue(prompt, edits):
     return added
 
 
-def expand(edits, preserve=()):
-    """Edits that one request implies: a passport photo needs a plain backdrop, which is a
-    cut-out made before the crop (white unless a color is named or the background is kept)."""
+def expand_workflows(edits, prompt=''):
+    """Each workflow replaced by the procedures it is made of. A part the person also asked for
+    in their own words (the same pipeline on the same target) is left to their edit, so “edit
+    this room for a listing and brighten it a lot” brightens once, as strongly as they asked."""
+    from image_studio.pipelines import get
+
+    explicit = [edit for edit in edits if not (get(edit['action']) and get(edit['action']).workflow)]
+    result = []
+    for edit in edits:
+        pipeline = get(edit['action'])
+        if not (pipeline and pipeline.workflow):
+            result.append(edit)
+            continue
+        for part in pipeline.expand(edit, prompt or edit['quote']):
+            if any(other['action'] == part['action'] and other['target'] == part['target'] for other in explicit):
+                continue
+            part['source'] = edit['quote']  # the person's words this part answers
+            result.append(part)
+    return result
+
+
+def expand(edits, preserve=(), prompt=''):
+    """Edits that one request implies: each workflow's procedures; a passport photo needs a plain
+    backdrop, which is a cut-out made before the crop (white unless a color is named or the
+    background is kept); a headshot is polished and lightly retouched."""
+    edits = expand_workflows(edits, prompt)
     result = list(edits)
     keeps_background = any(re.search(r'\bback\s*ground|backdrop', text, re.IGNORECASE) for text in preserve)
     for edit in edits:
@@ -879,7 +839,7 @@ def exact_text(text, quote, prompt):
 
 def uncovered_clauses(prompt, edits, preserve):
     """Parts of the request that no edit or preservation note accounts for."""
-    covered = ' '.join([edit['quote'] for edit in edits] + list(preserve)).lower()
+    covered = ' '.join([f'{edit["quote"]} {edit.get("source", "")}' for edit in edits] + list(preserve)).lower()
     covered_words = set(re.findall(r'[a-z0-9]{3,}', covered))
     filler = {'please', 'the', 'and', 'then', 'also', 'make', 'image', 'photo', 'picture', 'can', 'you', 'this',
               'that', 'with', 'want', 'would', 'like', 'thanks', 'thank', 'should', 'need', 'just', 'its', 'it'}
@@ -1190,19 +1150,27 @@ class Compiler:
 
     # -- compiling each group
     def compile(self, edits):
-        ordered = sorted(range(len(edits)), key=lambda i: (GROUP_ORDER.index(group(edits[i]))
-                                                           if group(edits[i]) in GROUP_ORDER else 99, i))
+        """Build every edit with its pipeline, in stage order (the retoucher's order)."""
+        from image_studio.pipelines import STAGES, get
+
+        def rank(i):
+            pipeline = get(edits[i]['action'])
+            return (STAGES.index(pipeline.stage) if pipeline and pipeline.stage in STAGES else 99, i)
+
+        self.edits = edits
         self.clip = any(e['action'] == 'remove_background' and hex_color(e['color']) for e in edits)
-        for index in ordered:
+        for index in sorted(range(len(edits)), key=rank):
             edit = edits[index]
-            kind = group(edit)
-            handler = getattr(self, f'do_{edit["action"]}', None) or getattr(self, f'group_{kind}', None)
-            if handler is None:
-                self.blocking.append(f'“{edit["quote"]}” is not something this workspace can do yet.')
-                continue
-            if kind != 'develop' and self.raw:
+            if group(edit) != 'develop' and self.raw:
                 self.flush_raw()
-            handler(index, edit)
+            marks = (len(self.steps), len(self.blocking), len(self.regions), len(self.notes))
+            self.run(edit['action'], index, edit)
+            if edit.get('optional') and len(self.blocking) > marks[1]:
+                # A part of a workflow that does not apply to this photo is skipped, not a reason to stop.
+                reasons = self.blocking[marks[1]:]
+                del self.steps[marks[0]:], self.blocking[marks[1]:], self.regions[marks[2]:]
+                self.raw.pop(index, None)
+                self.notes.append(f'Skipped “{edit["quote"]}”: ' + ' '.join(reasons))
         self.flush_raw()
         for region in self.regions:
             final, pairs = [], []
@@ -1223,6 +1191,26 @@ class Compiler:
                                   'picture, so that change will not be visible.')
         return self.steps
 
+    def run(self, pipeline_id, index, edit):
+        """Build one procedure. A builder subclass may override a pipeline with a method named
+        do_<pipeline id> (the marked-area builder limits removals and blurs to the marks)."""
+        from image_studio.pipelines import get
+
+        override = getattr(self, f'do_{pipeline_id}', None)
+        if override is not None:
+            return override(index, edit)
+        pipeline = get(pipeline_id)
+        if pipeline is None or pipeline.build is None:
+            self.blocking.append(f'“{edit["quote"]}” is not something this workspace can do yet.')
+            return None
+        first = len(self.steps)
+        result = pipeline.build(self, index, edit)
+        for step in self.steps[first:]:
+            step.setdefault('pipeline', pipeline_id)
+            if edit.get('optional'):
+                step['optional'] = True  # if it fails in the engine, only this part is skipped
+        return result
+
     def flush_raw(self):
         if not self.raw:
             return
@@ -1236,614 +1224,10 @@ class Compiler:
                            'requirements': sorted(indices)})
         self.raw = {}
 
-    def group_layer(self, index, edit):
-        layer = self.layer_named(edit['object'] or edit['choice'])
-        if layer is None:
-            self.blocking.append(f'Which layer does “{edit["quote"]}” mean? Use its name from the Layers panel.')
-            return
-        action, lid, name = edit['action'], layer['id'], layer['name']
-        if action == 'layer_opacity':
-            if edit['value'] is None:
-                self.blocking.append(f'What opacity should “{name}” have? Give a percentage.')
-                return
-            self.add(index, 'layer.setProps', {'layer': lid, 'opacity': max(0, min(100, edit['value'])) / 100},
-                     f'Set “{name}” to {edit["value"]:g}% opacity')
-        elif action == 'layer_visibility':
-            visible = edit['direction'] == 'increase' or 'show' in edit['quote'].lower()
-            self.add(index, 'layer.setProps', {'layer': lid, 'visible': visible},
-                     f'{"Show" if visible else "Hide"} “{name}”')
-        elif action == 'layer_delete':
-            self.add(index, 'layer.delete', {'layer': lid}, f'Delete “{name}”')
-        elif action == 'layer_rename':
-            if not edit['text']:
-                self.blocking.append('What should the new layer name be?')
-                return
-            self.add(index, 'layer.renameLayer', {'layer': lid, 'name': edit['text'][:80]},
-                     f'Rename “{name}” to “{edit["text"][:40]}”')
-        elif action == 'layer_blend':
-            mode = (edit['choice'] or '').strip().title().replace(' ', '')
-            if not mode:
-                self.blocking.append('Which blend mode, for example Multiply, Screen, Overlay or Soft Light?')
-                return
-            mode = {'Softlight': 'Soft Light', 'Hardlight': 'Hard Light', 'Lineardodge': 'Linear Dodge'}.get(mode, mode)
-            self.add(index, 'layer.setProps', {'layer': lid, 'blend': mode}, f'Blend “{name}” with {mode}')
-
-    def do_crop_aspect(self, index, edit):
-        ratio = aspect_from(edit['aspect'])
-        if not ratio:
-            self.blocking.append(f'Which shape should “{edit["quote"]}” crop to, for example 1:1 or 4:5?')
-            return
-        focus = None
-        if subject_query(edit):
-            _, boxes = self.target_boxes(edit)
-            if boxes:
-                xs = [b[0] for b in boxes] + [b[0] + b[2] for b in boxes]
-                ys = [b[1] for b in boxes] + [b[1] + b[3] for b in boxes]
-                focus = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
-        self.crop(index, *largest_crop(self.canvas.width, self.canvas.height, ratio, focus, edit['position']),
-                  f'Crop to {edit["aspect"]}' + (' around the subject' if focus else ''))
-
-    def do_crop_to_object(self, index, edit):
-        if aspect_from(edit['aspect']) and re.search(r'\bcent(er|re)(e?d)?\b|\bkeep', edit['quote'], re.IGNORECASE):
-            # “A square centered on her face” is the largest square around the face, not a tight crop.
-            self.do_crop_aspect(index, edit)
-            return
-        key, boxes = self.target_boxes(edit)
-        if not boxes:
-            self.blocking.append(f'Could not find {key or "what to crop to"} in the picture.')
-            return
-        xs = [b[0] for b in boxes] + [b[0] + b[2] for b in boxes]
-        ys = [b[1] for b in boxes] + [b[1] + b[3] for b in boxes]
-        margin = round(max(max(xs) - min(xs), max(ys) - min(ys)) * 0.08)
-        box = [min(xs) - margin, min(ys) - margin, max(xs) - min(xs) + 2 * margin, max(ys) - min(ys) + 2 * margin]
-        ratio = aspect_from(edit['aspect'])
-        if ratio:
-            box = fit_ratio(box, ratio, self.canvas.width, self.canvas.height)
-        x0, y0 = max(0, round(box[0])), max(0, round(box[1]))
-        x1 = min(self.canvas.width, round(box[0] + box[2]))
-        y1 = min(self.canvas.height, round(box[1] + box[3]))
-        self.crop(index, x0, y0, x1 - x0, y1 - y0, f'Crop to {key}')
-
-    def do_passport_photo(self, index, edit):
-        """Head-and-shoulders framing measured from the head box, then the print size at 300 ppi."""
-        size = print_size(edit['quote']) or print_size(edit['aspect'])
-        if not size and re.search(r'stamp', edit['quote'], re.IGNORECASE):
-            size = STAMP_SIZE
-            self.notes.append('Used the common 20×25 mm stamp size; write a size such as “25x30 mm” for another.')
-        elif not size:
-            size = PASSPORT_DEFAULT
-            self.notes.append('Used the common 35×45 mm passport size; write a size such as “2x2 inch” for another.')
-        framed = self.head_frame(index, edit, size[:2], PASSPORT_HEAD_SHARE, PASSPORT_TOP_MARGIN,
-                                 'Crop head and shoulders')
-        if not framed:
-            return
-        cw, ch = framed
-        unit = size[2]
-        if unit == 'px':
-            tw, th = round(size[0]), round(size[1])
-        elif unit in ('mm', 'cm', 'in'):
-            inches = {'mm': 25.4, 'cm': 2.54, 'in': 1}[unit]
-            tw, th = round(size[0] / inches * PRINT_PPI), round(size[1] / inches * PRINT_PPI)
-        else:
-            self.notes.append(f'Cropped to {size[0]:g}:{size[1]:g}; add mm, cm or inch to also set the print size.')
-            return
-        if not (1 <= tw <= 8192 and 1 <= th <= 8192):
-            self.blocking.append('The size must stay between 1 and 8192 pixels on each side.')
-            return
-        params = {'width': tw, 'height': th, 'resample': 'preserveDetails' if tw > cw else 'bicubic'}
-        label = f'Resize to {tw}×{th}'
-        if unit != 'px':
-            params['resolution'] = PRINT_PPI
-            label += f' ({size[0]:g}×{size[1]:g} {"inch" if unit == "in" else unit} at {PRINT_PPI} ppi)'
-            self.canvas.resolution = PRINT_PPI
-        if tw > cw * 1.5:
-            self.notes.append(f'The head-and-shoulders area is {cw}×{ch} px, so it is enlarged {tw / cw:.1f}× for '
-                              'print; a sharper, closer original prints better.')
-        self.add(index, 'image.imageSize', params, label)
-        self.canvas.maps.append(lambda px, py, sx=tw / cw, sy=th / ch: (px * sx, py * sy))
-        self.canvas.width, self.canvas.height = tw, th
-
     def crop(self, index, x, y, w, h, label):
         self.add(index, 'image.crop', {'x': x, 'y': y, 'width': w, 'height': h}, label + f' ({w}×{h})')
         self.canvas.maps.append(lambda px, py, x=x, y=y: (px - x, py - y))
         self.canvas.width, self.canvas.height = w, h
-
-    def do_rotate(self, index, edit, straighten=False):
-        if edit['value'] is None:
-            if straighten:
-                measured = self.analysis.get('tilt')
-                if measured is None:
-                    self.blocking.append('I could not find a clear horizon or straight edge to level. Say how many '
-                                         'degrees, for example “straighten by 2 degrees clockwise”.')
-                    return
-                if measured == 0:
-                    self.notes.append('The horizon is already level (measured), so nothing was rotated.')
-                    return
-                edit = {**edit, 'value': measured, 'choice': '', 'quote': ''}
-            else:
-                edit = {**edit, 'value': 90.0}
-        if edit['value'] is None:
-            degrees = 90.0
-        else:
-            degrees = edit['value']
-        counter = re.search(r'counter|anti|ccw|left', edit['quote'] + ' ' + edit['choice'], re.IGNORECASE)
-        clockwise = degrees if not counter else -abs(degrees)
-        w, h = self.canvas.width, self.canvas.height
-        turn = round(clockwise) % 360
-        if abs(clockwise - round(clockwise)) < 1e-6 and turn in (90, 180, 270):
-            command = {90: 'image.imageRotation.90cw', 180: 'image.imageRotation.180',
-                       270: 'image.imageRotation.90ccw'}[turn]
-            self.add(index, command, {}, f'Rotate {turn if turn != 270 else 90}° '
-                                         f'{"counterclockwise" if turn == 270 else "clockwise"}')
-            if turn == 90:
-                self.canvas.maps.append(lambda px, py, h=h: (h - py, px))
-            elif turn == 270:
-                self.canvas.maps.append(lambda px, py, w=w: (py, w - px))
-            else:
-                self.canvas.maps.append(lambda px, py, w=w, h=h: (w - px, h - py))
-            if turn != 180:
-                self.canvas.width, self.canvas.height = h, w
-            return
-        # PhotoCraft's crop angle turns the frame; a positive frame angle turns the picture counterclockwise.
-        x, y, cw, ch = rotation_crop(w, h, clockwise)
-        self.add(index, 'image.crop', {'x': x, 'y': y, 'width': cw, 'height': ch, 'angle': -clockwise,
-                                       'targetWidth': w, 'targetHeight': h},
-                 f'{"Straighten" if straighten else "Rotate"} {abs(clockwise):g}° '
-                 f'{"clockwise" if clockwise > 0 else "counterclockwise"}, cropping the empty corners')
-        theta = math.radians(clockwise)
-
-        def move(px, py, w=w, h=h, theta=theta, x=x, y=y, s=w / cw):
-            cx, cy = px - w / 2, py - h / 2
-            rx = cx * math.cos(theta) - cy * math.sin(theta) + w / 2
-            ry = cx * math.sin(theta) + cy * math.cos(theta) + h / 2
-            return (rx - x) * s, (ry - y) * s
-
-        self.canvas.maps.append(move)
-
-    def do_straighten(self, index, edit):
-        self.do_rotate(index, edit, straighten=True)
-
-    def do_flip(self, index, edit):
-        vertical = re.search(r'vertical|upside|top to bottom', edit['quote'] + ' ' + edit['choice'], re.IGNORECASE)
-        w, h = self.canvas.width, self.canvas.height
-        if vertical:
-            self.add(index, 'image.imageRotation.flipCanvasVertical', {}, 'Flip vertically')
-            self.canvas.maps.append(lambda px, py, h=h: (px, h - py))
-        else:
-            self.add(index, 'image.imageRotation.flipCanvasHorizontal', {}, 'Flip horizontally (mirror)')
-            self.canvas.maps.append(lambda px, py, w=w: (w - px, py))
-
-    def do_resize(self, index, edit):
-        w, h = self.canvas.width, self.canvas.height
-        wanted = output_size(edit['quote'], w, h) or output_size(edit['aspect'], w, h)
-        if not wanted:
-            self.blocking.append('What size should the picture be? For example 1080x1350, A4, 4x6 inch, '
-                                 'instagram post, 2000 px wide, or 50%.')
-            return
-        (tw, th), ppi = wanted['size'], wanted['ppi']
-        if not (1 <= tw <= 8192 and 1 <= th <= 8192):
-            self.blocking.append('The size must stay between 1 and 8192 pixels on each side.')
-            return
-        if (tw, th) == (w, h):
-            # Only the print resolution changes; the pixels stay as they are.
-            self.add(index, 'image.imageSize', {'width': w, 'height': h, 'resolution': ppi, 'resample': 'none'},
-                     f'Set {ppi} ppi (pixels unchanged)')
-            self.canvas.resolution = ppi
-            return
-        if wanted['crop'] and abs(tw / th - w / h) > 0.01:
-            _, boxes = self.target_boxes({**edit, 'target': 'main subject', 'object': ''})
-            focus = None
-            if boxes:
-                xs = [b[0] for b in boxes] + [b[0] + b[2] for b in boxes]
-                ys = [b[1] for b in boxes] + [b[1] + b[3] for b in boxes]
-                focus = [min(xs), min(ys), max(xs) - min(xs), max(ys) - min(ys)]
-            x, y, cw, ch = largest_crop(w, h, (tw, th), focus, edit['position'])
-            self.crop(index, x, y, cw, ch, f'Crop to the {tw}:{th} shape' + (' around the subject' if focus else '')
-                      + ' so nothing stretches')
-            w, h = cw, ch
-        params = {'width': tw, 'height': th, 'resample': 'preserveDetails' if tw > w else 'bicubic'}
-        if ppi:
-            params['resolution'] = ppi
-            self.canvas.resolution = ppi
-        if tw > w * 2.5:
-            self.notes.append(f'This enlarges the picture {tw / w:.1f}×; fine detail cannot be invented, so it will '
-                              'look soft up close.')
-        self.add(index, 'image.imageSize', params, f'Resize to {tw}×{th}'
-                 + (f' · {wanted["label"]}' if wanted['label'] != f'{tw}×{th}' else ''))
-        self.canvas.maps.append(lambda px, py, sx=tw / w, sy=th / h: (px * sx, py * sy))
-        self.canvas.width, self.canvas.height = tw, th
-
-    def do_center_subject(self, index, edit):
-        """The largest crop with the subject exactly in the middle (same shape unless one is asked)."""
-        key, boxes = self.target_boxes({**edit, 'target': 'object' if edit['object'] else 'main subject'})
-        if not boxes:
-            self.blocking.append(f'Could not find {key or "the subject"} to center.')
-            return
-        xs = [b[0] for b in boxes] + [b[0] + b[2] for b in boxes]
-        ys = [b[1] for b in boxes] + [b[1] + b[3] for b in boxes]
-        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
-        w, h = self.canvas.width, self.canvas.height
-        half_w, half_h = min(cx, w - cx), min(cy, h - cy)
-        ratio = aspect_from(edit['aspect']) or aspect_from(edit['quote'])
-        if ratio:
-            aspect = ratio[0] / ratio[1]
-            half_w, half_h = min(half_w, half_h * aspect), min(half_h, half_w / aspect)
-        if half_w * 2 < (max(xs) - min(xs)) * 1.02 or half_h * 2 < (max(ys) - min(ys)) * 1.02:
-            self.blocking.append(f'{key[:1].upper() + key[1:]} is too close to the edge to center by cropping; '
-                                 'use “fit” or extend the background instead.')
-            return
-        x, y = round(cx - half_w), round(cy - half_h)
-        self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized(boxes)})
-        self.crop(index, x, y, round(half_w * 2), round(half_h * 2), f'Center {key}')
-
-    def do_perspective(self, index, edit):
-        """Upright from measured lines: PhotoCraft's Adaptive Wide Angle makes each given line vertical."""
-        lines = self.analysis.get('verticals') or []
-        # The lean from upright, whichever end of the line comes first (180° is upright too).
-        leaning = [line for line in lines if abs((math.degrees(math.atan2(line[1][0] - line[0][0],
-                                                                           line[1][1] - line[0][1])) + 90) % 180 - 90)
-                   > 0.6]
-        if lines and not leaning:
-            self.notes.append('The vertical edges are already upright (measured), so the perspective was not '
-                              'changed.')
-            return
-        if len(lines) < 2:
-            self.blocking.append('I could not find two long vertical edges (walls, door frames, poles) to straighten '
-                                 'the perspective against.')
-            return
-        self.add(index, 'studio.select_photo', {'smart': True}, 'Select the photo')
-        self.add(index, 'filter.adaptiveWideAngle', {
-            'model': 'perspective', 'constraints': [{'a': a, 'b': b, 'orientation': 'vertical'} for a, b in lines]},
-            f'Make {len(lines)} measured edges vertical')
-        self.add(index, 'studio.crop_empty', {}, 'Crop away the empty edges the correction leaves')
-
-    def do_lens_correction(self, index, edit):
-        words = (edit['choice'] + ' ' + edit['quote']).lower()
-        fringes = bool(re.search(r'chromatic|aberration|fring|purple edge|color edge', words))
-        corners = bool(re.search(r'vignett|dark corner', words))
-        distortion = bool(re.search(r'distort|barrel|fish|bulg|pincushion|curved', words))
-        if not (fringes or corners or distortion):
-            fringes = corners = distortion = True
-        params = {'profile': 'auto', 'correctDistortion': distortion, 'correctCA': fringes,
-                  'correctVignette': corners, 'autoScale': True, 'edge': 'edgeExtension'}
-        fixed = [name for name, on in (('distortion', distortion), ('color fringes', fringes),
-                                       ('lens vignetting', corners)) if on]
-        self.add(index, 'studio.select_photo', {'smart': True}, 'Select the photo')
-        self.add(index, 'filter.lensCorrection', params, 'Correct ' + ', '.join(fixed))
-
-    def do_fit_canvas(self, index, edit):
-        """Pad the picture out to a shape, keeping every pixel (letterbox, white bars)."""
-        w, h = self.canvas.width, self.canvas.height
-        wanted = output_size(edit['quote'], w, h) if not aspect_from(edit['aspect']) else None
-        ratio = aspect_from(edit['aspect']) or aspect_from(edit['quote']) or (wanted['size'] if wanted else (1, 1))
-        aspect = ratio[0] / ratio[1]
-        tw, th = (round(h * aspect), h) if w / h < aspect else (w, round(w / aspect))
-        color = hex_color(edit['color']) or '#ffffff'
-        self.add(index, 'image.canvasSize', {'width': tw, 'height': th, 'anchor': 'center', 'extensionColor': color},
-                 f'Fit into {ratio[0]:g}:{ratio[1]:g} with {edit["color"] or "white"} bars ({tw}×{th})')
-        self.canvas.maps.append(lambda px, py, dx=(tw - w) / 2, dy=(th - h) / 2: (px + dx, py + dy))
-        self.canvas.width, self.canvas.height = tw, th
-        if wanted and wanted['size'] != (tw, th) and not aspect_from(edit['aspect']):
-            sw, sh = wanted['size']
-            self.add(index, 'image.imageSize', {'width': sw, 'height': sh, 'resample':
-                                                'preserveDetails' if sw > tw else 'bicubic'}, f'Resize to {sw}×{sh}')
-            self.canvas.maps.append(lambda px, py, sx=sw / tw, sy=sh / th: (px * sx, py * sy))
-            self.canvas.width, self.canvas.height = sw, sh
-
-    def do_convert_mode(self, index, edit):
-        words = (edit['choice'] + ' ' + edit['quote']).lower()
-        if '16' in words or '8' in words and 'bit' in words:
-            bits = '16' if '16' in words else '8'
-            self.add(index, f'image.mode.bits{bits}', {}, f'Convert to {bits} bits per channel')
-            return
-        mode = 'cmyk' if 'cmyk' in words else 'grayscale' if re.search(r'gr[ae]y|monochrome', words) else \
-            'rgb' if 'rgb' in words else None
-        if not mode:
-            self.blocking.append('Which color mode: CMYK, grayscale or RGB?')
-            return
-        self.add(index, f'image.mode.{mode}', {'intent': 'perceptual' if mode == 'cmyk' else 'relative'},
-                 f'Convert to {mode.upper() if mode != "grayscale" else "grayscale"} mode')
-        if mode == 'cmyk':
-            self.notes.append('CMYK is for the print shop; screens and the web expect RGB.')
-
-    def do_canvas_border(self, index, edit):
-        size = round(edit['value']) if edit['value'] else round(min(self.canvas.width, self.canvas.height) * 0.04)
-        color = hex_color(edit['color']) or '#ffffff'
-        self.add(index, 'image.canvasSize', {'width': size * 2, 'height': size * 2, 'relative': True,
-                                             'anchor': 'center', 'extensionColor': color},
-                 f'Add a {size}px border')
-        self.canvas.maps.append(lambda px, py, s=size: (px + s, py + s))
-        self.canvas.width += size * 2
-        self.canvas.height += size * 2
-
-    def do_remove_object(self, index, edit):
-        key, boxes = self.target_boxes({**edit, 'target': 'object'})
-        if not boxes:
-            self.blocking.append(f'Could not find {key or "the object to remove"} in the picture.')
-            return
-        area = sum(b[2] * b[3] for b in boxes) / (self.canvas.width * self.canvas.height)
-        self.removed += boxes
-        if area >= AI_REMOVAL_AREA and self.ai:
-            # Content-aware fill copies nearby patches and smears anything this size; AI rebuilds what
-            # was behind it, limited to the object's box, on its own masked layer.
-            noun = key.split()[-1]
-            # Kontext tends to paint a different object into the gap when asked to “remove”; describing
-            # the empty result works better, and the step retries when the measured area still stands out.
-            self.add(index, 'studio.ai_layer', {
-                'instruction': f'Remove {key}. In its place show only the empty background that was behind it, '
-                               f'continuing the surroundings seamlessly. There is no {noun} there any more. '
-                               'Change nothing else.',
-                'retry': f'Erase {key} completely and paint the plain surface and background that continue around '
-                         f'it. Do not add any {noun} or any other object. Change nothing else.',
-                'boxes': boxes, 'label': f'Removed {key}'[:80]}, f'Remove {key} with AI (its own layer, checked)')
-            self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized(boxes)})
-            return
-        if area >= AI_REMOVAL_AREA:
-            self.notes.append(f'{key[:1].upper() + key[1:]} covers {area:.0%} of the picture; content-aware fill may '
-                              'smear it. Install AI content editing for clean removal of larger objects.')
-        if not self.selection(index, {**edit, 'target': 'object', 'object': key}):
-            return
-        pad = max(4, round(min(self.canvas.width, self.canvas.height) * 0.008))
-        self.add(index, 'select.modify.expand', {'radius': pad}, 'Include the edges')
-        self.add(index, 'studio.retouch_fill', {'label': f'Removed {key}'[:80]}, f'Fill where {key} was')
-        self.end_selection(index)
-
-    def do_transform_object(self, index, edit):
-        key, boxes = self.target_boxes({**edit, 'target': 'object'})
-        if not boxes:
-            self.blocking.append(f'Could not find {key or "the object"} to move.')
-            return
-        x, y, w, h = max(boxes, key=lambda b: b[2] * b[3])
-        width, height = self.canvas.width, self.canvas.height
-        words = (edit['choice'] + ' ' + edit['quote']).lower()
-        duplicate = is_duplicate(words)
-        # Other things standing level with it (their bases within 10% of the height), so a moved or
-        # copied object lands in free space. Things further back, like the chair behind a cat, are
-        # simply covered, the way a nearer object hides them.
-        _, around = self.target_boxes(edit, FOREGROUND)
-        others = [b for b in around or [] if covered(b, [x, y, w, h]) < 0.5 and covered([x, y, w, h], b) < 0.5
-                  and abs(b[1] + b[3] - y - h) < 0.1 * height]
-        overlap_ok = bool(re.search(r'\b(in front of|on top of|over|overlap\w*|cover\w*|anyway)\b', words))
-        factor = 1.0
-        if re.search(r'bigger|larger|enlarge|grow|increase|scale up', words):
-            factor = 1 + (edit['value'] / 100 if edit['value'] and edit['value'] < 300 else
-                          {'subtle': 0.15, 'moderate': 0.3, 'strong': 0.6}[edit['strength']])
-        elif re.search(r'smaller|shrink|reduce|decrease|scale down', words):
-            factor = 1 - (min(edit['value'], 90) / 100 if edit['value'] else
-                          {'subtle': 0.15, 'moderate': 0.25, 'strong': 0.45}[edit['strength']])
-        tw, th = w * factor, h * factor
-        # Things stand on something: scaling keeps the base where it was, centered.
-        tx, ty = x + w / 2 - tw / 2, y + h - th
-        absolute = re.search(r'\b(edge|corner|side of the (picture|photo|image|frame)|far (left|right)|center|'
-                             r'centre|middle)\b', words)
-        if edit['position'] and absolute:
-            cx, _ = position_xy(edit['position'])
-            tx = cx * width - tw / 2
-            if 'top' in edit['position'] or 'bottom' in edit['position']:
-                ty = position_xy(edit['position'])[1] * height - th / 2
-        elif edit['position']:
-            # “Move the mug to the left” is a shift by about its own width; sending it to the frame's
-            # edge dropped it on top of the next mug (measured on a row of four).
-            # A shift by its own width put the yellow mug on top of the blue one in a row of four, so
-            # it goes to the nearest free gap that way instead, or the person is asked.
-            step = {'subtle': 0.5, 'moderate': 1.0, 'strong': 1.8}[edit['strength']]
-            position = edit['position']
-            if 'left' in position or 'right' in position:
-                sign = -1 if 'left' in position else 1
-                wanted = tx + sign * tw * step
-                if others and not overlap_ok:
-                    allowed = (0, x - tw * step / 2) if sign < 0 else (x + tw * step / 2, width - tw)
-                    tx = free_spot(tw, width, self.spans(others, ty, th, 1), wanted, allowed)
-                else:
-                    tx = wanted
-            if tx is not None and ('top' in position or 'bottom' in position):
-                sign = -1 if 'top' in position else 1
-                wanted = ty + sign * th * step
-                if others and not overlap_ok:
-                    allowed = (0, y - th * step / 2) if sign < 0 else (y + th * step / 2, height - th)
-                    ty = free_spot(th, height, self.spans(others, tx, tw, 0), wanted, allowed)
-                else:
-                    ty = wanted
-            if tx is None or ty is None:
-                self.blocking.append(
-                    f'There is no free space {position.replace("top", "up").replace("bottom", "down")} of {key}: '
-                    'it would cover something else. Say "in front of" to let it overlap, or say where it should go.')
-                return
-        elif duplicate:
-            # Beside the original, in the nearest free space (on the side with more room when nothing
-            # else is known).
-            tx = x + w * 1.1 if x + w / 2 < width / 2 else x - tw * 1.1
-            if others and not overlap_ok:
-                gap = tw * 0.1
-                tx = free_spot(tw + 2 * gap, width, self.spans(others + [[x, y, w, h]], ty, th, 1), tx - gap,
-                               (0, width - tw - 2 * gap))
-                if tx is None:
-                    self.blocking.append(f'There is no free space beside {key} for a copy. Say where it should '
-                                         'go, or "in front of" to let it overlap.')
-                    return
-                tx += gap
-        tx = min(max(0, tx), width - tw)
-        ty = min(max(0, ty), height - th)
-        if factor == 1 and abs(tx - x) < 2 and abs(ty - y) < 2 and not duplicate:
-            self.blocking.append(f'Where should {key} go, or how much bigger or smaller should it be?')
-            return
-        verb = 'Duplicate' if duplicate else 'Resize' if factor != 1 and abs(tx - x) < w * 0.5 else 'Move'
-        self.add(index, 'studio.transform_object', {
-            'box': [x, y, w, h], 'to': [round(tx), round(ty), round(tw), round(th)], 'what': key,
-            'duplicate': duplicate, 'label': f'{verb}d {key}'[:80]},
-            f'{verb} {key}' + (f' to {factor:.0%}' if factor != 1 else '') + ' (lifted onto its own layer)')
-        self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized([[x, y, w, h]])})
-
-    def do_restore(self, index, edit):
-        """Old-photo restoration: damage repaired (AI when installed), then tone and noise."""
-        if self.ai:
-            self.add(index, 'studio.ai_layer', {
-                'instruction': 'Restore this old damaged photograph: remove scratches, dust, spots, stains, creases '
-                               'and tears, and repair faded areas. Keep every face, person, object and the original '
-                               'colors (or black and white) exactly the same. Do not add or remove anything.',
-                'label': 'Restored'}, 'Repair scratches, dust and creases with AI (its own layer)')
-        else:
-            self.add(index, 'studio.select_photo', {'smart': True}, 'Select the photo')
-            radius = max(1, round(min(self.canvas.width, self.canvas.height) / 900))
-            self.add(index, 'filter.noise.dustAndScratches', {'radius': radius, 'threshold': 14},
-                     'Clear dust and fine scratches')
-            self.notes.append('Install AI content editing for repairing large scratches, stains and tears.')
-        self.raw[index] = {'contrast': 12, 'dehaze': 10, 'clarity': 8, 'noiseLuminance': 25, 'noiseColor': 30}
-
-    def do_retouch_portrait(self, index, edit):
-        """A retoucher's jobs on faces, each done the way it is done by hand and each on its own layer."""
-        scale = LEVEL[edit['strength']]
-        for job in retouch_jobs(edit['choice'] + ' ' + edit['quote']):
-            if job in FACE_JOBS:
-                _, faces = self.target_boxes({**edit, 'target': 'object', 'object': FACES})
-                if not faces:
-                    self.blocking.append('Could not find a face to retouch.')
-                    return
-                self.face_job(index, edit, job, faces, scale)
-            elif job in EYE_JOBS:
-                _, eyes = self.target_boxes({**edit, 'target': 'object', 'object': EYES})
-                if not eyes:
-                    self.blocking.append('Could not find the eyes.')
-                    return
-                self.eye_job(index, job, eyes, scale)
-            elif job == 'teeth':
-                _, teeth = self.target_boxes({**edit, 'target': 'object', 'object': TEETH})
-                if not teeth or self.analysis.get('teeth') is False:
-                    self.blocking.append('Could not find any teeth showing in the picture.')
-                    return
-                self.whiten_teeth(index, edit, teeth, scale)
-
-    def whiten_teeth(self, index, edit, teeth, scale):
-        """De-yellow and lift only tooth-coloured pixels inside the mouths."""
-        colors = self.analysis.get('teeth_colors')
-        if not colors:
-            self.blocking.append('Could not measure the teeth to whiten them.')
-            return
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        self.add(index, 'studio.select_outline', {'boxes': teeth, 'what': 'the teeth'}, 'Select the mouths')
-        self.add(index, 'studio.require_selection', {'what': 'the teeth', 'min_coverage': 0.00001},
-                 'Check the teeth were found')
-        self.add(index, 'select.colorRange', {'colors': colors, 'fuzziness': 35, 'mode': 'intersect',
-                                              'sampleAllLayers': True}, 'Keep only tooth-coloured pixels')
-        self.add(index, 'studio.require_selection', {'what': 'the teeth', 'min_coverage': 0.000005},
-                 'Check some teeth are left')
-        self.add(index, 'select.modify.feather', {'radius': 1}, 'Soften the edge')
-        self.add(index, 'layer.newAdjustmentLayer.hueSaturation',
-                 {'yellows': {'saturation': round(-45 * min(scale, 1.4)), 'lightness': round(10 * scale)},
-                  'lightness': round(5 * scale)}, 'Whiten teeth')
-        self.after_new_layer(index, 'Whiten teeth')
-        self.end_selection(index)
-        self.regions.append({'requirement': index, 'label': 'teeth', 'boxes': self.normalized(teeth)})
-
-    def face_job(self, index, edit, job, faces, scale):
-        face = {**edit, 'target': 'object', 'object': FACES}
-        raw = {
-            'smooth': {'texture': -45, 'clarity': -12},
-            'shine': {'highlights': -45, 'whites': -20},
-            'sculpt': {'clarity': 15, 'contrast': 10, 'highlights': 10, 'shadows': -8},
-            'even tone': {'saturation': -8, 'texture': -20},
-            'wrinkles': {'texture': -60, 'clarity': -20},
-            'blemishes': {'texture': -20},
-        }[job]
-        prompts = {
-            'blemishes': 'Retouch the skin: remove pimples, acne, spots and blemishes. Keep the natural skin texture, '
-                         'pores, facial hair, eyes, lips, expression and the person’s identity exactly the same.',
-            'wrinkles': 'Softly reduce wrinkles and fine lines on the face so it looks naturally rested, not '
-                        'plastic. Keep the identity, expression, eyes and hair exactly the same.',
-            'even tone': 'Even out the skin tone: reduce redness, blotches and uneven patches while keeping natural '
-                         'skin texture, identity and expression exactly the same.',
-        }
-        if job in prompts and self.ai:
-            self.add(index, 'studio.ai_layer', {'instruction': prompts[job] + ' Change nothing else.',
-                                                'boxes': faces, 'label': f'Retouch: {job}'},
-                     f'Retouch {job} with AI on the face only (its own layer)')
-            self.regions.append({'requirement': index, 'label': 'face', 'boxes': self.normalized(faces)})
-            return
-        if job == 'blemishes':
-            # Without AI: Dust & Scratches clears small spots and keeps edges above its threshold.
-            width = max(b[2] for b in faces)
-            if not self.selection(index, face):
-                return
-            self.only_skin(index)
-            self.add(index, 'studio.local_filter', {
-                'command': 'filter.noise.dustAndScratches',
-                'params': {'radius': max(2, round(width / 90)), 'threshold': 8},
-                'label': 'Blemishes cleared · face'}, 'Clear small blemishes on the face (masked)')
-            self.end_selection(index)
-        params = {key: round(value * min(scale, 1.6), 2) for key, value in raw.items()}
-        label = {'smooth': 'Smoother skin', 'shine': 'Less shine', 'sculpt': 'Sculpted', 'even tone': 'Even tone',
-                 'wrinkles': 'Softer lines', 'blemishes': 'Softer skin'}[job] + ' · face'
-        self.local_develop(index, face, params, label, f'{label.split(" · ")[0]} on the face (masked layer)',
-                           refine=self.only_skin)
-
-    def only_skin(self, index):
-        """Narrow the face selection to its measured skin colours, leaving hair, brows and lashes."""
-        colors = self.analysis.get('skin_colors')
-        if not colors:
-            return
-        self.add(index, 'select.colorRange', {'colors': colors, 'fuzziness': 45, 'mode': 'intersect',
-                                              'sampleAllLayers': True}, 'Keep only the skin')
-        self.add(index, 'studio.require_selection', {'what': 'the skin', 'min_coverage': 0.0005},
-                 'Check the skin was found')
-
-    def eye_job(self, index, job, eyes, scale):
-        if job == 'red eye':
-            points = [[round(x + w / 2), round(y + h / 2)] for x, y, w, h in eyes]
-            self.add(index, 'studio.select_photo', {}, 'Select the photo')
-            self.add(index, 'paint.redEye', {'points': points, 'pupilSize': 50, 'darken': 50},
-                     f'Fix red eye on {len(points)} eye{"s" if len(points) > 1 else ""}')
-            return
-        if job == 'dark circles':
-            # The soft area just below each eye, lifted gently; a hard mask would show as a patch.
-            areas = [[x - w * 0.1, y + h * 0.75, w * 1.2, h * 0.8] for x, y, w, h in eyes]
-            params = {'shadows': 35, 'exposure': 0.2, 'temperature': 4}
-            label = 'Brighter under the eyes · under-eyes'
-        else:
-            areas = [[x - w * 0.1, y - h * 0.1, w * 1.2, h * 1.2] for x, y, w, h in eyes]
-            params = {'exposure': 0.25, 'clarity': 20, 'vibrance': 10, 'sharpenAmount': 40}
-            label = 'Brighter eyes · eyes'
-        params = {key: round(value * min(scale, 1.6), 2) for key, value in params.items()}
-        for number, (x, y, w, h) in enumerate(areas):
-            self.add(index, 'select.rect', {'x': round(x), 'y': round(y), 'width': max(2, round(w)),
-                                            'height': max(2, round(h)), 'ellipse': True,
-                                            'mode': 'replace' if number == 0 else 'add',
-                                            'feather': max(2, round(min(w, h) * 0.3))},
-                     'Select under the eye' if job == 'dark circles' else 'Select the eye')
-        self.add(index, 'studio.require_selection', {'what': label.split(' · ')[1], 'min_coverage': 0.00001},
-                 'Check the area')
-        self.add(index, 'studio.local_filter', {'command': 'filter.cameraRaw', 'params': params, 'label': label},
-                 f'{label.split(" · ")[0]} (masked layer)')
-        self.end_selection(index)
-        self.regions.append({'requirement': index, 'label': label.split(' · ')[1],
-                             'boxes': self.normalized([[round(v) for v in area] for area in areas])})
-
-    def group_develop(self, index, edit):
-        name, base, low, high = RAW[edit['action']]
-        signed = edit['action'] not in ('sharpen', 'noise_reduction', 'grain')
-        if edit['action'] == 'vignette':
-            lighten = edit['direction'] == 'increase' and re.search(r'white|light', edit['quote'], re.IGNORECASE)
-            value = amount({**edit, 'direction': 'increase' if lighten else 'decrease'}, abs(base), low, high)
-            params = {name: value}
-        elif edit['action'] == 'shadows' and edit['direction'] == 'none':
-            params = {name: amount({**edit, 'direction': 'increase'}, base, low, high)}
-        elif edit['action'] == 'highlights' and edit['direction'] == 'none':
-            params = {name: amount({**edit, 'direction': 'decrease'}, base, low, high)}
-        elif edit['action'] == 'noise_reduction':
-            level = amount(edit, base, low, high, signed=False)
-            params = {'noiseLuminance': level, 'noiseColor': min(100, round(level * 0.8))}
-        elif edit['action'] == 'grain':
-            params = {name: amount(edit, base, low, high, signed=False),
-                      'grainSize': 35 if 'coarse' in edit['quote'].lower() else 25}
-        elif edit['action'] == 'texture' and re.search(r'smooth|soften|skin', edit['quote'], re.IGNORECASE):
-            params = {name: -abs(amount(edit, base, low, high, signed=False))}
-        else:
-            params = {name: amount(edit, base, low, high, signed)}
-        if edit['target'] in ('whole image', 'layer'):
-            current = self.raw.setdefault(index, {})
-            for key, value in params.items():
-                current[key] = current.get(key, 0) + value
-            return
-        self.local_develop(index, edit, params, short_label(edit), f'{short_label(edit)} on its own masked layer')
 
     def local_develop(self, index, edit, params, label, description, refine=None):
         """Camera Raw settings for one area, on a masked copy of the photo. A second request for
@@ -1883,531 +1267,8 @@ class Compiler:
         if targeted:
             self.end_selection(index)
 
-    def group_adjust(self, index, edit):
-        action = edit['action']
-        color = hex_color(edit['color'] or edit['object'])
-        if edit['target'] == 'color' and color and action in ('saturation', 'vibrance', 'hue_shift', 'brightness'):
-            family = color_family(color)
-            if family in ('highlights', 'midtones', 'shadows'):
-                edit = {**edit, 'target': family}
-            else:
-                neighbours = {'blues': ['blues', 'cyans'], 'cyans': ['cyans', 'blues'], 'reds': ['reds'],
-                              'yellows': ['yellows'], 'greens': ['greens'], 'magentas': ['magentas']}[family]
-                key = {'hue_shift': 'hue', 'brightness': 'lightness'}.get(action, 'saturation')
-                base, low, high = (30, -180, 180) if key == 'hue' else (40, -100, 100)
-                value = amount(edit, base, low, high)
-                self.adjustment(index, {**edit, 'target': 'whole image'}, 'hueSaturation',
-                                {name: {key: value} for name in neighbours},
-                                f'{"More" if value > 0 else "Less"} {key} in the {family}')
-                return
-        if action in ADJUST:
-            command, param, base, low, high = ADJUST[action]
-            signed = action not in ('posterize', 'threshold')
-            if signed:
-                value = amount(edit, base, low, high)
-            else:
-                value = round(max(low, min(high, edit['value'] if edit['value'] is not None else base)))
-            self.adjustment(index, edit, command, {param: value}, short_label(edit))
-        elif action == 'recolor':
-            color = hex_color(edit['color'])
-            if not color:
-                self.blocking.append(f'Which color for “{edit["quote"]}”?')
-                return
-            if edit['target'] == 'whole image' and not edit['object']:
-                self.blocking.append(f'What should become {edit["color"]}? Name the object.')
-                return
-            if edit['target'] == 'whole image':
-                edit = {**edit, 'target': 'object'}
-            if IRIS_WORDS.search(edit['object']):
-                self.eye_color(index, edit, color)
-                return
-            hue, light, sat = hls(color)
-            params = {'colorize': True, 'hue': round(hue * 360), 'saturation': round(min(100, 25 + sat * 60)),
-                      'lightness': round(max(-60, min(60, (light - 0.5) * 70)))}
-            if sat < 0.12:
-                params = {'saturation': -100, 'lightness': round(max(-80, min(80, (light - 0.5) * 120)))}
-            self.adjustment(index, edit, 'hueSaturation', params, f'Recolor {edit["object"] or "the area"} '
-                                                                   f'{edit["color"]}'.strip())
-        elif action == 'color_grade':
-            color = hex_color(edit['color']) or '#ff9d3c'
-            r, g, b = (int(color[i : i + 2], 16) / 255 for i in (1, 3, 5))
-            scale = 18 * LEVEL[edit['strength']]
-            shift = [round((r - (g + b) / 2) * scale), round((g - (r + b) / 2) * scale),
-                     round((b - (r + g) / 2) * scale)]
-            tone = edit['target'] if edit['target'] in ('shadows', 'midtones', 'highlights') else 'midtones'
-            self.adjustment(index, {**edit, 'target': 'whole image'}, 'colorBalance', {tone: shift},
-                            f'Tint the {tone} {edit["color"] or "warm"}')
-        elif action == 'color_filter':
-            words = (edit['choice'] + ' ' + edit['color'] + ' ' + edit['quote']).lower()
-            chosen = next((FILTERS[key] for key in FILTERS if re.search(rf'\b{key}', words)), None)
-            density = round(amount({**edit, 'direction': 'increase'}, 25, 1, 100))
-            params = {'filter': chosen, 'density': density} if chosen else {
-                'color': hex_color(edit['color']) or '#ff9d3c', 'density': density}
-            self.adjustment(index, edit, 'photoFilter', params, short_label(edit))
-        elif action == 'look':
-            self.look(index, edit)
-        elif action == 'auto_fix':
-            self.auto_fix(index, edit)
-        elif action == 'black_and_white':
-            mix = {'high contrast': {'reds': 70, 'yellows': 90, 'greens': 10, 'cyans': 20, 'blues': -20,
-                                     'magentas': 60},
-                   'infrared': {'reds': 10, 'yellows': 160, 'greens': 200, 'cyans': 40, 'blues': -60,
-                                'magentas': 30}}
-            style = next((key for key in mix if key in (edit['choice'] + ' ' + edit['quote']).lower()), None)
-            params = dict(mix.get(style, {}))
-            tint = hex_color(edit['color'])
-            if tint and tint not in ('#000000', '#ffffff'):
-                params.update(tint=True, tintColor=tint)
-            self.adjustment(index, edit, 'blackWhite', params, 'Black & white' + (f' ({style})' if style else ''))
-        elif action == 'sepia':
-            self.adjustment(index, edit, 'blackWhite', {'tint': True, 'tintColor': '#a3845c'}, 'Sepia tone')
-        elif action == 'duotone':
-            names = re.split(r'\band\b|,|/|\bto\b', edit['color'] or edit['choice'])
-            colors = [c for c in (hex_color(n) for n in names) if c]
-            if len(colors) < 2:
-                colors = (colors + ['#14213d', '#fcd116'])[:2]
-            colors.sort(key=luminance)
-            self.adjustment(index, edit, 'gradientMap', {'stops': [[0, colors[0]], [1, colors[1]]]}, 'Duotone')
-        elif action == 'invert':
-            self.adjustment(index, edit, 'invert', {}, 'Invert')
-
-    def auto_fix(self, index, edit):
-        """Auto Tone, Auto Contrast and Auto Color as an editable Levels layer, from the measured histogram."""
-        levels = self.analysis.get('levels')
-        if not levels:
-            self.blocking.append('The photo could not be measured for an automatic correction.')
-            return
-        words = (edit['choice'] + ' ' + edit['quote']).lower()
-        kind = 'color' if re.search(r'colou?r|white balance|cast|tint', words) else \
-            'contrast' if 'contrast' in words else 'tone'
-        if kind == 'contrast':
-            black, white = levels['all']
-            params, name = {'inBlack': black, 'inWhite': white}, 'Auto contrast'
-        else:
-            params = {channel: {'inBlack': levels[channel][0], 'inWhite': levels[channel][1],
-                                **({'gamma': levels['gamma'][channel]} if kind == 'color' else {})}
-                      for channel in ('red', 'green', 'blue')}
-            name = 'Auto color' if kind == 'color' else 'Auto tone'
-        self.adjustment(index, edit, 'levels', params, name)
-
-    def eye_color(self, index, edit, color):
-        """New iris color: a soft circle on each iris, so the whites and skin keep their color."""
-        _, eyes = self.target_boxes({**edit, 'target': 'object', 'object': EYES})
-        if not eyes:
-            self.blocking.append('Could not find the eyes.')
-            return
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        circles = []
-        for number, (x, y, w, h) in enumerate(eyes):
-            size = min(w * 0.36, h * 0.75)
-            cx, cy = x + w / 2, y + h / 2
-            circles.append([round(cx - size / 2), round(cy - size / 2), round(size), round(size)])
-            self.add(index, 'select.rect', {'x': circles[-1][0], 'y': circles[-1][1], 'width': max(2, round(size)),
-                                            'height': max(2, round(size)), 'ellipse': True,
-                                            'mode': 'replace' if number == 0 else 'add',
-                                            'feather': max(1, round(size * 0.15))}, 'Select the iris')
-        hue, _, sat = hls(color)
-        self.add(index, 'layer.newAdjustmentLayer.hueSaturation',
-                 {'colorize': True, 'hue': round(hue * 360), 'saturation': round(min(70, 25 + sat * 40))},
-                 f'{edit["color"].capitalize()} eyes')
-        self.add(index, 'layer.setProps', {'blend': 'Color', 'opacity': 0.75}, 'Blend as color only')
-        self.after_new_layer(index, f'{edit["color"].capitalize()} eyes')
-        self.end_selection(index)
-        self.regions.append({'requirement': index, 'label': 'irises', 'boxes': self.normalized(circles)})
-
-    def look(self, index, edit):
-        words = (edit['choice'] + ' ' + edit['quote']).lower()
-        lut = next((name for name in LUTS if name.lower() in words.replace(' ', '').replace('-', '')), None)
-        recipe = next((RECIPES[name] for name in sorted(RECIPES, key=len, reverse=True) if name in words), None)
-        if edit['target'] == 'sky' and recipe in (RECIPES['dramatic'], RECIPES['moody'], RECIPES['hdr'], None):
-            recipe = RECIPES['dramatic sky']
-        if lut is None and recipe is None:
-            lut_words = {'teal': 'tealOrange', 'film': 'fadedFilm', 'faded': 'fadedFilm', 'bleach': 'bleachBypass',
-                         'night': 'dayForNight', 'cross': 'crossProcess', 'noir': 'monoContrast'}
-            lut = next((value for key, value in lut_words.items() if key in words), None)
-        if lut is None and recipe is None:
-            recipe = RECIPES['professional polish']
-        scale = LEVEL[edit['strength']]
-        local = edit['target'] not in ('whole image', 'layer')
-        if recipe and 'raw' in recipe:
-            params = {key: round(value * min(scale, 1.6), 2) for key, value in recipe['raw'].items()}
-            if local:
-                # “Make the sky dramatic” develops only the sky, on a masked copy of the photo.
-                params.pop('vignetteAmount', None)
-                if not self.local_develop(index, edit, params, short_label(edit),
-                                          'Develop: ' + ', '.join(f'{k} {v:+g}' for k, v in params.items())
-                                          + f' · {edit["target"]}'):
-                    return
-            else:
-                self.raw[index] = params
-                self.flush_raw()
-        lut = lut or (recipe or {}).get('lut')
-        layers = []
-        if lut:
-            layers.append(('colorLookup', {'lut': lut}, f'Look: {lut}'))
-        if recipe and 'curves' in recipe:
-            layers.append(('curves', {'points': recipe['curves']}, 'Matte curve'))
-        if recipe and 'posterize' in recipe:
-            layers.append(('posterize', {'levels': recipe['posterize']}, 'Posterize'))
-        for command, params, name in layers:
-            self.adjustment(index, edit, command, params, name)
-            opacity = {'subtle': 0.5, 'moderate': 0.8, 'strong': 1.0}[edit['strength']]
-            if command == 'colorLookup' and opacity < 1:
-                self.add(index, 'layer.setProps', {'opacity': opacity}, f'Look strength {opacity:.0%}')
-
-    def group_effect(self, index, edit):
-        action, w, h = edit['action'], self.canvas.width, self.canvas.height
-        cx, cy = position_xy(edit['position'] or 'center')
-        if action == 'blur':
-            command, params = 'filter.blur.gaussianBlur', {'radius': amount({**edit, 'direction': 'increase'},
-                                                                             max(2, min(w, h) * 0.006), 0.1, 250)}
-        elif action == 'motion_blur':
-            command, params = 'filter.blur.motionBlur', {
-                'distance': round(amount({**edit, 'direction': 'increase'}, 20, 1, 2000)),
-                'angle': 90 if re.search(r'vertical|falling|up|down', edit['quote'], re.IGNORECASE) else 0}
-        elif action == 'radial_blur':
-            spin = re.search(r'spin|twirl|rotat|circular', edit['choice'] + ' ' + edit['quote'], re.IGNORECASE)
-            command, params = 'filter.blur.radialBlur', {
-                'amount': round(amount({**edit, 'direction': 'increase'}, 8 if spin else 12, 1, 100)),
-                'method': 'spin' if spin else 'zoom', 'quality': 'best', 'centerX': cx, 'centerY': cy}
-        elif action == 'glow':
-            self.glow(index, edit)
-            return
-        elif action == 'weather':
-            self.weather(index, edit)
-            return
-        elif action == 'mirror':
-            words = (edit['choice'] + ' ' + edit['quote']).lower()
-            keep = next((side for side in ('left', 'right', 'top', 'bottom') if side in words), 'left')
-            self.add(index, 'studio.mirror', {'keep': keep}, f'Mirror the {keep} half onto the other side')
-            return
-        elif action == 'drop_shadow':
-            self.contact_shadow(index, edit)
-            return
-        elif action == 'reflection':
-            key, boxes = self.target_boxes({**edit, 'target': 'object' if edit['object'] else 'main subject'})
-            if not boxes:
-                self.blocking.append(f'Could not find {key or "the subject"} to reflect.')
-                return
-            opacity = {'subtle': 0.2, 'moderate': 0.3, 'strong': 0.45}[edit['strength']]
-            self.add(index, 'studio.reflection', {'boxes': boxes, 'what': key, 'opacity': opacity},
-                     f'Reflect {key} on the surface below ({opacity:.0%})')
-            self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized(boxes)})
-            return
-        elif action == 'tilt_shift':
-            command, params = 'filter.blurGallery.tiltShift', {
-                'centerY': cy, 'blur': round(amount({**edit, 'direction': 'increase'}, 15, 0, 500))}
-        elif action == 'lens_flare':
-            command, params = 'filter.render.lensFlare', {
-                'centerX': cx if edit['position'] else 0.2, 'centerY': cy if edit['position'] else 0.2,
-                'brightness': round(amount({**edit, 'direction': 'increase'}, 100, 10, 300))}
-        elif action == 'relight':
-            angles = {'right': 0, 'top right': 45, 'top': 90, 'top left': 135, 'left': 180, 'bottom left': -135,
-                      'bottom': -90, 'bottom right': -45, 'center': 90, '': 135}
-            color = hex_color(edit['color'])
-            warmth = 0
-            if color:
-                hue = hls(color)[0] * 360
-                warmth = 40 if hue < 70 or hue > 330 else -40 if 160 < hue < 280 else 0
-            command, params = 'filter.render.relight', {
-                'angle': angles[edit['position']], 'warmth': warmth,
-                'intensity': round(amount({**edit, 'direction': 'increase'}, 40, 0, 100))}
-        elif re.search(r'glitch|rgb split|channel (split|shift)', edit['choice'] + ' ' + edit['quote'],
-                       re.IGNORECASE):
-            # RGB split: copies that show only the red or only the blue channel, nudged apart.
-            shift = max(2, round(w * 0.006 * LEVEL[edit['strength']]))
-            self.add(index, 'studio.select_insert', {}, 'Choose where the layers go')
-            for channels, dx, name in (([True, False, False], shift, 'Glitch red'),
-                                       ([False, False, True], -shift, 'Glitch blue')):
-                self.add(index, 'layer.stampVisible', {}, f'Copy the picture for {name.lower()}')
-                self.add(index, 'layer.setProps', {'channels': channels, 'name': name}, f'{name}: one channel only')
-                self.add(index, 'layer.translate', {'dx': dx, 'dy': 0}, f'Shift it {dx:+d}px')
-            return
-        else:  # artistic
-            words = (edit['choice'] + ' ' + edit['quote']).lower()
-            found = next((ARTISTIC[key] for key in sorted(ARTISTIC, key=len, reverse=True) if key in words), None)
-            if found is None:
-                self.expert_requests.append(index)
-                return
-            command, params = found
-        if edit['target'] in ('whole image', 'layer'):
-            self.add(index, 'studio.select_photo', {'smart': True}, 'Select the photo')
-            self.add(index, command, params, short_label(edit))
-        elif self.selection(index, edit):
-            self.add(index, 'studio.local_filter', {'command': command, 'params': params,
-                                                    'label': short_label(edit)}, f'{short_label(edit)} (masked)')
-            self.end_selection(index)
-
-    def glow(self, index, edit):
-        """Orton glow: a blurred copy of the picture screened over it, limited to what glows when named."""
-        radius = round(min(self.canvas.width, self.canvas.height) * 0.02 * LEVEL[edit['strength']], 1)
-        opacity = {'subtle': 0.35, 'moderate': 0.55, 'strong': 0.8}[edit['strength']]
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        self.add(index, 'layer.stampVisible', {}, 'Copy the picture for the glow')
-        self.add(index, 'filter.blur.gaussianBlur', {'radius': max(2, radius)}, f'Blur it ({radius:g} px)')
-        self.add(index, 'layer.setProps', {'blend': 'Screen', 'opacity': opacity, 'name': 'Glow'},
-                 f'Screen it at {opacity:.0%} as a glow')
-        if edit['target'] in ('object', 'main subject'):
-            if not self.selection(index, edit):
-                return
-            self.add(index, 'select.modify.expand', {'radius': max(4, round(radius * 2))}, 'Let the glow spill out')
-            self.add(index, 'select.modify.feather', {'radius': max(2, round(radius))}, 'Soften it')
-            self.add(index, 'layer.layerMask.revealSelection', {}, 'Glow only there')
-            self.end_selection(index)
-
-    def weather(self, index, edit):
-        """Rain or snow the way it is made by hand: sparse noise on a black layer, shaped, then screened."""
-        snow = bool(re.search(r'snow', edit['choice'] + ' ' + edit['quote'], re.IGNORECASE))
-        side = min(self.canvas.width, self.canvas.height)
-        scale = LEVEL[edit['strength']]
-        name = 'Snow' if snow else 'Rain'
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        self.add(index, 'layer.new.layer', {'name': name}, f'New {name.lower()} layer')
-        self.add(index, 'edit.fill', {'contents': 'color', 'color': '#000000'}, 'Fill it black')
-        # Measured in PhotoCraft: Add Noise on black is half-normal with sigma ≈ 0.64 × amount, so the
-        # Levels cut-off decides how many specks survive (amount 100: 0.085% reach level 200).
-        level = edit['strength']
-        if snow:
-            self.add(index, 'filter.noise.addNoise', {'amount': 100, 'distribution': 'gaussian',
-                                                      'monochromatic': True}, 'Scatter specks')
-            self.add(index, 'image.adjustments.levels', {'inBlack': {'subtle': 210, 'moderate': 200,
-                                                                     'strong': 185}[level], 'inWhite': 255},
-                     'Keep only a few as flakes')
-            self.add(index, 'filter.other.maximum', {'radius': max(1, round(side / 1100))}, 'Grow them into flakes')
-            self.add(index, 'filter.blur.gaussianBlur', {'radius': max(0.8, round(side / 1200, 1))},
-                     'Soften the flakes')
-            self.add(index, 'image.adjustments.levels', {'inBlack': 0, 'inWhite': 50}, 'Make the flakes white')
-        else:
-            self.add(index, 'filter.noise.addNoise', {'amount': 150, 'distribution': 'gaussian',
-                                                      'monochromatic': True}, 'Scatter specks')
-            self.add(index, 'image.adjustments.levels', {'inBlack': {'subtle': 140, 'moderate': 120,
-                                                                     'strong': 100}[level], 'inWhite': 255},
-                     'Keep only some drops')
-            self.add(index, 'filter.blur.motionBlur', {'distance': max(10, round(side * 0.04)), 'angle': 75},
-                     'Streak them as falling rain')
-            self.add(index, 'image.adjustments.levels', {'inBlack': 5, 'inWhite': 60}, 'Brighten the streaks')
-        opacity = 0.9 if snow else 0.6
-        self.add(index, 'layer.setProps', {'blend': 'Screen', 'opacity': opacity}, f'Screen at {opacity:.0%}')
-
-    def contact_shadow(self, index, edit):
-        """A soft shadow where each object meets the surface, under the objects, not over them."""
-        query_edit = {**edit, 'target': 'object' if edit['object'] else 'main subject'}
-        key, boxes = self.target_boxes(query_edit)
-        if not boxes:
-            self.blocking.append(f'Could not find {key or "the subject"} to put a shadow under.')
-            return
-        strength = LEVEL[edit['strength']]
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        self.add(index, 'layer.new.layer', {'name': 'Shadow'}, 'New shadow layer')
-        heights = []
-        for number, (x, y, w, h) in enumerate(boxes):
-            sh = max(6, round(h * 0.07))
-            heights.append(sh)
-            self.add(index, 'select.rect', {'x': round(x + w * 0.06), 'y': round(y + h - sh * 0.6),
-                                            'width': max(2, round(w * 0.88)), 'height': sh, 'ellipse': True,
-                                            'mode': 'replace' if number == 0 else 'add'}, 'Where it touches down')
-        self.add(index, 'edit.fill', {'contents': 'color', 'color': '#000000'}, 'Fill the shadow')
-        self.end_selection(index)
-        self.add(index, 'filter.blur.gaussianBlur', {'radius': max(3, round(max(heights) * 0.45))}, 'Soften it')
-        self.add(index, 'layer.setProps', {'blend': 'Multiply', 'opacity': min(0.85, round(0.45 * strength, 2))},
-                 'Multiply the shadow onto the surface')
-        self.add(index, 'studio.select_outline', {'boxes': boxes, 'what': key}, f'Select {key}')
-        self.add(index, 'layer.layerMask.hideSelection', {}, f'Keep the shadow behind {key}')
-        self.end_selection(index)
-        self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized(boxes)})
-
-    def do_blur_background(self, index, edit):
-        edit = {**edit, 'target': 'main subject'}
-        if not self.selection(index, edit, invert=True):
-            return
-        self.add(index, 'select.modify.feather', {'radius': max(1, round(min(self.canvas.width,
-                                                                             self.canvas.height) * 0.003))},
-                 'Soften the mask edge')
-        radius = round(amount({**edit, 'direction': 'increase'}, 15, 1, 100))
-        self.add(index, 'studio.local_filter', {'command': 'filter.blur.lensBlur', 'params': {'radius': radius},
-                                                'label': 'Background blur'}, f'Lens blur the background ({radius})')
-        self.end_selection(index)
-
-    def do_remove_background(self, index, edit):
-        if not self.selection(index, {**edit, 'target': 'main subject'}):
-            return
-        self.add(index, 'studio.select_photo', {'smart': True, 'keep_selection': True}, 'Select the photo')
-        self.add(index, 'layer.layerMask.revealSelection', {}, 'Hide everything but the subject (layer mask)')
-        self.end_selection(index)
-        color = hex_color(edit['color'])
-        if color and re.search(r'gradient|studio', edit['quote'], re.IGNORECASE):
-            # A studio backdrop: lighter behind the subject, falling off toward the edges.
-            self.add(index, 'layer.newFillLayer.gradient', {'from': mix(color, '#ffffff', 0.25),
-                                                            'to': mix(color, '#000000', 0.35), 'style': 'radial'},
-                     f'New {edit["color"]} gradient backdrop')
-        elif color:
-            self.add(index, 'layer.newFillLayer.solidColor', {'color': color}, f'New {edit["color"]} backdrop')
-        if color:
-            self.add(index, 'layer.renameLayer', {'name': 'Backdrop'}, 'Name the layer “Backdrop”')
-            self.add(index, 'layer.arrange.sendToBack', {}, 'Put the backdrop behind the subject')
-
-    def do_add_text(self, index, edit):
-        if not edit['text']:
-            self.blocking.append('Which words should the text say? Put them in quotes.')
-            return
-        family, weight, italic, effects = font_choice(edit['choice'], self.fonts)
-        params = {
-            'text': edit['text'], 'position': edit['position'] or 'center', 'size': text_size_pt(edit, self.canvas),
-            'color': hex_color(edit['color']) or 'auto', 'effects': effects, 'name': edit['text'][:60],
-        }
-        if family:
-            params['font'] = family
-        if weight:
-            params['weight'] = weight
-        if italic:
-            params['italic'] = True
-        if edit['choice'] and not family and not (weight or italic or effects):
-            self.notes.append(f'Font “{edit["choice"]}” is not installed; using the default font.')
-        detail = [f'{params["size"]:g} pt', edit['position'] or 'center',
-                  edit['color'] or 'readable color', family or '']
-        self.add(index, 'studio.text', params, f'Add “{edit["text"][:40]}” · ' + ', '.join(d for d in detail if d))
-        if re.search(r'watermark|semi[\s-]?transparent|transparent|faint|see[\s-]?through|ghost', edit['quote'],
-                     re.IGNORECASE):
-            opacity = edit['value'] / 100 if edit['value'] and 1 <= edit['value'] <= 100 and \
-                re.search(r'\d\s*%', edit['quote']) else 0.5
-            self.add(index, 'layer.setProps', {'opacity': opacity}, f'Text at {opacity:.0%} opacity')
-
-    def do_edit_text(self, index, edit):
-        layer = self.layer_named(edit['object'])
-        if layer is None or layer['kind'] != 'Type':
-            self.blocking.append(f'Which text layer does “{edit["quote"]}” mean?')
-            return
-        if not edit['text']:
-            self.blocking.append('What should the text say instead?')
-            return
-        self.add(index, 'type.edit', {'layer': layer['id'], 'text': edit['text']},
-                 f'Change “{layer["name"][:30]}” to “{edit["text"][:30]}”')
-
-    def do_frame(self, index, edit):
-        width = round(edit['value']) if edit['value'] else max(2, round(min(self.canvas.width,
-                                                                            self.canvas.height) * 0.015))
-        color = hex_color(edit['color']) or '#ffffff'
-        inset = round(min(self.canvas.width, self.canvas.height) * 0.03)
-        self.add(index, 'studio.select_top', {}, 'Work above everything')
-        self.add(index, 'layer.new.layer', {'name': 'Frame'}, 'New frame layer')
-        self.add(index, 'select.rect', {'x': inset, 'y': inset, 'width': self.canvas.width - inset * 2,
-                                        'height': self.canvas.height - inset * 2}, 'Frame area')
-        self.add(index, 'edit.stroke', {'width': min(250, width), 'color': color, 'location': 'inside'},
-                 f'Draw a {width}px frame line')
-        self.end_selection(index)
-
-    def do_gradient_overlay(self, index, edit):
-        """A gradient multiplied over the picture: the named color at one edge fading to nothing."""
-        color = hex_color(edit['color']) or '#000000'
-        edge = edit['position'] or next((side for side in ('top', 'left', 'right', 'bottom')
-                                         if side in edit['quote'].lower()), 'bottom')
-        angle = {'bottom': 90, 'top': -90, 'left': 0, 'right': 180}.get(edge.split()[-1], 90)
-        opacity = {'subtle': 0.45, 'moderate': 0.7, 'strong': 0.9}[edit['strength']]
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        self.add(index, 'layer.newFillLayer.gradient', {'from': color, 'to': '#ffffff', 'angle': angle,
-                                                        'style': 'linear'}, f'Gradient from the {edge}')
-        self.add(index, 'layer.setProps', {'blend': 'Multiply', 'opacity': opacity,
-                                           'name': f'{edit["color"] or "Dark"} gradient'.capitalize()},
-                 f'Multiply it at {opacity:.0%} (white leaves the rest unchanged)')
-
-    def do_round_corners(self, index, edit):
-        w, h = self.canvas.width, self.canvas.height
-        radius = round(edit['value']) if edit['value'] else round(min(w, h) * {'subtle': 0.03, 'moderate': 0.06,
-                                                                             'strong': 0.12}[edit['strength']])
-        color = hex_color(edit['color']) or '#ffffff'
-        self.add(index, 'studio.select_top', {}, 'Work above everything')
-        self.add(index, 'layer.new.layer', {'name': 'Rounded corners'}, 'New corners layer')
-        self.add(index, 'select.rect', {'x': 0, 'y': 0, 'width': w, 'height': h}, 'Select the picture')
-        self.add(index, 'select.modify.smooth', {'radius': max(1, min(500, radius)), 'applyAtCanvasBounds': True},
-                 f'Round the corners ({radius}px)')
-        self.add(index, 'select.inverse', {}, 'Select the corners')
-        self.add(index, 'edit.fill', {'contents': 'color', 'color': color}, f'Fill them {edit["color"] or "white"}')
-        self.end_selection(index)
-
-    def do_headshot(self, index, edit):
-        ratio = aspect_from(edit['aspect']) or aspect_from(edit['quote'])
-        if not ratio:
-            ratio = (1, 1) if re.search(r'linked\s*in|profile|avatar|\bdp\b|square', edit['quote'], re.IGNORECASE) \
-                else (4, 5)
-        self.head_frame(index, edit, ratio, head_share=0.52, top_margin=0.1, label='Crop to a headshot')
-
-    def head_frame(self, index, edit, ratio, head_share, top_margin, label):
-        """Frame measured from the head box: the head is `head_share` of the height, its top
-        `top_margin` below the frame's top, centered across. Returns the crop size or None."""
-        _, boxes = self.target_boxes({**edit, 'target': 'object', 'object': PASSPORT_HEAD})
-        if not boxes:
-            self.blocking.append('Could not find the person’s head to frame.')
-            return None
-        hx, hy, hw, hh = max(boxes, key=lambda b: b[2] * b[3])
-        w, h = self.canvas.width, self.canvas.height
-        frame_h = hh / head_share
-        frame_w = frame_h * ratio[0] / ratio[1]
-        scale = min(1.0, w / frame_w, h / frame_h)
-        if scale < 1:
-            self.notes.append('The photo is framed too tightly for the usual crop, so the head fills more of the '
-                              'picture than usual.')
-        cw, ch = min(w, round(frame_w * scale)), min(h, round(frame_h * scale))
-        x = min(max(0, round(hx + hw / 2 - cw / 2)), w - cw)
-        y = min(max(0, round(hy - ch * top_margin)), h - ch)
-        self.crop(index, x, y, cw, ch, label)
-        return cw, ch
-
-    def do_picture_frame(self, index, edit):
-        choice = (edit['choice'] or 'doubleLine').lower()
-        frames = ['vineWithFlowers', 'vineWithLeaves', 'ivy', 'roses', 'daisies', 'berries', 'bamboo', 'waves',
-                  'zigzag', 'dots', 'rope', 'scallops', 'doubleLine', 'snowflakes', 'stars', 'hearts']
-        frame = next((name for name in frames if name.lower() in choice.replace(' ', '')), 'doubleLine')
-        self.add(index, 'studio.select_top', {}, 'Work above everything')
-        self.add(index, 'filter.render.pictureFrame', {'frame': frame, 'newLayer': True}, f'{frame} frame')
-
-    def do_color_overlay(self, index, edit):
-        color = hex_color(edit['color'])
-        if not color:
-            self.blocking.append('Which color should the overlay be?')
-            return
-        opacity = max(1, min(100, edit['value'] if edit['value'] is not None else
-                             {'subtle': 15, 'moderate': 30, 'strong': 50}[edit['strength']]))
-        self.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
-        if edit['target'] != 'whole image' and not self.selection(index, edit):
-            return
-        self.add(index, 'layer.newFillLayer.solidColor', {'color': color}, f'{edit["color"]} overlay')
-        blend = (edit['choice'] or '').title() if edit['choice'].lower() in (
-            'multiply', 'screen', 'overlay', 'soft light', 'color', 'hard light') else 'Normal'
-        self.add(index, 'layer.setProps', {'opacity': opacity / 100, 'blend': blend, 'name': f'{edit["color"]} overlay'},
-                 f'{opacity:g}% opacity, {blend}')
-        if edit['target'] != 'whole image':
-            self.end_selection(index)
-
-    def group_expert(self, index, edit):
-        self.expert_requests.append(index)
-
-    def group_ai(self, index, edit):
-        """New content painted by AI as its own layer, masked to the target."""
-        if not self.ai:
-            self.blocking.append(f'“{edit["quote"]}” needs new content painted by AI. Install AI content editing '
-                                 '(Download editing model.bat) for this part.')
-            return
-        params = {'instruction': edit['quote'][:400] + '. Keep everything else exactly the same.',
-                  'label': f'AI: {edit["quote"]}'[:80]}
-        adding = re.search(r'\b(add|put|place|insert)\b', edit['quote'], re.IGNORECASE)
-        if edit['target'] in ('object', 'main subject') and not (adding and not edit['object']):
-            key, boxes = self.target_boxes(edit)
-            if not boxes:
-                self.blocking.append(f'Could not find {key or "where to paint"} in the picture.')
-                return
-            params['boxes'] = boxes
-            self.regions.append({'requirement': index, 'label': key, 'boxes': self.normalized(boxes)})
-            if adding:
-                # New things go next to what was named; the box only says where to look.
-                params.pop('boxes')
-            elif not self.selection(index, edit):
-                return
-        elif edit['target'] not in ('whole image', 'layer', 'object', 'main subject'):
-            if not self.selection(index, edit):
-                return
-        self.add(index, 'studio.ai_layer', params, f'Paint with AI: {edit["quote"][:60]}')
-
     expert_requests = None
+    edits = ()
 
 
 KEEP_IN_FRAME = re.compile(
@@ -2778,10 +1639,32 @@ def blur_checks(index, boxes, before, after):
     return checks
 
 
+# What else moves the quantity a global check measures. A plan that also neutralises a warm cast
+# lowers saturation while its vibrance step raises it; comparing the whole picture before and after
+# then says nothing about the vibrance step (a false failure, measured 2026-10-12).
+MOVES = {
+    'brightness': {'brightness', 'exposure', 'exposure_fix', 'auto_fix', 'look', 'tone_curve', 'shadows', 'highlights',
+                   'whites', 'blacks', 'graduated_filter', 'window_pull', 'vignette', 'dehaze', 'black_and_white'},
+    'saturation': {'saturation', 'vibrance', 'auto_fix', 'look', 'black_and_white', 'sepia', 'season', 'split_tone',
+                   'color_filter', 'keep_one_color', 'duotone', 'dehaze', 'temperature'},
+    'warmth': {'temperature', 'tint', 'auto_fix', 'look', 'color_filter', 'split_tone', 'color_grade', 'season'},
+}
+MEASURED_AS = {'brightness': 'brightness', 'exposure': 'brightness', 'saturation': 'saturation',
+               'vibrance': 'saturation', 'temperature': 'warmth'}
+
+
+def moved_by_others(edits, index):
+    """Whether another edit in the plan also moves what this edit's global check measures."""
+    quantity = MOVES[MEASURED_AS[edits[index]['action']]]
+    return any(other['action'] in quantity for number, other in enumerate(edits) if number != index)
+
+
 def measure(edits, regions, before, after, geometry_changed):
     """Pixel measurements of the rendered result for edits whose effect can be measured. A
     visual model can say “done” for a mug that is still grey; numbers cannot."""
     import numpy as np
+
+    from image_studio.pipelines import checks as pipeline_checks
 
     checks = []
     by_requirement = {}
@@ -2864,7 +1747,8 @@ def measure(edits, regions, before, after, geometry_changed):
                                               if kept else ''),
                                    'passed': outside_gray > 0.75 and all(kept), 'measured': True})
             elif action in ('brightness', 'exposure', 'saturation', 'vibrance', 'temperature') and \
-                    edit['target'] == 'whole image' and not geometry_changed and edit['direction'] != 'none':
+                    edit['target'] == 'whole image' and not geometry_changed and edit['direction'] != 'none' and \
+                    not moved_by_others(edits, index):
                 if action in ('brightness', 'exposure'):
                     old, new = (float(_hsv(img)[2].mean()) for img in (before, after))
                     name = 'brightness'
@@ -2881,7 +1765,8 @@ def measure(edits, regions, before, after, geometry_changed):
                 passed = rising if edit['direction'] == 'increase' else falling
                 checks.append({'requirement': index, 'check': f'Measured: {name} {old:.3f} → {new:.3f}',
                                'passed': passed, 'measured': True})
-            elif action in ('saturation', 'vibrance') and edit['target'] == 'color' and hex_color(edit['color'])                     and not geometry_changed and edit['direction'] != 'none':
+            elif action in ('saturation', 'vibrance') and edit['target'] == 'color' and hex_color(edit['color']) \
+                    and not geometry_changed and edit['direction'] != 'none':
                 family = color_family(hex_color(edit['color']))
                 ranges = {'reds': (340, 20), 'yellows': (20, 75), 'greens': (75, 160), 'cyans': (160, 200),
                           'blues': (170, 275), 'magentas': (275, 340)}
@@ -2919,6 +1804,9 @@ def measure(edits, regions, before, after, geometry_changed):
                                f'(difference {distance:.0f} of 441)', 'passed': distance < 45, 'measured': True})
         except (ValueError, IndexError, ZeroDivisionError):
             continue
+        # Checks the pipelines themselves declare (image_studio.pipelines.checks).
+        checks += pipeline_checks.run(index, edit, before, after, boxes, originals.get(index), geometry_changed,
+                                      others=[other['action'] for number, other in enumerate(edits) if number != index])
     for check in checks:
         check['passed'] = bool(check['passed'])  # numpy booleans are not JSON
     return checks

@@ -67,6 +67,48 @@ def capabilities():
     return guarded(workspace.capabilities)
 
 
+@router.get('/pipelines')
+def pipeline_catalog():
+    """Every pipeline the engine can run: procedures and professional workflows, with their slots."""
+    from image_studio import pipelines
+
+    return {'pipelines': pipelines.catalog(), 'categories': [{'id': key, 'title': title}
+                                                             for key, title in pipelines.CATEGORIES]}
+
+
+class ModelConnection(BaseModel):
+    role: Literal['planner', 'grounder', 'checker']
+    preset: str | None = Field(default=None, max_length=40)
+    kind: Literal['local', 'openai', 'anthropic'] | None = None
+    base_url: str | None = Field(default=None, max_length=300)
+    model: str | None = Field(default=None, max_length=200)
+    api_key_env: str | None = Field(default=None, max_length=80, pattern='^[A-Z_][A-Z0-9_]*$')
+    structured: Literal['grammar', 'json_schema', 'json_object', 'none'] | None = None
+    boxes: Literal['xyxy_1000', 'yxyx_1000'] | None = None
+    vision: bool | None = None
+
+
+@router.get('/models')
+def model_connections():
+    """Which model answers each role (planner, grounder, checker), and the ready-made presets."""
+    from image_studio.pipelines import models
+
+    return {'roles': models.describe(), 'presets': {name: {k: v for k, v in spec.items() if k != 'api_key'}
+                                                   for name, spec in models.PRESETS.items()}}
+
+
+@router.put('/models')
+def connect_model(request: ModelConnection):
+    """Connect a role to a model and save it in the studio settings. API keys stay in environment
+    variables (api_key_env names one); they are never sent to or stored by this endpoint."""
+    from image_studio.pipelines import models
+
+    spec = request.model_dump(exclude_none=True)
+    role = spec.pop('role')
+    guarded(lambda: models.connect(role, save=True, **spec))
+    return model_connections()
+
+
 @router.get('/fonts')
 def fonts():
     return {'fonts': workspace.fonts()}

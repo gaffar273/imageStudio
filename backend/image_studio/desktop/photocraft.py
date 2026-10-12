@@ -52,6 +52,7 @@ from image_studio.desktop.photocraft_tools import (
     CropPanel,
     FiltersPanel,
     LooksPanel,
+    PipelinesPanel,
     SelectPanel,
     TextPanel,
     describe_layer,
@@ -64,6 +65,7 @@ from image_studio.desktop.theme import label
 
 TOOLS = [
     ('assistant', 'Assistant', 'sparkles', AssistantPanel),
+    ('pipelines', 'Pipelines', 'zap', PipelinesPanel),
     ('adjust', 'Adjust', 'sliders-horizontal', AdjustPanel),
     ('looks', 'Looks', 'palette', LooksPanel),
     ('crop', 'Crop', 'crop', CropPanel),
@@ -1142,6 +1144,7 @@ class PhotoCraftPage(QWidget):
         commands = capabilities.get('commands') or []
         self.panels['filters'].set_commands(commands)
         self.panels['all'].set_commands(commands, capabilities.get('discovered') or len(commands))
+        self.panels['pipelines'].set_pipelines(capabilities.get('pipelines') or [])
         self.render()
 
     def submit(self, path, body, kind):

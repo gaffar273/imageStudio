@@ -609,6 +609,23 @@ class EngineTests(unittest.TestCase):
         checks = result['history'][-1]['checks']
         self.assertTrue(checks and all(check['passed'] for check in checks), checks)
 
+    def test_an_optional_workflow_part_that_fails_in_the_engine_is_skipped(self):
+        steps = [
+            {'command': 'select.rect', 'params': {'x': 0, 'y': 0, 'width': 10, 'height': 10}, 'label': 'Tiny area',
+             'requirements': [0], 'optional': True},
+            {'command': 'studio.require_selection', 'params': {'what': 'sky', 'min_coverage': 0.5},
+             'label': 'Check the sky', 'requirements': [0], 'optional': True},
+            {'command': 'layer.newAdjustmentLayer.invert', 'params': {}, 'label': 'Never runs', 'requirements': [0],
+             'optional': True},
+            {'command': 'studio.select_insert', 'params': {}, 'label': 'Insert', 'requirements': [1]},
+            {'command': 'layer.newAdjustmentLayer.vibrance', 'params': {'vibrance': 20}, 'label': 'Vibrance',
+             'requirements': [1]},
+        ]
+        result = self.ws.apply(self.document['id'], self.document['revision'], steps, 'test', lambda *a, **k: None,
+                               threading.Event())
+        kinds = [layer['kind'] for layer in result['state']['layers']]
+        self.assertEqual(kinds.count('Adjustment'), 1)  # vibrance ran; the skipped part's invert did not
+
     def run_plan(self, edits):
         data = self.ws.load(self.document['id'])
         revision = data['history'][data['cursor']]['id']

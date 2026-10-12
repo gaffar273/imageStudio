@@ -105,17 +105,22 @@ def find_boxes_brain(image, target):
     is measured: with “(each building, each person...)” it found no box for the hair of a
     portrait, and adding a line about parts of a person to that lost the beard and glasses too;
     this one found hair, beard, glasses, chairs, a plant and three separate curtains."""
-    from image_studio.services import brain
+    from image_studio.pipelines import models
 
-    answer = brain.chat(
-        'You locate objects in photos precisely. Coordinates are on a 0-1000 scale: x from the left, '
+    yx = models.box_format('grounder') == 'yxyx_1000'
+    order = '[y1, x1, y2, x2]' if yx else '[x1, y1, x2, y2]'
+    answer = models.chat(
+        'grounder', 'You locate objects in photos precisely. Coordinates are on a 0-1000 scale: x from the left, '
         'y from the top.',
-        [brain.image_part(image), {'type': 'text', 'text':
-            f'Locate {target}. Give one tight box [x1, y1, x2, y2] for each separate one, or one box when it '
+        [models.image_part(image), {'type': 'text', 'text':
+            f'Locate {target}. Give one tight box {order} for each separate one, or one box when it '
             'is a single thing. Parts of a person (hair, face, hands, beard, clothing) count. '
             'JSON: {"boxes": [...]}'}],
         schema=BOXES_SCHEMA, max_tokens=800, temperature=0.0)
-    return parse_boxes(json.dumps([{'bbox_2d': box} for box in answer.get('boxes') or []]), *image.size)
+    boxes = [box for box in answer.get('boxes') or [] if isinstance(box, list) and len(box) == 4]
+    if yx:
+        boxes = [[box[1], box[0], box[3], box[2]] for box in boxes]
+    return parse_boxes(json.dumps([{'bbox_2d': box} for box in boxes]), *image.size)
 
 
 def tidy(mask):

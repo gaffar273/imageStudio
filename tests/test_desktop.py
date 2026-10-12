@@ -787,6 +787,33 @@ class PhotoCraftScreenTests(unittest.TestCase):
         posted = self.post(lambda: page.operation(dict(action='goto', index=0)))
         self.assertEqual((posted[0][1]['action'], posted[0][1]['index']), ('goto', 0))
 
+    def test_any_pipeline_can_be_found_and_run_from_its_panel(self):
+        from PySide6.QtCore import Qt
+
+        from image_studio import pipelines
+
+        page = self.page
+        page.got_capabilities(dict(PHOTOCRAFT_CAPABILITIES, pipelines=pipelines.catalog()))
+        self.open()
+        page.choose_tool('pipelines')
+        panel = page.panels['pipelines']
+        self.assertEqual(panel.list.count(), len(pipelines.REGISTRY))
+        panel.search.setText('amazon')
+        panel.fill()
+        self.assertEqual(panel.list.item(0).data(Qt.ItemDataRole.UserRole), 'product_marketplace')
+        panel.list.setCurrentRow(0)
+        self.assertIn('remove background', panel.parts.text())
+        self.assertFalse(panel.option_row.isHidden())
+        panel.option.setCurrentText('etsy')
+        panel.target.setValue('object')
+        panel.thing.setText('the red mug')
+        posted = self.post(panel.run)
+        body = posted[0][1]
+        self.assertEqual(body['edits'][0], dict(action='product_marketplace', quote='Marketplace product photo',
+                                                strength='moderate', target='object', object='the red mug',
+                                                choice='etsy', text=''))
+        self.assertEqual(body['label'], 'Pipeline: Marketplace product photo')
+
     def test_a_panel_edit_from_start_to_finish(self):
         page = self.page
         self.open()

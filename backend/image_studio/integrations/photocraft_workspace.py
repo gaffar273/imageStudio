@@ -19,6 +19,8 @@ from pathlib import Path
 
 from PIL import Image
 
+from image_studio import pipelines
+from image_studio.pipelines import models
 from image_studio.core.paths import CACHE
 from image_studio.integrations import (
     photocraft,
@@ -227,7 +229,8 @@ def capabilities():
     commands = registry() if photocraft.available() else []
     return {
         'installed': photocraft.available(),
-        'brain': brain.available(),
+        'brain': models.available('planner'),
+        'models': models.describe(),
         'marked_area': True,
         'commands': commands,
         'discovered': len(commands),
@@ -235,6 +238,7 @@ def capabilities():
         'vocabulary': {name: {'group': group, 'label': label}
                        for name, (group, label) in photocraft_intents.ACTIONS.items()},
         'looks': sorted(photocraft_intents.RECIPES) + photocraft_intents.LUTS,
+        'pipelines': pipelines.catalog(),
         'note': 'Registry access is not verified feature parity. Some commands need a selection, '
         'a specific layer type, resources, or the desktop application.',
     }
@@ -386,9 +390,13 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
                 mask_for(area, before['width'], before['height'])
                 engine.call('doc.render', {'path': str(folder / '_area-before.png'),
                                           'maxSide': max(before['width'], before['height'])})
+            skipped, skip_notes = set(), []
             for index, step in enumerate(steps):
                 progress(0.05 + 0.6 * index / max(1, len(steps)), desc=step.get('label') or step['command'])
                 params = step.get('params', {})
+                part = tuple(step.get('requirements', []))
+                if step.get('optional') and part in skipped:
+                    continue
                 try:
                     if step['command'] in photocraft_macros.NAMES:
                         result = photocraft_macros.run(engine, folder, step['command'], params, context)
@@ -397,6 +405,14 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
                     else:
                         result = engine.call('engine.execute', {'command': step['command'], 'params': params})
                 except ValueError as exc:
+                    if step.get('optional'):
+                        # A workflow part that does not apply to this photo (no sky was found to
+                        # deepen) is skipped; the rest of the plan still runs.
+                        skipped.add(part)
+                        skip_notes.append(f'Skipped an optional part ({step.get("label") or step["command"]}): {exc}')
+                        if engine.call('doc.inspect').get('hasSelection'):
+                            engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+                        continue
                     raise ValueError(
                         f'Step {index + 1} ({step.get("label") or step["command"]}) failed: {exc}. '
                         'The previous revision is unchanged.'
@@ -429,8 +445,8 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
                 + (' with a soft shadow' if value.get('auto_shadow') else '')
                 for key, value in outcomes.items()
                 if key[0] == 'text' and plan['edits'][key[1]]['color'] in ('', 'auto')
-            ]
-            if plan.get('planner') not in ('manual', 'preset', 'rules') and brain.available():
+            ] + skip_notes
+            if plan.get('planner') not in ('manual', 'preset', 'rules') and models.available('checker'):
                 progress(0.8, desc='Checking the result against each requirement…')
                 try:
                     with Image.open(folder / f'{expected}.png') as old, \
@@ -619,36 +635,22 @@ def explain(edit, steps, index):
 
 
 def measure_lines(edits, preview, state, boxes=None):
-    """Facts measured from the pixels, only when an edit needs them: the horizon tilt, upright
-    edges, and whether the teeth box really shows teeth (the brain boxes closed lips as teeth)."""
-    from .photocraft_lines import tilt, verticals
+    """Facts measured from the pixels that the planned pipelines read (pipelines.measure)."""
+    from image_studio.pipelines.measure import analyse
 
-    analysis = {}
-    if (boxes or {}).get(photocraft_intents.TEETH) and any(
-            photocraft_intents.TEETH in photocraft_planner.queries_for(edit) for edit in edits):
-        analysis['teeth'] = photocraft_planner.teeth_showing(preview)
-        analysis['teeth_colors'] = photocraft_intents.teeth_colors(preview, boxes[photocraft_intents.TEETH], state)
-    if (boxes or {}).get(photocraft_intents.FACES) and any(
-            photocraft_intents.FACES in photocraft_planner.queries_for(edit) for edit in edits):
-        analysis['skin_colors'] = photocraft_intents.skin_colors(preview, boxes[photocraft_intents.FACES], state)
-    if any(edit['action'] == 'auto_fix' for edit in edits):
-        analysis['levels'] = photocraft_intents.measure_levels(preview)
-    if any(edit['action'] == 'straighten' and edit['value'] is None for edit in edits):
-        analysis['tilt'] = tilt(preview)
-    if any(edit['action'] == 'perspective' for edit in edits):
-        sx, sy = state['width'] / preview.width, state['height'] / preview.height
-        analysis['verticals'] = [[[round(x * sx), round(y * sy)] for x, y in line] for line in verticals(preview)]
-    return analysis
+    return analyse(edits, preview, state, boxes)
 
 
 def compile_plan(data, prompt, edits, preserve, questions, notes, preview, planner, boxes=None, area=None):
     """Compile normalized edits against the current document; finds objects when needed."""
     state = current(data)['state']
+    # Workflows become the procedures they are made of before anything is found or measured.
+    edits = photocraft_intents.expand(edits, preserve, prompt)
     boxes = dict(boxes or {})
     wanted = set() if area else {query for edit in edits for query in photocraft_planner.queries_for(edit)}
     missing = sorted(query for query in wanted if query.lower() not in boxes)
     if missing:
-        if not brain.available():
+        if not models.available('grounder'):
             raise ValueError('Finding objects needs the editing brain. Install it, or choose the whole image.')
         hints = {query: edit['quote'] for edit in edits for query in photocraft_planner.queries_for(edit)}
         boxes.update(photocraft_planner.locate(preview, missing, state, hints))
@@ -666,7 +668,7 @@ def compile_plan(data, prompt, edits, preserve, questions, notes, preview, plann
             measure_lines(edits, preview, state, boxes))
     for index in expert_indices:
         edit = edits[index]
-        if not brain.available():
+        if not models.available('planner'):
             blocking.append(f'“{edit["quote"]}” needs the editing brain to choose PhotoCraft tools.')
             continue
         found, expert_notes = photocraft_planner.expert(
@@ -737,7 +739,7 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
         result = compile_plan(data, prompt, preset, [], [], [], preview, 'preset', area=area)
     elif instant:
         result = compile_plan(data, prompt, instant, [], [], [], preview, 'rules', area=area)
-    elif brain.available():
+    elif models.available('planner'):
         progress(0.1, desc='Reading your image and every part of your request…')
         edits, preserve, questions, notes = photocraft_planner.understand(prompt, preview, state, area=area)
         check_cancel(cancelled)

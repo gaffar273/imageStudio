@@ -1377,5 +1377,138 @@ class CommandsPanel(Panel):
         self.sync()
 
 
+class PipelinesPanel(Panel):
+    """Every pipeline the engine can run, the same ones the assistant chooses from: pick one, fill
+    in its few choices and run it. Workflows run all of their procedures."""
+
+    TARGETS = [('whole image', 'Whole image'), ('main subject', 'Subject'), ('background', 'Background'),
+               ('object', 'Named thing')]
+
+    def __init__(self, studio):
+        super().__init__(studio, 'Pipelines', 'Professional procedures and whole jobs. The assistant picks these '
+                                              'for you; here you choose one yourself.')
+        self.search = QLineEdit()
+        self.search.setPlaceholderText('Product, real estate, skin, sky, frame…')
+        self.search.addAction(theme.icon('search', theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.textChanged.connect(lambda _: self.fill())
+        self.column.addWidget(self.search)
+        self.category = QComboBox()
+        self.category.currentIndexChanged.connect(lambda _: self.fill())
+        self.column.addWidget(self.category)
+        self.list = QListWidget()
+        self.list.setMinimumHeight(220)
+        self.list.setStyleSheet(f'QListWidget {{ background: {theme.BG}; border: 1px solid {theme.LINE}; '
+                                f'border-radius: 8px; }} QListWidget::item {{ padding: 5px 8px; }} '
+                                f'QListWidget::item:selected {{ background: rgba(196, 244, 119, 0.12); '
+                                f'color: {theme.LIME}; }}')
+        self.list.currentItemChanged.connect(self.picked)
+        self.column.addWidget(self.list)
+        self.count = label('', 'small')
+        self.column.addWidget(self.count)
+
+        self.detail = QWidget()
+        form = QVBoxLayout(self.detail)
+        form.setContentsMargins(0, 6, 0, 0)
+        form.setSpacing(8)
+        self.name = label('', 'heading')
+        self.summary = label('', 'muted', wrap=True)
+        self.parts = label('', 'small', wrap=True)
+        form.addWidget(self.name)
+        form.addWidget(self.summary)
+        form.addWidget(self.parts)
+        self.option_row = QWidget()
+        row = QHBoxLayout(self.option_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(label('Choice', 'muted'))
+        self.option = QComboBox()
+        row.addWidget(self.option, 1)
+        form.addWidget(self.option_row)
+        self.target = Segmented(self.TARGETS, 'whole image', columns=2)
+        form.addWidget(self.target)
+        self.thing = QLineEdit()
+        self.thing.setPlaceholderText('What it applies to, e.g. the red mug (optional)')
+        form.addWidget(self.thing)
+        self.words = QLineEdit()
+        self.words.setPlaceholderText('Exact words, for titles')
+        form.addWidget(self.words)
+        self.strength = Segmented(STRENGTHS, 'moderate')
+        form.addWidget(self.strength)
+        form.addWidget(self.button('Run pipeline', self.run, 'play', 'primary', ready=lambda: self.chosen is not None))
+        self.column.addWidget(self.detail)
+        self.column.addStretch()
+        self.pipelines, self.categories, self.chosen = [], [], None
+        self.detail.setVisible(False)
+
+    def set_pipelines(self, pipelines, categories=()):
+        self.pipelines = pipelines
+        titles = dict(categories) or {item['category']: item['category_title'] for item in pipelines}
+        present = [key for key in titles if any(item['category'] == key for item in pipelines)]
+        self.category.blockSignals(True)
+        self.category.clear()
+        self.category.addItem(f'All {len(pipelines)} pipelines', '')
+        for key in present:
+            self.category.addItem(titles[key], key)
+        self.category.blockSignals(False)
+        self.fill()
+
+    def fill(self):
+        query = self.search.text().lower().strip()
+        wanted = self.category.currentData() or ''
+        shown = [item for item in self.pipelines if (not wanted or item['category'] == wanted) and (
+            not query or query in f'{item["id"]} {item["title"]} {item["summary"]} {item["category_title"]}'.lower())]
+        self.list.blockSignals(True)
+        self.list.clear()
+        for item in shown:
+            kind = 'workflow' if item['kind'] == 'workflow' else item['category_title']
+            entry = QListWidgetItem(f'{item["title"]}\n{kind}')
+            entry.setData(Qt.ItemDataRole.UserRole, item['id'])
+            entry.setToolTip(item['summary'])
+            self.list.addItem(entry)
+            if self.chosen and item['id'] == self.chosen['id']:
+                self.list.setCurrentItem(entry)
+        self.list.blockSignals(False)
+        self.count.setText(f'{len(shown)} pipeline{"" if len(shown) == 1 else "s"}')
+
+    def picked(self, entry, _previous=None):
+        if entry is None:
+            return
+        ident = entry.data(Qt.ItemDataRole.UserRole)
+        self.chosen = next((item for item in self.pipelines if item['id'] == ident), None)
+        if self.chosen is None:
+            return
+        item = self.chosen
+        self.name.setText(item['title'])
+        self.summary.setText(item['summary'][:1].upper() + item['summary'][1:] + '.')
+        lines = []
+        if item['steps']:
+            lines.append('Runs: ' + ' → '.join(step.replace('_', ' ') for step in item['steps']))
+        if item['measures']:
+            lines.append('Measures first: ' + ', '.join(item['measures']).replace('_', ' '))
+        if item['ai']:
+            lines.append('Needs the AI content model.')
+        self.parts.setText('\n'.join(lines))
+        self.parts.setVisible(bool(lines))
+        self.option.clear()
+        for option in item['options']:
+            self.option.addItem(option)
+        self.option_row.setVisible(bool(item['options']))
+        self.words.setVisible('text =' in item['summary'] or 'title' in item['summary'])
+        self.detail.setVisible(True)
+        self.sync()
+
+    def run(self):
+        item = self.chosen
+        if item is None:
+            return
+        target = self.target.value()
+        thing = self.thing.text().strip()
+        if target == 'object' and not thing:
+            target = 'main subject'
+        edit = dict(action=item['id'], quote=item['title'], strength=self.strength.value(), target=target,
+                    object=thing, choice=self.option.currentText() if item['options'] else '',
+                    text=self.words.text().strip() if not self.words.isHidden() else '')
+        self.edits([edit], f'Pipeline: {item["title"]}')
+
+
 def when(seconds):
     return time.strftime('%H:%M:%S', time.localtime(seconds or 0))

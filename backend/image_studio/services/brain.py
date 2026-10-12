@@ -59,7 +59,15 @@ def _stop_strays():
 
 
 def _start():
-    """Start llama-server with the model on the GPU and wait until it answers."""
+    """Start llama-server with the model on the GPU and wait until it answers. When another
+    process of the studio (a benchmark, a second window) already serves the brain on its port,
+    that server is used: a second copy does not fit beside it in 8 GB, and both then ran at a
+    crawl from shared memory (measured 2026-10-12)."""
+    try:
+        if _request('/health', timeout=3).get('status') == 'ok':
+            return dict(close=lambda: None)
+    except (urllib.error.URLError, OSError, ValueError):
+        pass
     _stop_strays()
     folder = BRAIN['folder']
     log = open(LOG, 'ab')
