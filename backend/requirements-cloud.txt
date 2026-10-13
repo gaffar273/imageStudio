@@ -1,0 +1,7 @@
+# The engine in cloud mode, for PCs without an NVIDIA graphics card: no PyTorch, no model
+# libraries. Pictures come from the providers connected in Studio settings → Providers. The app's
+# own Python already carries the web server and Pillow; these are the rest of what the engine
+# loads. Same versions the full engine ends up with, so installing it later only adds to these.
+numpy==2.5.2
+opencv-python==5.0.0.93
+anthropic==1.13.0

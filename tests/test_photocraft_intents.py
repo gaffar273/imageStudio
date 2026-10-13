@@ -39,6 +39,52 @@ class UnderstandingTests(unittest.TestCase):
         self.assertEqual(result['direction'], 'decrease')
         self.assertEqual(intents.amount(result, 20, -100, 100), -20)
 
+    def test_a_number_from_another_clause_is_not_this_edits_amount(self):
+        prompt = 'crop to 4:5 and boost vibrance'
+        result, notes = intents.normalize({'action': 'vibrance', 'quote': 'boost vibrance', 'value': 5}, prompt)
+        self.assertIsNone(result['value'])
+        self.assertTrue(notes)
+
+    def test_direction_words_are_read_as_phrases(self):
+        # Each of these once flipped a correct planner answer: any “less” or “darker” meant decrease.
+        cases = [
+            ('make it less dark', 'brightness', 'increase'),
+            ('make it less cold', 'temperature', 'increase'),
+            ('brighten the darker areas', 'brightness', 'increase'),
+            ('make it a lot less washed out', 'contrast', 'increase'),
+            ('this photo is too dark', 'exposure_fix', 'increase'),
+            ('the sky is too bright', 'highlights', 'decrease'),
+            ('reduce the darkness', 'brightness', 'increase'),
+            ('reduce the brightness', 'brightness', 'decrease'),
+            ('make the lower half brighter', 'brightness', 'increase'),
+            ('recover the blown out sky', 'highlights', 'decrease'),
+            ('the photo is blurry, make it sharper', 'sharpen', 'increase'),
+            ('Deepen the blues of the sea', 'saturation', 'increase'),
+            ('deepen the shadows', 'shadows', 'decrease'),
+            ('lift the shadows', 'shadows', 'increase'),
+            ('not so warm please', 'temperature', 'decrease'),
+            ('less saturated', 'saturation', 'decrease'),
+            ('make the colors less dull', 'saturation', 'increase'),
+            ('add fog', 'dehaze', 'decrease'),
+            ('remove the haze', 'dehaze', 'increase'),
+        ]
+        for prompt, action, wanted in cases:
+            with self.subTest(prompt=prompt):
+                planner_said = 'decrease' if wanted == 'increase' else 'increase'
+                result, _ = intents.normalize({'action': action, 'quote': prompt, 'direction': planner_said},
+                                              prompt)
+                self.assertEqual(result['direction'], wanted)
+                kept, _ = intents.normalize({'action': action, 'quote': prompt, 'direction': wanted}, prompt)
+                self.assertEqual(kept['direction'], wanted)
+
+    def test_words_do_not_overrule_the_planner_where_direction_is_not_an_amount(self):
+        result, _ = intents.normalize({'action': 'drop_shadow', 'quote': 'add a soft shadow under him',
+                                       'direction': 'none'}, 'add a soft shadow under him')
+        self.assertEqual(result['direction'], 'none')
+        result, _ = intents.normalize({'action': 'remove_object', 'quote': 'remove the dog', 'direction': 'none'},
+                                      'remove the dog')
+        self.assertEqual(result['direction'], 'none')
+
     def test_keep_clauses_protect_instead_of_editing(self):
         prompt = 'Blur the background a little so I stand out. Keep me sharp.'
         kept, notes = intents.normalize({'action': 'sharpen', 'quote': 'Keep me sharp', 'target': 'main subject'},

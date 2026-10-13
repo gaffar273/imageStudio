@@ -19,6 +19,7 @@ guess, and asked again with the problems listed when it cannot be repaired.
 """
 
 import copy
+import re
 
 from . import adapters, contract
 
@@ -28,7 +29,8 @@ ROLES = ('planner', 'grounder', 'checker')
 # in the preset.
 PRESETS = {
     'local': {'kind': 'local', 'label': 'Bundled Qwen3.5-9B vision (this PC)', 'boxes': 'xyxy_1000'},
-    'ollama': {'kind': 'openai', 'base_url': 'http://127.0.0.1:11434/v1', 'model': 'qwen2.5vl:7b', 'local': True,
+    # Qwen3-VL gives boxes on the 0–1000 grid; Qwen2.5-VL gave pixels of the picture it saw.
+    'ollama': {'kind': 'openai', 'base_url': 'http://127.0.0.1:11434/v1', 'model': 'qwen3-vl:8b', 'local': True,
                'structured': 'json_schema', 'label': 'Ollama (this PC)'},
     'lmstudio': {'kind': 'openai', 'base_url': 'http://127.0.0.1:1234/v1', 'model': '', 'local': True,
                  'structured': 'json_schema', 'label': 'LM Studio (this PC)'},
@@ -72,7 +74,36 @@ def resolve(spec):
     base.setdefault('kind', 'local')
     if preset:
         base['preset'] = preset
+    if 'boxes' not in base and GROUNDING_MODELS.search(str(base.get('model', ''))):
+        base['boxes'] = 'xyxy_1000'
     return base
+
+
+# Models trained to give boxes on the 0–1000 grid, whoever serves them. Others (most chat models)
+# were never measured at finding things, so a role is only marked able to ground when its preset
+# or its model says so.
+GROUNDING_MODELS = re.compile(r'qwen3(\.\d+)?[-_ ]?vl', re.IGNORECASE)
+
+
+def can_ground(spec):
+    """Whether a connection is known to give boxes the grounder can read."""
+    return bool(resolve(spec).get('boxes')) if spec is not None else False
+
+
+def sees_images(spec):
+    return resolve(spec).get('vision', True) is not False
+
+
+def warnings(role, spec=None):
+    """Plain sentences about what the role's model cannot be trusted to do."""
+    spec = settings()[role] if spec is None else resolve(spec)
+    found = []
+    if not sees_images(spec):
+        found.append(f'The {role} model cannot see pictures, so it works from the words alone.')
+    if role == 'grounder' and not can_ground(spec):
+        found.append('This model is not known to find things in photos on the 0–1000 grid the studio reads; '
+                     'object selections may miss. A Qwen3-VL or Gemini model, or the bundled model, finds them.')
+    return found
 
 
 def connect(role, save=False, **spec):
@@ -106,8 +137,20 @@ def adapter(role):
     return adapters.build(settings()[role])
 
 
-def available(role='planner'):
+def available_spec(spec):
+    """Whether a connection (not yet saved to a role) can answer."""
     try:
+        return adapters.build(resolve(spec)).available()
+    except (ValueError, RuntimeError):
+        return False
+
+
+def available(role='planner'):
+    """Whether the role can answer: its model is reachable and, for the grounder and the checker,
+    can see the photo (a text-only model cannot box things or compare before and after)."""
+    try:
+        if role in ('grounder', 'checker') and not sees_images(settings()[role]):
+            return False
         return adapter(role).available()
     except (ValueError, RuntimeError):
         return False
@@ -121,7 +164,8 @@ def box_format(role='grounder'):
 def describe():
     """Which model answers each role, for the interface and the logs."""
     return {role: {'name': adapters.build(spec).name, 'kind': spec['kind'], 'model': spec.get('model', ''),
-                   'available': available(role)} for role, spec in settings().items()}
+                   'available': available(role), 'warnings': warnings(role, spec)}
+            for role, spec in settings().items()}
 
 
 def image_part(image, longest=1024):

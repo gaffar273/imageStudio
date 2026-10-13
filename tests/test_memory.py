@@ -190,14 +190,14 @@ class MemoryApiTests(MemoryTests.__base__):
         from image_studio.services import workflows
 
         memory.teach('make it pop', 'more contrast')
-        with patch.object(workflows.brain, 'available', return_value=False):
+        with patch.object(workflows.models, 'available', return_value=False):
             result = workflows.editor_plan(
                 dict(prompt='Make it pop', state=doc(('Background', 0))), lambda *a, **k: None
             )
         self.assertEqual([step['op'] for step in result['steps']], ['contrast'])
         self.assertTrue(any('taught me' in note for note in result['notes']))
         # "too much" right after it takes the new layer back and redoes it weaker.
-        with patch.object(workflows.brain, 'available', return_value=False):
+        with patch.object(workflows.models, 'available', return_value=False):
             result = workflows.editor_plan(
                 dict(prompt='too much', state=doc(('Contrast', 0), ('Background', 0))), lambda *a, **k: None
             )

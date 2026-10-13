@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
-from image_studio.desktop.controls import Box, Flow, Range, Thumb, Toggle
+from image_studio.desktop.controls import Box, Flow, PageHeader, Range, Thumb, Toggle
 from image_studio.desktop.create import MAX_PROMPT, POLL_MS, rule
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.library import ImageView, save_to
@@ -46,28 +46,44 @@ from image_studio.desktop.theme import label
 # id: (name, menu entry, what it does, the config flag that says it is installed, placeholder, ideas)
 ENGINES = {
     'photocraft': (
-        'PhotoCraft', 'PhotoCraft — light and color', 'Whole-photo adjustments · Editable PSD layers', 'photocraft',
+        'PhotoCraft', 'PhotoCraft · light and color', 'Adjusts the whole photo in editable PSD layers.', 'photocraft',
         'Make it brighter and warmer, or try professional polish…',
         ['Professional polish', 'Warm portrait', 'Cinematic teal and orange', 'Soft faded film', 'Make it grayscale'],
     ),
     'kontext': (
-        'FLUX.1 Kontext', 'AI content editing', 'Ready for a new perspective', 'editing',
-        'Change the background to a sunlit garden. Keep the person and their expression…',
+        'FLUX.1 Kontext', 'FLUX.1 Kontext · change content', 'Adds, removes or replaces things. Runs on this PC.',
+        'editing', 'Change the background to a sunlit garden. Keep the person and their expression…',
         ['Make it golden hour', 'Turn it into a watercolor', 'Remove the background'],
     ),
 }
+CLOUD_IDEAS = ['Make it golden hour', 'Remove the people in the background', 'Turn it into a watercolor']
+
+
+def cloud_editor(engine, config):
+    return next((entry for entry in (config or {}).get('cloud_editors') or [] if entry['id'] == engine), None)
+
+
+def details(engine, config=None):
+    """(name, menu entry, note, config flag, placeholder, ideas) for a tool, cloud editors included."""
+    if engine in ENGINES:
+        return ENGINES[engine]
+    entry = cloud_editor(engine, config) or dict(label='Cloud', model=engine.partition(':')[2])
+    return (entry['label'], f'{entry["label"]} · {entry["model"]}', f'Runs on {entry["label"]} with your API key. '
+            'Changes the whole photo.', None, ENGINES['kontext'][4], CLOUD_IDEAS)
 MAX_PIXELS = 25_000_000
 MAX_UPLOAD = 38_000_000  # characters of data URL; the engine takes up to 40 million
 PICTURES = 'Images (*.png *.jpg *.jpeg *.webp *.bmp)'
 
 
 def installed(engine, config):
+    if engine not in ENGINES:
+        return bool((cloud_editor(engine, config) or {}).get('ready'))
     return bool((config or {}).get(ENGINES[engine][3]))
 
 
 def choose_engine(config, saved):
     """The tool to start with: the one used last if it is installed, else PhotoCraft, else AI editing."""
-    if saved in ENGINES and installed(saved, config):
+    if saved and installed(saved, config):
         return saved
     return 'photocraft' if installed('photocraft', config) else 'kontext'
 
@@ -211,7 +227,7 @@ class PaintCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#0d0f0f'))
+        painter.fillRect(self.rect(), QColor(theme.CANVAS))
         box = self.target()
         if box.isEmpty():
             return
@@ -230,7 +246,7 @@ class PaintCanvas(QWidget):
             brush.translate(box.topLeft())
             brush.scale(box.width() / self.picture.width(), box.width() / self.picture.width())
             for width, points in self.strokes:
-                brush.setPen(QPen(QColor(theme.LIME), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
+                brush.setPen(QPen(QColor(theme.ACCENT), width, Qt.PenStyle.SolidLine, Qt.PenCapStyle.RoundCap,
                                   Qt.PenJoinStyle.RoundJoin))
                 brush.drawPath(stroke_path(points))
             brush.end()
@@ -247,8 +263,9 @@ class PaintCanvas(QWidget):
 
 
 class EditPage(QWidget):
-    def __init__(self, client, library, notify, store, show_library, open_photocraft):
+    def __init__(self, client, library, notify, store, show_library, open_photocraft, show_providers=None):
         super().__init__()
+        self.show_providers = show_providers or (lambda: None)
         self.client, self.library, self.notify = client, library, notify
         self.store = store  # returns the QSettings the form is remembered in
         self.config = None
@@ -264,9 +281,15 @@ class EditPage(QWidget):
         self.full = {}  # full-size results already fetched, by name
         self.recent_items = []
 
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = PageHeader('Edit')
+        outer.addWidget(self.header)
+        layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        outer.addLayout(layout, 1)
         layout.addWidget(self.panel(open_photocraft))
         layout.addWidget(self.workspace(show_library), 1)
         self.setAcceptDrops(True)
@@ -288,19 +311,10 @@ class EditPage(QWidget):
         panel.setObjectName('Panel')
         panel.setProperty('side', 'left')
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-        panel.setFixedWidth(384)
+        panel.setFixedWidth(372)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        heading = QHBoxLayout()
-        heading.setContentsMargins(22, 18, 14, 10)
-        mark = label('')
-        mark.setPixmap(theme.icon('sparkles', theme.LIME).pixmap(18, 18))
-        heading.addWidget(mark)
-        heading.addWidget(label('A fresh perspective', 'heading'))
-        heading.addStretch()
-        outer.addLayout(heading)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -309,23 +323,33 @@ class EditPage(QWidget):
         self.form = QWidget()
         scroll.setWidget(self.form)
         column = QVBoxLayout(self.form)
-        column.setContentsMargins(22, 4, 18, 18)
-        column.setSpacing(10)
+        column.setContentsMargins(20, 18, 18, 18)
+        column.setSpacing(9)
 
-        column.addWidget(label('Describe the light, color, or content you want to change.', 'muted', wrap=True))
-        self.workspace_button = QPushButton(theme.icon('layers'), 'Open full PhotoCraft workspace')
+        self.workspace_button = QPushButton(theme.icon('layers'), 'Open in PhotoCraft')
+        self.workspace_button.setToolTip('Continue in the full PhotoCraft studio, with layers and every tool.')
         self.workspace_button.clicked.connect(lambda: open_photocraft(self.shown_picture()))  # it goes along
-        column.addWidget(self.workspace_button)
+        self.header.add(self.workspace_button)
 
-        column.addWidget(label('EDITING TOOL', 'eyebrow'))
+        column.addWidget(label('Tool', 'eyebrow'))
         self.tool = QComboBox()
-        for engine, details in ENGINES.items():
-            self.tool.addItem(details[1], engine)
+        for engine, tool in ENGINES.items():
+            self.tool.addItem(tool[1], engine)
         self.tool.currentIndexChanged.connect(self.tool_changed)
         column.addWidget(self.tool)
+        notes = QHBoxLayout()
+        self.engine_note = label('', 'small', wrap=True)
+        notes.addWidget(self.engine_note, 1)
+        self.connect_button = QPushButton('Connect…')
+        self.connect_button.setProperty('kind', 'link')
+        self.connect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connect_button.clicked.connect(lambda: self.show_providers())
+        notes.addWidget(self.connect_button, 0, Qt.AlignmentFlag.AlignTop)
+        column.addLayout(notes)
+        column.addSpacing(4)
 
         top = QHBoxLayout()
-        top.addWidget(label('DESCRIBE YOUR EDIT', 'eyebrow'))
+        top.addWidget(label('What to change', 'eyebrow'))
         top.addStretch()
         self.counter = label(f'0/{MAX_PROMPT}', 'small')
         top.addWidget(self.counter)
@@ -337,15 +361,17 @@ class EditPage(QWidget):
         column.addWidget(self.prompt)
         chips = Flow()  # straight in the column: a wrapping row inside a widget would not get its height
         self.ideas = []
-        for engine, details in ENGINES.items():
-            for text in details[5]:
-                chip = QPushButton(f'{text} ↗')
+        ideas = {engine: tool[5] for engine, tool in ENGINES.items()}
+        ideas['cloud'] = CLOUD_IDEAS
+        for engine, texts in ideas.items():
+            for text in texts:
+                chip = QPushButton(text)
                 chip.setProperty('kind', 'chip')
                 chip.clicked.connect(lambda _=False, text=text: self.set_prompt(text))
                 chips.addWidget(chip)
                 self.ideas.append((engine, chip))
         column.addLayout(chips)
-        self.smart = Toggle('Smart edit prompt', 'Clearer wording, with a look at your photo')
+        self.smart = Toggle('Smart prompt', 'Rewords the request after a look at the photo')
         self.smart.toggled.connect(lambda _: self.remember())
         column.addWidget(self.smart)
         column.addSpacing(4)
@@ -371,28 +397,12 @@ class EditPage(QWidget):
         tools.addLayout(buttons)
         column.addWidget(self.brush_tools)
 
-        card = QFrame()
-        card.setProperty('card', True)
-        line = QHBoxLayout(card)
-        line.setContentsMargins(14, 10, 14, 10)
-        line.setSpacing(12)
-        mark = label('')
-        mark.setPixmap(theme.icon('sparkles', theme.LIME).pixmap(20, 20))
-        line.addWidget(mark)
-        text = QVBoxLayout()
-        text.setSpacing(1)
-        self.engine_name = label('', 'value')
-        text.addWidget(self.engine_name)
-        self.engine_note = label('', 'small', wrap=True)
-        text.addWidget(self.engine_note)
-        line.addLayout(text, 1)
-        column.addWidget(card)
         column.addStretch()
 
         footer = QVBoxLayout()
-        footer.setContentsMargins(22, 12, 18, 14)
+        footer.setContentsMargins(20, 12, 18, 12)
         footer.setSpacing(6)
-        self.go = QPushButton(theme.icon('sparkles', theme.INK), ' Apply edit')
+        self.go = QPushButton(theme.icon('sparkles', theme.ON_ACCENT), ' Apply edit')
         self.go.setProperty('kind', 'primary')
         self.go.setProperty('size', 'large')
         self.go.setIconSize(QSize(18, 18))
@@ -410,7 +420,7 @@ class EditPage(QWidget):
     def workspace(self, show_library):
         area = QWidget()
         column = QVBoxLayout(area)
-        column.setContentsMargins(28, 22, 28, 18)
+        column.setContentsMargins(20, 14, 20, 16)
         column.setSpacing(10)
         top = QHBoxLayout()
         top.setSpacing(6)
@@ -479,7 +489,7 @@ class EditPage(QWidget):
         self.actions.setLayout(actions)
 
         def action(text, icon, slot, kind=''):
-            button = QPushButton(theme.icon(icon, theme.INK if kind == 'primary' else theme.TEXT), text)
+            button = QPushButton(theme.icon(icon, theme.ON_ACCENT if kind == 'primary' else theme.TEXT), text)
             if kind:
                 button.setProperty('kind', kind)
             button.clicked.connect(slot)
@@ -497,16 +507,16 @@ class EditPage(QWidget):
 
     def drop_target(self, show_library):
         target = QFrame()
-        target.setProperty('card', True)
+        target.setProperty('stage', True)
         column = QVBoxLayout(target)
         column.setContentsMargins(28, 24, 28, 24)
         column.setSpacing(8)
         column.addStretch(1)
         symbol = label('')
-        symbol.setPixmap(theme.icon('upload', theme.LIME).pixmap(34, 34))
+        symbol.setPixmap(theme.icon('image-plus', theme.FAINT).pixmap(38, 38))
         symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(symbol)
-        for text, role in (('Every image has another story.', 'heading'),
+        for text, role in (('Add a photo to edit', 'heading'),
                            ('Drop a photo here, paste one with Ctrl + V, or choose a file.', 'muted')):
             widget = label(text, role, wrap=True)
             widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
@@ -514,7 +524,7 @@ class EditPage(QWidget):
         column.addSpacing(6)
         buttons = QHBoxLayout()
         buttons.addStretch()
-        choose = QPushButton(theme.icon('upload', theme.INK), 'Choose an image…')
+        choose = QPushButton(theme.icon('upload', theme.ON_ACCENT), 'Choose a photo…')
         choose.setProperty('kind', 'primary')
         choose.clicked.connect(self.choose)
         buttons.addWidget(choose)
@@ -533,9 +543,9 @@ class EditPage(QWidget):
         lower.setContentsMargins(0, 0, 0, 0)
         lower.setSpacing(8)
         heading = QHBoxLayout()
-        heading.addWidget(label('OR PICK UP A RECENT CREATION', 'eyebrow'))
+        heading.addWidget(label('Or pick a recent picture', 'eyebrow'))
         heading.addStretch()
-        everything = QPushButton(theme.icon('folder-heart', theme.MUTED), 'View library')
+        everything = QPushButton('View all')
         everything.setProperty('kind', 'flat')
         everything.clicked.connect(show_library)
         heading.addWidget(everything)
@@ -584,7 +594,7 @@ class EditPage(QWidget):
             self.brush.setChecked(False)
             if self.canvas.strokes:
                 self.canvas.clear()
-        self.prompt.setPlaceholderText(ENGINES[engine][4])
+        self.prompt.setPlaceholderText(details(engine, self.config)[4])
         self.sync()
 
     def brush_toggled(self, on):
@@ -618,7 +628,7 @@ class EditPage(QWidget):
         kontext = self.engine == 'kontext'
         self.counter.setText(f'{len(self.prompt.toPlainText())}/{MAX_PROMPT}')
         for engine, chip in self.ideas:
-            chip.setVisible(engine == self.engine)
+            chip.setVisible(engine == self.engine or (engine == 'cloud' and self.engine not in ENGINES))
         self.workspace_button.setVisible(bool(config.get('photocraft')))
         self.smart.setVisible(kontext)
         self.smart.setEnabled(bool(config.get('assistant')))
@@ -632,22 +642,24 @@ class EditPage(QWidget):
         self.brush_tools.setVisible(kontext and self.brush.isChecked())
         self.undo.setEnabled(bool(self.canvas.strokes))
         self.clear_mask.setEnabled(bool(self.canvas.strokes))
-        name, _, note, flag, _, _ = ENGINES[self.engine]
-        self.engine_name.setText(name)
-        if not config.get(flag):
-            note = ('PhotoCraft was not found on this PC' if self.engine == 'photocraft'
-                    else 'Download the editing model to begin')
+        name, _, note, _, _, _ = details(self.engine, config)
+        ready_tool = installed(self.engine, config)
+        if not ready_tool:
+            note = ('PhotoCraft was not found on this PC.' if self.engine == 'photocraft' else
+                    'Install the editing model in Settings → Models.' if self.engine == 'kontext' else
+                    f'Connect {name} with an API key to use it.')
         self.engine_note.setText(note)
+        self.connect_button.setVisible(self.engine not in ENGINES and not ready_tool)
         painting = self.brush.isChecked() and kontext
-        self.mode_icon.setPixmap(theme.icon('brush' if painting else 'image-plus', theme.LIME).pixmap(15, 15))
+        self.mode_icon.setPixmap(theme.icon('brush' if painting else 'image-plus', theme.ACCENT).pixmap(15, 15))
         if self.source is None:
-            mode = 'Your image, with new possibilities'
+            mode = 'No photo yet'
         elif painting:
             mode = 'Paint over the area to change'
         elif self.stage.currentWidget() is self.result:
-            mode = 'Your new perspective'
+            mode = 'Result'
         else:
-            mode = 'Your photo'
+            mode = self.source.get('name') or 'Photo'
         self.mode.setText(mode)
         self.update_buttons()
 
@@ -657,15 +669,14 @@ class EditPage(QWidget):
         loaded = self.source is not None and self.source.get('image') is not None
         self.go.setEnabled(self.ready and ready_tool and loaded and not busy
                            and bool(self.prompt.toPlainText().strip()))
-        self.go.setText(' Editing your photo…' if busy else ' Apply edit')
+        self.go.setText(' Editing…' if busy else ' Apply edit')
         for button in (self.another, self.remove):
             button.setVisible(self.source is not None)
             button.setEnabled(not busy)
         if not self.ready:
             hint = 'Waiting for the engine…'
         elif self.config and not ready_tool:
-            hint = 'PhotoCraft was not found on this PC.' if self.engine == 'photocraft' else (
-                'The editing model is not installed yet.')
+            hint = 'This tool is not set up yet.'
         elif self.source is None:
             hint = 'Add a photo to begin.'
         else:
@@ -788,11 +799,19 @@ class EditPage(QWidget):
     def configured(self, config):
         first = self.config is None
         self.config = config
-        model = self.tool.model()
-        for index in range(self.tool.count()):
-            engine = self.tool.itemData(index)
-            model.item(index).setEnabled(installed(engine, config))
-            self.tool.setItemText(index, ENGINES[engine][1] + ('' if installed(engine, config) else '  ·  not installed'))
+        self.tool.blockSignals(True)
+        self.tool.clear()
+        for engine, tool in ENGINES.items():
+            self.tool.addItem(tool[1] + ('' if installed(engine, config) else '  ·  not installed'), engine)
+            self.tool.model().item(self.tool.count() - 1).setEnabled(installed(engine, config))
+        editors = config.get('cloud_editors') or []
+        if editors:
+            self.tool.insertSeparator(self.tool.count())
+        for entry in editors:
+            self.tool.addItem(f'{entry["label"]} · {entry["model"]}' + ('' if entry['ready'] else '  ·  not connected'),
+                              entry['id'])
+        self.tool.setCurrentIndex(max(0, self.tool.findData(self.engine)))
+        self.tool.blockSignals(False)
         if first:
             saved = self.saved()
             self.smart.blockSignals(True)

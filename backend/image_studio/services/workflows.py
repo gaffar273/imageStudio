@@ -7,7 +7,7 @@ import secrets
 import threading
 from image_studio.services import agent
 from image_studio.services import assistant
-from image_studio.services import brain
+from image_studio.pipelines import models
 from image_studio.integrations import bridge
 from image_studio.services import checker
 from image_studio.services import finish
@@ -574,7 +574,7 @@ def editor_plan(request, progress):
         and steps
         and any(step['op'] == 'grade' for step in steps)
         and preview is not None
-        and brain.available()
+        and models.available('planner')
     ):
         steps = None
     if not steps:
@@ -584,7 +584,7 @@ def editor_plan(request, progress):
             progress(0, desc=desc)
 
         with lock:
-            if preview is not None and brain.available() and not agent.is_question(text):
+            if preview is not None and models.available('planner') and not agent.is_question(text):
                 # Parts the rules understand exactly ("make the buildings pastel pink") are planned
                 # by them; the brain plans the rest. (Measured: given the whole request, the brain
                 # sometimes dropped the recolor while planning the grade.)

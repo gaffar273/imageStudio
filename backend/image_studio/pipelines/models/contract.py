@@ -11,12 +11,15 @@ trusts the answer as it arrives:
 2. ``instructions(schema)`` spells the schema out in the prompt for models that cannot enforce it.
 3. ``extract(text)`` finds the JSON in a reply (code fences, prose around it, trailing commas).
 4. ``conform(value, schema)`` checks the answer against the full schema and repairs what can be
-   repaired without guessing: a menu choice in other letter case or with spaces for underscores,
-   a number written as text, a missing optional field, a list that is too long. Whatever cannot be
-   repaired is reported, and the model is asked again with those problems listed.
+   repaired without guessing: a menu choice in other letter case, with spaces for underscores or
+   a plural “s”, a number written as text, a missing free-text field, a list that is too long.
+   Whatever cannot be repaired is reported, and the model is asked again with those problems
+   listed. A missing or empty menu choice is never filled in with the menu's first value (a
+   missing review verdict once read as “done”), and a near spelling is not a match
+   (“desaturation” is not “saturation”). The dropped constraints (ranges, item counts, lengths,
+   patterns) are checked here.
 """
 
-import difflib
 import json
 import re
 
@@ -60,8 +63,8 @@ def extract(text):
 
 
 def _menu_choice(value, options):
-    """`value` matched to a closed menu: exact, then ignoring case and separators, then a close
-    spelling (“blur background” → “blur_background”). None when nothing is close enough."""
+    """`value` matched to a closed menu: exact, then ignoring case and separators (“Blur
+    Background” → “blur_background”), then a plural “s” (“vignettes”). None for anything else."""
     if value in options:
         return value
     if not isinstance(value, str):
@@ -70,14 +73,20 @@ def _menu_choice(value, options):
     by_key = {key(option): option for option in options}
     if key(value) in by_key:
         return by_key[key(value)]
-    close = difflib.get_close_matches(key(value), list(by_key), n=1, cutoff=0.85)
-    return by_key[close[0]] if close else None
+    plural = lambda a, b: a in (b + 's', b + 'es')  # noqa: E731
+    matches = [option for name, option in by_key.items() if plural(key(value), name) or plural(name, key(value))]
+    return matches[0] if len(matches) == 1 else None
+
+
+menu_choice = _menu_choice  # for the pipelines' own choice menus
+
+MISSING = object()  # a required menu choice the answer left out: never filled with a guess
 
 
 def _empty(schema):
     kinds = _types(schema)
     if 'enum' in schema:
-        return '' if '' in schema['enum'] else (None if None in schema['enum'] else schema['enum'][0])
+        return '' if '' in schema['enum'] else (None if None in schema['enum'] else MISSING)
     if 'null' in kinds:
         return None
     return {'string': '', 'array': [], 'object': {}, 'boolean': False, 'number': None, 'integer': None}.get(
@@ -109,9 +118,10 @@ def conform(value, schema, path='answer'):
     if 'enum' in schema:
         chosen = _menu_choice(value, schema['enum'])
         if chosen is None and (value is None or value == ''):
-            chosen = _empty(schema)
-            if chosen is not None or None in schema['enum']:
-                return chosen, []
+            empty = _empty(schema)
+            if empty is not MISSING:
+                return empty, []
+            return None, [f'{path} needs one of the menu values; it was left empty']
         if chosen is None:
             return value, [f'{path} must be one of the menu values, not {json.dumps(value, ensure_ascii=False)}']
         return chosen, []
@@ -129,8 +139,12 @@ def conform(value, schema, path='answer'):
                 problems += found
             elif name in schema.get('required', ()):
                 # A missing field is filled with its empty value; the engine's own guards decide
-                # what an empty slot means (no number written, no position named).
-                result[name] = _empty(sub)
+                # what an empty slot means (no number written, no position named). A menu with
+                # no empty choice cannot be filled without guessing, so the model is asked again.
+                empty = _empty(sub)
+                result[name] = None if empty is MISSING else empty
+                if empty is MISSING:
+                    problems.append(f'{path}.{name} is missing; it needs one of the menu values')
         if schema.get('additionalProperties', True) is not False:
             result.update({k: v for k, v in value.items() if k not in properties})
         return result, problems
@@ -143,6 +157,8 @@ def conform(value, schema, path='answer'):
             fixed, found = conform(item, items, f'{path}[{number}]')
             result.append(fixed)
             problems += found
+        if len(result) < schema.get('minItems', 0):
+            problems.append(f'{path} needs at least {schema["minItems"]} items, not {len(result)}')
         return result, problems
     if 'number' in kinds or 'integer' in kinds:
         if isinstance(value, str):
@@ -152,7 +168,11 @@ def conform(value, schema, path='answer'):
                 return value, [f'{path} must be a number']
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             return value, [f'{path} must be a number']
-        return (round(value) if 'integer' in kinds and 'number' not in kinds else value), []
+        value = round(value) if 'integer' in kinds and 'number' not in kinds else value
+        if 'minimum' in schema and value < schema['minimum'] or 'maximum' in schema and value > schema['maximum']:
+            low, high = schema.get('minimum', '-∞'), schema.get('maximum', '∞')
+            return value, [f'{path} must be between {low} and {high}, not {value:g}']
+        return value, []
     if 'boolean' in kinds:
         if isinstance(value, str) and value.strip().lower() in ('true', 'false', 'yes', 'no'):
             return value.strip().lower() in ('true', 'yes'), []
@@ -165,6 +185,11 @@ def conform(value, schema, path='answer'):
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             return str(value), []
         if not isinstance(value, str):
-            return json.dumps(value, ensure_ascii=False), []
+            value = json.dumps(value, ensure_ascii=False)
+        value = value[:schema['maxLength']] if 'maxLength' in schema else value
+        if len(value) < schema.get('minLength', 0):
+            return value, [f'{path} needs at least {schema["minLength"]} characters']
+        if 'pattern' in schema and not re.search(schema['pattern'], value):
+            return value, [f'{path} does not have the required form']
         return value, []
     return value, []

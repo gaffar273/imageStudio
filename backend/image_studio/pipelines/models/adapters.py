@@ -38,8 +38,16 @@ class Adapter:
         return self.spec.get('label') or f'{self.kind}:{self.spec.get("model", "")}'
 
     def api_key(self):
+        """The environment variable, a key given in the spec, else the one saved in Settings → Providers."""
         env = self.spec.get('api_key_env')
-        return (os.environ.get(env) if env else None) or self.spec.get('api_key') or ''
+        if (env and os.environ.get(env)) or self.spec.get('api_key'):
+            return (os.environ.get(env) if env else None) or self.spec['api_key']
+        name = self.spec.get('credential') or (f'provider:{self.spec["preset"]}' if self.spec.get('preset') else '')
+        if not name:
+            return ''
+        from image_studio.core import credentials
+
+        return credentials.get(name)
 
     def available(self):
         raise NotImplementedError
@@ -71,17 +79,37 @@ class Local(Adapter):
         return brain.chat(system, content, schema=schema, max_tokens=max_tokens, temperature=temperature)
 
 
-def _post(url, body, headers, timeout=600):
-    request = urllib.request.Request(url, data=json.dumps(body).encode('utf-8'),
-                                     headers={'Content-Type': 'application/json', **headers}, method='POST')
-    try:
-        with urllib.request.urlopen(request, timeout=timeout) as response:
-            return json.loads(response.read())
-    except urllib.error.HTTPError as exc:
-        detail = exc.read().decode('utf-8', 'replace')[:400]
-        raise RuntimeError(f'The model server answered {exc.code}: {detail}') from exc
-    except (urllib.error.URLError, OSError) as exc:
-        raise RuntimeError(f'Could not reach the model server at {url}: {exc}') from exc
+RETRIES = 3  # a rate limit (429) or a server error (5xx) is asked again, waiting longer each time
+
+
+def _post(url, body, headers, timeout=600, retries=RETRIES, sleep=None):
+    import time
+
+    sleep = sleep or time.sleep
+    data = json.dumps(body).encode('utf-8')
+    for attempt in range(retries + 1):
+        request = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json', **headers},
+                                         method='POST')
+        try:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
+                return json.loads(response.read())
+        except urllib.error.HTTPError as exc:
+            detail = exc.read().decode('utf-8', 'replace')[:400]
+            if attempt < retries and (exc.code == 429 or exc.code >= 500):
+                wait = exc.headers.get('retry-after') if exc.headers else None
+                try:
+                    wait = min(60.0, float(wait))
+                except (TypeError, ValueError):
+                    wait = min(60.0, 2.0 * 2 ** attempt)
+                sleep(wait)
+                continue
+            raise RuntimeError(f'The model server answered {exc.code}: {detail}') from exc
+        except (urllib.error.URLError, OSError) as exc:
+            # A dropped connection is tried again; a server that is not running is not.
+            if attempt < retries and isinstance(getattr(exc, 'reason', exc), ConnectionResetError):
+                sleep(min(30.0, 2.0 * 2 ** attempt))
+                continue
+            raise RuntimeError(f'Could not reach the model server at {url}: {exc}') from exc
 
 
 class OpenAICompatible(Adapter):
@@ -122,8 +150,14 @@ class Anthropic(Adapter):
             import anthropic  # noqa: F401
         except ImportError:
             return False
-        # The SDK also finds credentials from `ant auth login`, so a missing variable is not fatal.
-        return True
+        # The SDK finds credentials in this order: ANTHROPIC_API_KEY, ANTHROPIC_AUTH_TOKEN, an
+        # `ant auth login` profile (~/.config/anthropic), workload identity federation. Without
+        # any of them the role is not available, rather than failing on the first edit.
+        from pathlib import Path
+
+        return bool(self.api_key() or os.environ.get('ANTHROPIC_AUTH_TOKEN') or os.environ.get('ANTHROPIC_PROFILE')
+                    or os.environ.get('ANTHROPIC_FEDERATION_RULE_ID')
+                    or (Path.home() / '.config' / 'anthropic').is_dir())
 
     def _blocks(self, content):
         blocks = []

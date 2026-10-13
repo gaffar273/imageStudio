@@ -1,9 +1,10 @@
 """Small form controls shared by the screens: switches, sliders, fold-out sections, thumbnails."""
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QEvent, QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import (
     QAbstractButton,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QLayout,
@@ -14,12 +15,142 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
-from image_studio.desktop.library import cover
 from image_studio.desktop.theme import label
+
+
+def cover(target, pixmap):
+    """The part of pixmap that fills target without distortion, like CSS object-fit: cover."""
+    scale = max(target.width() / pixmap.width(), target.height() / pixmap.height())
+    width, height = target.width() / scale, target.height() / scale
+    return QRectF((pixmap.width() - width) / 2, (pixmap.height() - height) / 2, width, height)
 
 
 class Box(QWidget):
     """A plain container. (A bare QWidget would paint the page background over a panel.)"""
+
+
+HEADER_HEIGHT = 56
+
+
+class PageHeader(QWidget):
+    """The bar along the top of every screen: its name, a short note, and the screen's own actions."""
+
+    def __init__(self, title, note=''):
+        super().__init__()
+        self.setObjectName('PageHeader')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.setFixedHeight(HEADER_HEIGHT)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(24, 0, 16, 0)
+        row.setSpacing(8)
+        self.title = label(title, 'title')
+        row.addWidget(self.title)
+        self.note = label(note, 'muted')
+        self.note.setVisible(bool(note))
+        row.addSpacing(4)
+        row.addWidget(self.note)
+        row.addStretch()
+        self.actions = row
+
+    def add(self, widget):
+        self.actions.addWidget(widget)
+        return widget
+
+    def set_note(self, text):
+        self.note.setText(text)
+        self.note.setVisible(bool(text))
+
+
+CONTENT_WIDTH = 880
+
+
+def scroll_page(title, note=''):
+    """A scrolling settings page: its title, a line saying what it is for, then the column to fill.
+
+    Returns (page, column). The column is kept to a readable width on wide windows."""
+    from PySide6.QtWidgets import QScrollArea
+
+    scroll = QScrollArea()
+    scroll.setWidgetResizable(True)
+    scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    outer = QWidget()
+    scroll.setWidget(outer)
+    row = QHBoxLayout(outer)
+    row.setContentsMargins(32, 26, 32, 32)
+    body = QWidget()
+    body.setMaximumWidth(CONTENT_WIDTH)
+    row.addWidget(body, 1)
+    row.addStretch(0)
+    column = QVBoxLayout(body)
+    column.setContentsMargins(0, 0, 0, 0)
+    column.setSpacing(14)
+    column.addWidget(label(title, 'title'))
+    if note:
+        text = label(note, 'muted', wrap=True)
+        column.addWidget(text)
+    column.addSpacing(4)
+    return scroll, column
+
+
+def rule(vertical=False):
+    """A one-pixel divider."""
+    line = QFrame()
+    line.setProperty('rule', True)
+    if vertical:
+        line.setFixedWidth(1)
+    else:
+        line.setFixedHeight(1)
+    return line
+
+
+class Toast(QFrame):
+    """A short message near the bottom of the window that goes away by itself."""
+
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.setObjectName('Toast')
+        self.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        row = QHBoxLayout(self)
+        row.setContentsMargins(14, 9, 16, 9)
+        row.setSpacing(9)
+        self.symbol = QLabel()
+        row.addWidget(self.symbol)
+        self.text = QLabel()
+        self.text.setWordWrap(True)
+        self.text.setMaximumWidth(560)
+        row.addWidget(self.text)
+        self.timer = QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(self.hide)
+        parent.installEventFilter(self)
+        self.hide()
+
+    def show_message(self, text, error=False):
+        self.text.setText(text)
+        self.symbol.setPixmap(theme.icon('circle-alert' if error else 'check', '#ffffff').pixmap(16, 16))
+        theme.restyle(self, tone='error' if error else '')
+        self.adjustSize()
+        self.place()
+        self.show()
+        self.raise_()
+        self.timer.start(8000 if error else 4000)
+
+    def place(self):
+        """Centered over the screens, just under their header bar, where it covers no buttons."""
+        parent = self.parentWidget()
+        left = parent.width() - (self.offset() or parent.width())
+        self.move(left + (parent.width() - left - self.width()) // 2, HEADER_HEIGHT + 10)
+
+    def offset(self):
+        """The width of the screens beside the sidebar (the whole window when there is none)."""
+        pages = getattr(self.parentWidget().window(), 'pages', None)
+        return pages.width() if pages is not None else 0
+
+    def eventFilter(self, watched, event):
+        if event.type() == QEvent.Type.Resize and self.isVisible():
+            self.place()
+        return False
 
 
 class Flow(QLayout):
@@ -99,12 +230,11 @@ class Switch(QAbstractButton):
         on = self.isChecked()
         if not self.isEnabled():
             painter.setOpacity(0.4)
-        painter.setPen(Qt.PenStyle.NoPen if on else QPen(QColor('#3d433f'), 1))
-        painter.setBrush(QColor(theme.LIME if on else theme.RAISED))
-        painter.drawRoundedRect(QRectF(0.5, 0.5, 35, 19), 9.5, 9.5)
         painter.setPen(Qt.PenStyle.NoPen)
-        painter.setBrush(QColor(theme.INK if on else theme.MUTED))
-        painter.drawEllipse(QPointF(26 if on else 10, 10), 6.5, 6.5)
+        painter.setBrush(QColor(theme.ACCENT if on else '#d4d4db'))
+        painter.drawRoundedRect(QRectF(0.5, 0.5, 35, 19), 9.5, 9.5)
+        painter.setBrush(QColor('#ffffff'))
+        painter.drawEllipse(QPointF(26 if on else 10, 10), 7.5, 7.5)
 
 
 class Toggle(QWidget):
@@ -276,7 +406,7 @@ class Thumb(QAbstractButton):
             painter.fillRect(box, QColor(theme.RAISED))
         painter.setClipping(False)
         if self.underMouse() or self.hasFocus():
-            painter.setPen(QPen(QColor(theme.LIME), 1.5))
+            painter.setPen(QPen(QColor(theme.ACCENT), 1.5))
             painter.setBrush(Qt.BrushStyle.NoBrush)
             painter.drawRoundedRect(box, 10, 10)
 

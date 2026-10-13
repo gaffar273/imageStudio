@@ -341,6 +341,11 @@ class Engine(QObject):
             except psutil.Error:
                 pass
 
+    def pause(self, message):
+        """Stop the engine while its environment changes, saying why; start() brings it back."""
+        self.stop()
+        self.set_state('stopped', message)
+
     def take_over(self):
         """Stop an engine started by the web launcher, so this app can start its own."""
         from image_studio.cli import manage

@@ -1,11 +1,14 @@
 """Local RealVisXL, Z-Image Turbo and SDXL-Turbo inference for an 8 GB NVIDIA GPU."""
 
 import argparse
+import functools
 import gc
+import importlib.util
 import json
 import math
 import os
 import secrets
+import sys
 import threading
 import time
 from pathlib import Path
@@ -27,6 +30,30 @@ PERSONAL_LORA = WORK / 'personal-lora' / 'final'
 os.environ.setdefault('HF_HOME', str(WORK / 'huggingface'))
 os.environ.setdefault('HF_HUB_DISABLE_TELEMETRY', '1')
 os.environ.setdefault('HF_HUB_DOWNLOAD_TIMEOUT', '120')
+
+
+# What a local render says when the engine was set up in cloud mode (core/engine_env.py).
+CLOUD_ONLY = ('This engine runs in cloud mode, without PyTorch, so models cannot run on this PC. Choose a '
+              'cloud model, or install the full engine in Studio settings (it needs an NVIDIA graphics card).')
+
+
+@functools.cache
+def local_models():
+    """Whether models can run on this PC: false for an engine set up in cloud mode (no PyTorch)."""
+    return importlib.util.find_spec('torch') is not None
+
+
+# What only the full engine installs (backend/requirements-torch.txt and requirements-models.txt).
+MODEL_LIBRARIES = {'torch', 'torchvision', 'diffusers', 'transformers', 'accelerate', 'safetensors', 'peft',
+                   'ultralytics', 'huggingface_hub', 'gguf', 'sentencepiece'}
+
+
+def explain(exc):
+    """What a failed job tells the person: in cloud mode, a missing model library means a local model."""
+    if (isinstance(exc, ModuleNotFoundError) and (exc.name or '').split('.')[0] in MODEL_LIBRARIES
+            and not local_models()):
+        return CLOUD_ONLY
+    return str(exc) or exc.__class__.__name__
 
 
 def new_output(seed, folder=None):
@@ -301,8 +328,6 @@ class ImageEngine:
         self.personal = 0.0  # its strength for the next RealVisXL image (set per request)
 
     def unload(self):
-        import torch
-
         if self.pipe is not None:
             self.pipe.remove_all_hooks()
             self.pipe = None
@@ -310,7 +335,8 @@ class ImageEngine:
         self.prompt_cache = {}
         self.model_key = None
         gc.collect()
-        if torch.cuda.is_available():
+        torch = sys.modules.get('torch')  # never imported (always so in cloud mode): nothing on the GPU
+        if torch is not None and torch.cuda.is_available():
             torch.cuda.empty_cache()
 
     def load(self, model='realistic', status=print):
@@ -320,6 +346,8 @@ class ImageEngine:
         assistant.release()
         if self.pipe is not None and self.model_key == model:
             return
+        if not local_models():
+            raise RuntimeError(CLOUD_ONLY)
         import torch
         from diffusers import (
             AutoPipelineForImage2Image,

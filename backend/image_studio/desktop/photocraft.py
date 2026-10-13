@@ -41,7 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
-from image_studio.desktop.controls import Box, Range, Thumb
+from image_studio.desktop.controls import HEADER_HEIGHT, Box, Range, Thumb
 from image_studio.desktop.create import POLL_MS, rule
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.library import save_to
@@ -250,12 +250,13 @@ class DocumentCanvas(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#0d0f0f'))
+        painter.fillRect(self.rect(), QColor(theme.CANVAS))
         box = self.target()
         if box.isEmpty():
             return
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.fillRect(box.adjusted(-1, -1, 1, 1), QColor(0, 0, 0, 28))  # a hairline, so white photos stand out
         painter.drawPixmap(box, self.current, QRectF(self.current.rect()))
         if self.compare and self.original is not None and not self.original.isNull():
             self.paint_compare(painter, box)
@@ -294,7 +295,7 @@ class DocumentCanvas(QWidget):
     def paint_regions(self, painter, box):
         for region in self.regions:
             on = self.highlight is None or self.highlight == region.get('requirement')
-            color = QColor(theme.LIME)
+            color = QColor(theme.ACCENT)
             color.setAlpha(255 if on else 70)
             for index, (x, y, w, h) in enumerate(region.get('boxes') or []):
                 area = QRectF(box.left() + x * box.width(), box.top() + y * box.height(), w * box.width(),
@@ -307,9 +308,9 @@ class DocumentCanvas(QWidget):
                     width = painter.fontMetrics().horizontalAdvance(text) + 12
                     tag = QRectF(area.left(), max(area.top() - 22, box.top()), width, 20)
                     painter.setPen(Qt.PenStyle.NoPen)
-                    painter.setBrush(QColor(theme.LIME))
+                    painter.setBrush(QColor(theme.ACCENT))
                     painter.drawRoundedRect(tag, 4, 4)
-                    painter.setPen(QColor(theme.INK))
+                    painter.setPen(QColor(theme.ON_ACCENT))
                     painter.drawText(tag, Qt.AlignmentFlag.AlignCenter, text)
 
     def paint_marks(self, painter, box):
@@ -321,7 +322,7 @@ class DocumentCanvas(QWidget):
         brush = QPainter(layer)
         brush.setRenderHint(QPainter.RenderHint.Antialiasing)
         brush.setClipRect(box)
-        lime = QColor(theme.LIME)
+        lime = QColor(theme.ACCENT)
         for mark in [*self.marks, *([self.draft] if self.draft else [])]:
             erase = mark['tool'] == 'erase'
             brush.setCompositionMode(QPainter.CompositionMode.CompositionMode_Clear if erase
@@ -357,8 +358,8 @@ class LayerRow(QFrame):
         self.layer, self.studio = layer, studio
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(
-            f'LayerRow {{ background: {"rgba(196, 244, 119, 0.10)" if active else "transparent"}; '
-            f'border: 1px solid {"#4d5d36" if active else "transparent"}; border-radius: 8px; }} '
+            f'LayerRow {{ background: {theme.ACCENT_SOFT if active else "transparent"}; '
+            f'border: 1px solid {theme.ACCENT_LINE if active else "transparent"}; border-radius: 7px; }} '
             'QLabel { background: transparent; }')
         row = QHBoxLayout(self)
         row.setContentsMargins(4 + depth * 14, 3, 8, 3)
@@ -583,7 +584,7 @@ class Inspector(QWidget):
             self.layer_rows.addWidget(row)
         for index, entry in enumerate((document or {}).get('history') or []):
             current = index == document['cursor']
-            button = QPushButton(theme.icon('check', theme.LIME) if current else theme.icon('history', theme.MUTED), '')
+            button = QPushButton(theme.icon('check', theme.ACCENT) if current else theme.icon('history', theme.MUTED), '')
             button.setMinimumWidth(10)
             text = f'{index + 1}.  {readable(entry.get("label"))}'
             button.setText(' ' + button.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, 215)
@@ -648,7 +649,6 @@ class PhotoCraftPage(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.addWidget(self.top_bar())
-        layout.addWidget(rule())
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(0)
@@ -657,7 +657,7 @@ class PhotoCraftPage(QWidget):
         self.tool_area.setObjectName('Panel')
         self.tool_area.setProperty('side', 'left')
         self.tool_area.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-        self.tool_area.setFixedWidth(340)
+        self.tool_area.setFixedWidth(352)  # room for the scroll bar on short windows
         tool_column = QVBoxLayout(self.tool_area)
         tool_column.setContentsMargins(0, 0, 0, 0)
         self.tool_stack = QStackedWidget()
@@ -696,15 +696,15 @@ class PhotoCraftPage(QWidget):
 
     def top_bar(self):
         bar = QWidget()
+        bar.setObjectName('PageHeader')
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        bar.setFixedHeight(HEADER_HEIGHT)
         row = QHBoxLayout(bar)
-        row.setContentsMargins(18, 10, 14, 10)
+        row.setContentsMargins(24, 0, 16, 0)
         row.setSpacing(6)
-        mark = label('')
-        mark.setPixmap(theme.icon('layers', theme.LIME).pixmap(20, 20))
-        row.addWidget(mark)
         title = QVBoxLayout()
         title.setSpacing(0)
-        self.title = ElidedLabel('PhotoCraft studio', 'value')
+        self.title = ElidedLabel('PhotoCraft', 'heading')
         title.addWidget(self.title)
         self.subtitle = ElidedLabel('', 'small')
         title.addWidget(self.subtitle)
@@ -744,7 +744,7 @@ class PhotoCraftPage(QWidget):
         row.addWidget(self.open_button)
         self.export_button = QToolButton()
         self.export_button.setText('Export')
-        self.export_button.setIcon(theme.icon('arrow-down-to-line', theme.INK))
+        self.export_button.setIcon(theme.icon('arrow-down-to-line', theme.ON_ACCENT))
         self.export_button.setProperty('kind', 'primary')
         self.export_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.export_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -796,7 +796,7 @@ class PhotoCraftPage(QWidget):
         self.scroller = QScrollArea()
         self.scroller.setWidgetResizable(True)
         self.scroller.setWidget(self.canvas)
-        self.scroller.setStyleSheet('QScrollArea { background: #0d0f0f; border-radius: 12px; }')
+        self.scroller.setStyleSheet(f'QScrollArea {{ background: {theme.CANVAS}; border-radius: 10px; }}')
         self.stack.addWidget(self.scroller)
         holder = Box()
         holder.setLayout(self.stack)
@@ -810,7 +810,7 @@ class PhotoCraftPage(QWidget):
         line = QHBoxLayout()
         self.dot = label('')
         line.addWidget(self.dot)
-        self.message = label('Your instructions, your layers, your original intact.', 'small', wrap=True)
+        self.message = label('Ready. Each edit lands on its own layer; the original is kept.', 'small', wrap=True)
         self.message.setMinimumWidth(100)
         line.addWidget(self.message, 1)
         self.stop = QPushButton(theme.icon('square', theme.MUTED), 'Stop')
@@ -827,30 +827,29 @@ class PhotoCraftPage(QWidget):
 
     def empty_state(self):
         target = QFrame()
-        target.setProperty('card', True)
+        target.setProperty('stage', True)
         column = QVBoxLayout(target)
         column.setContentsMargins(28, 24, 28, 24)
         column.setSpacing(8)
         column.addStretch(1)
         symbol = label('')
-        symbol.setPixmap(theme.icon('layers', theme.LIME).pixmap(34, 34))
+        symbol.setPixmap(theme.icon('layers', theme.FAINT).pixmap(38, 38))
         symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(symbol)
-        for text, role in (('A PLACE FOR YOUR NEXT GREAT EDIT', 'eyebrow'),
-                           ('Bring your image. Keep your possibilities.', 'heading'),
-                           (('Open a photo or layered document, then describe the edit or use the tools on the '
-                             'left. Every change lands on its own layer, and every revision is kept.'), 'muted')):
+        for text, role in (('Open a photo or document', 'heading'),
+                           (('Then describe the edit, or use the tools on the left. Every change lands on its own '
+                             'layer, and every revision is kept.'), 'muted')):
             widget = label(text, role, wrap=True)
             widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
             column.addWidget(widget)
         column.addSpacing(6)
         buttons = QHBoxLayout()
         buttons.addStretch()
-        self.empty_open = QPushButton(theme.icon('upload', theme.INK), 'Open a document…')
+        self.empty_open = QPushButton(theme.icon('upload', theme.ON_ACCENT), 'Open a file…')
         self.empty_open.setProperty('kind', 'primary')
         self.empty_open.clicked.connect(self.choose_file)
         buttons.addWidget(self.empty_open)
-        self.empty_library = QPushButton(theme.icon('images'), 'Choose from your library')
+        self.empty_library = QPushButton(theme.icon('images'), 'From the library')
         self.empty_library.clicked.connect(self.open_picker)
         buttons.addWidget(self.empty_library)
         buttons.addStretch()
@@ -933,7 +932,7 @@ class PhotoCraftPage(QWidget):
             on = button.property('tool') == key
             button.setChecked(on)
             icon = next(icon for tool, _, icon, _ in TOOLS if tool == button.property('tool'))
-            button.setIcon(theme.icon(icon, theme.LIME if on else theme.MUTED))
+            button.setIcon(theme.icon(icon, theme.ACCENT if on else theme.MUTED))
         self.tool_stack.setCurrentWidget(self.panels[key])
         self.side = 'tools'
         self.arrange()
@@ -1046,7 +1045,7 @@ class PhotoCraftPage(QWidget):
         self.stop.setVisible(running and self.active is not None)
         self.progress.setVisible(busy)
         self.progress.setValue(max(40, int(((self.job or {}).get('progress') or 0) * 1000)) if running else 40)
-        color = theme.WARN if busy else theme.DANGER if (self.job or {}).get('state') == 'error' else theme.LIME
+        color = theme.WARN if busy else theme.DANGER if (self.job or {}).get('state') == 'error' else theme.ACCENT
         self.dot.setText(f'<span style="color:{color}">●</span>')
         for panel in self.panels.values():
             panel.sync()

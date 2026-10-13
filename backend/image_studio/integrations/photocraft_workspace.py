@@ -371,81 +371,159 @@ def trust_measurements(verdicts, checks):
     return verdicts
 
 
+def _run_steps(folder, expected, steps, label, progress, cancelled, area, before):
+    """Every step in one engine session on the revision `expected`: (revision, outcomes, notes)."""
+    outcomes = {}
+    context = {'progress': lambda desc='', **kwargs: progress(0.4, desc=desc)}
+    with Engine(folder, cancelled) as engine:
+        engine.call('doc.open', {'path': str(folder / f'{expected}.pcraft')})
+        if area:
+            from .photocraft_area import mask_for
+            mask_for(area, before['width'], before['height'])
+            engine.call('doc.render', {'path': str(folder / '_area-before.png'),
+                                      'maxSide': max(before['width'], before['height'])})
+        skipped, skip_notes = set(), []
+        for index, step in enumerate(steps):
+            progress(0.05 + 0.6 * index / max(1, len(steps)), desc=step.get('label') or step['command'])
+            params = step.get('params', {})
+            part = tuple(step.get('requirements', []))
+            if step.get('optional') and part in skipped:
+                continue
+            try:
+                if step['command'] in photocraft_macros.NAMES:
+                    result = photocraft_macros.run(engine, folder, step['command'], params, context)
+                elif step['command'] == 'select.deselect' and not engine.call('doc.inspect').get('hasSelection'):
+                    result = None  # a studio step already deselected
+                else:
+                    result = engine.call('engine.execute', {'command': step['command'], 'params': params})
+            except ValueError as exc:
+                if step.get('optional'):
+                    # A workflow part that does not apply to this photo (no sky was found to
+                    # deepen) is skipped; the rest of the plan still runs.
+                    skipped.add(part)
+                    skip_notes.append(f'Skipped an optional part ({step.get("label") or step["command"]}): {exc}')
+                    if engine.call('doc.inspect').get('hasSelection'):
+                        engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+                    continue
+                raise ValueError(
+                    f'Step {index + 1} ({step.get("label") or step["command"]}) failed: {exc}. '
+                    'The previous revision is unchanged.'
+                ) from exc
+            context['last'] = result if isinstance(result, dict) else {}
+            if step['command'] == 'studio.text':
+                for requirement in step.get('requirements', []):
+                    outcomes[('text', requirement)] = result
+        if engine.call('doc.inspect').get('hasSelection'):
+            engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+        if area:
+            from .photocraft_area import check_boundary
+            check_boundary(engine, folder, area, folder / '_area-before.png', before['width'], before['height'])
+        revision = snapshot(engine, folder, label[:200], steps)
+    return revision, outcomes, skip_notes
+
+
+def _measured_checks(plan, folder, expected, before, revision, outcomes):
+    canvas = photocraft_intents.Canvas(*(plan.get('result_size') or (0, 0)))
+    checks = photocraft_intents.verify(plan['edits'], before, revision['state'], canvas, outcomes)
+    if plan.get('area'):
+        checks.append({'requirement': 0, 'measured': True, 'passed': True,
+                       'check': 'Pixels outside your marked area are unchanged (full resolution)'})
+    geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
+    with Image.open(folder / f'{expected}.png') as old, Image.open(folder / f'{revision["id"]}.png') as new:
+        checks += photocraft_intents.measure(plan['edits'], plan.get('regions', []), old.copy(), new.copy(), geometry)
+    return checks
+
+
+def too_faint(plan, checks):
+    """Requirements whose measured checks failed only for being too faint (the change went the
+    asked way, not far enough), when a higher strength is the planned answer: no number the
+    person wrote, not already strong, no AI layer (a second Kontext run takes minutes)."""
+    from image_studio.pipelines import get
+
+    if plan.get('planner') in ('manual', 'preset') or plan.get('area'):
+        return []  # a strength chosen on a panel is the person's choice
+    if any((get(edit['action']) and get(edit['action']).ai) for edit in plan['edits']) or any(
+            step['command'] == 'studio.ai_layer' for step in plan.get('steps', [])):
+        return []
+    weak = {check['requirement'] for check in checks if check.get('weak')}
+    other = {check['requirement'] for check in checks if check.get('measured') and not check['passed']
+             and not check.get('weak')}
+    return [index for index in sorted(weak - other)
+            if plan['edits'][index]['value'] is None and plan['edits'][index]['strength'] != 'strong']
+
+
+def _failed(checks):
+    return sum(1 for check in checks if check.get('measured') and not check['passed'])
+
+
+def _discard(folder, revision):
+    for suffix in ('.pcraft', '.png'):
+        (folder / f'{revision["id"]}{suffix}').unlink(missing_ok=True)
+
+
+def stronger_plan(data, plan, indices, preview):
+    """The same plan with the faint edits one strength step up, built again by the pipelines (the
+    boxes found the first time are reused, so no model is asked anything)."""
+    levels = photocraft_intents.STRENGTHS
+    edits = [{key: value for key, value in edit.items() if key != 'explain'} for edit in plan['edits']]
+    for index in indices:
+        edits[index]['strength'] = levels[min(len(levels) - 1, levels.index(edits[index]['strength']) + 1)]
+    return compile_plan(data, plan.get('prompt', ''), edits, plan.get('preserve', []), plan.get('questions', []),
+                        [], preview, plan.get('planner', ''), plan.get('boxes'), plan.get('area'))
+
+
 def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
     """Run every step in one engine session; history only advances when all succeed. With a
-    plan, the result is measured against each requirement and reviewed by the brain."""
+    plan, the result is measured against each requirement and reviewed by the brain. An edit whose
+    measurement says it went the asked way but too faintly is run once more, one strength step
+    up, and the better of the two results is kept."""
     with LOCK:
         data = load(workspace_id)
         require_revision(data, expected)
         folder = folder_for(workspace_id)
         validate_steps(steps, folder)
         before = current(data)['state']
-        outcomes = {}
-        context = {'progress': lambda desc='', **kwargs: progress(0.4, desc=desc)}
-        with Engine(folder, cancelled) as engine:
-            engine.call('doc.open', {'path': str(folder / f'{expected}.pcraft')})
-            area = plan.get('area') if plan else None
-            if area:
-                from .photocraft_area import mask_for
-                mask_for(area, before['width'], before['height'])
-                engine.call('doc.render', {'path': str(folder / '_area-before.png'),
-                                          'maxSide': max(before['width'], before['height'])})
-            skipped, skip_notes = set(), []
-            for index, step in enumerate(steps):
-                progress(0.05 + 0.6 * index / max(1, len(steps)), desc=step.get('label') or step['command'])
-                params = step.get('params', {})
-                part = tuple(step.get('requirements', []))
-                if step.get('optional') and part in skipped:
-                    continue
-                try:
-                    if step['command'] in photocraft_macros.NAMES:
-                        result = photocraft_macros.run(engine, folder, step['command'], params, context)
-                    elif step['command'] == 'select.deselect' and not engine.call('doc.inspect').get('hasSelection'):
-                        result = None  # a studio step already deselected
-                    else:
-                        result = engine.call('engine.execute', {'command': step['command'], 'params': params})
-                except ValueError as exc:
-                    if step.get('optional'):
-                        # A workflow part that does not apply to this photo (no sky was found to
-                        # deepen) is skipped; the rest of the plan still runs.
-                        skipped.add(part)
-                        skip_notes.append(f'Skipped an optional part ({step.get("label") or step["command"]}): {exc}')
-                        if engine.call('doc.inspect').get('hasSelection'):
-                            engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
-                        continue
-                    raise ValueError(
-                        f'Step {index + 1} ({step.get("label") or step["command"]}) failed: {exc}. '
-                        'The previous revision is unchanged.'
-                    ) from exc
-                context['last'] = result if isinstance(result, dict) else {}
-                if step['command'] == 'studio.text':
-                    for requirement in step.get('requirements', []):
-                        outcomes[('text', requirement)] = result
-            if engine.call('doc.inspect').get('hasSelection'):
-                engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
-            if area:
-                from .photocraft_area import check_boundary
-                check_boundary(engine, folder, area, folder / '_area-before.png', before['width'], before['height'])
-            revision = snapshot(engine, folder, label[:200], steps)
+        area = plan.get('area') if plan else None
+        revision, outcomes, skip_notes = _run_steps(folder, expected, steps, label, progress, cancelled, area, before)
         check_cancel(cancelled)
         if plan and plan.get('edits'):
-            canvas = photocraft_intents.Canvas(*(plan.get('result_size') or (0, 0)))
-            revision['checks'] = photocraft_intents.verify(
-                plan['edits'], before, revision['state'], canvas, outcomes)
-            if area:
-                revision['checks'].append({'requirement': 0, 'measured': True, 'passed': True,
-                                           'check': 'Pixels outside your marked area are unchanged (full resolution)'})
+            checks = _measured_checks(plan, folder, expected, before, revision, outcomes)
+            retry_notes = []
+            faint = too_faint(plan, checks)
+            if faint:
+                names = ', '.join(f'“{plan["edits"][index]["quote"]}”' for index in faint)
+                progress(0.7, desc='Too faint: running it again a step stronger…')
+                try:
+                    with Image.open(folder / f'{expected}.png') as image:
+                        preview = image.convert('RGB')
+                    stronger = stronger_plan(data, plan, faint, preview)
+                    if stronger['steps'] and not stronger['unresolved']:
+                        validate_steps(stronger['steps'], folder)
+                        second, second_outcomes, second_notes = _run_steps(
+                            folder, expected, stronger['steps'], label, progress, cancelled, area, before)
+                        second_checks = _measured_checks({**plan, **stronger}, folder, expected, before, second,
+                                                         second_outcomes)
+                        if _failed(second_checks) < _failed(checks):
+                            _discard(folder, revision)
+                            revision, outcomes, checks, skip_notes = second, second_outcomes, second_checks, second_notes
+                            steps, plan = stronger['steps'], {**plan, **stronger}
+                            retry_notes.append(f'{names} came out too faint, so it was run again one strength step '
+                                               'higher.')
+                        else:
+                            _discard(folder, second)
+                            retry_notes.append(f'{names} came out faint; a stronger run measured no better, so the '
+                                               'first result was kept.')
+                except (ValueError, RuntimeError, OSError) as exc:
+                    retry_notes.append(f'{names} came out faint; running it stronger failed ({str(exc)[:120]}).')
+                check_cancel(cancelled)
+            revision['checks'] = checks
             revision['requirements'] = plan['requirements']
-            geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
-            with Image.open(folder / f'{expected}.png') as old, Image.open(folder / f'{revision["id"]}.png') as new:
-                revision['checks'] += photocraft_intents.measure(
-                    plan['edits'], plan.get('regions', []), old.copy(), new.copy(), geometry)
             revision['notes'] = [
                 f'Text color chosen for readability ({value["color"]})'
                 + (' with a soft shadow' if value.get('auto_shadow') else '')
                 for key, value in outcomes.items()
                 if key[0] == 'text' and plan['edits'][key[1]]['color'] in ('', 'auto')
-            ] + skip_notes
+            ] + skip_notes + retry_notes
             if plan.get('planner') not in ('manual', 'preset', 'rules') and models.available('checker'):
                 progress(0.8, desc='Checking the result against each requirement…')
                 try:

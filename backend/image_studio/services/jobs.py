@@ -3,6 +3,7 @@
 import threading
 import time
 import uuid
+from image_studio.core.engine import explain
 from image_studio.services import workflows
 from image_studio.services.runtime import render_session
 
@@ -64,7 +65,7 @@ class JobStore:
                         message='Generation stopped.' if cancelled else self.jobs[job_id]['message'],
                     )
             except Exception as exc:
-                update(state='error', message=str(exc))
+                update(state='error', message=explain(exc))
             finally:
                 with self.lock:
                     self.active = None

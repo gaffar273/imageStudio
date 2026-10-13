@@ -73,10 +73,25 @@ class Pipeline:
     # words, or a function of the edit. A planner choice that does not fit is asked again
     # (“make the water more turquoise” once came back as the colour-splash workflow).
     requires: object = None
+    many: bool = False  # the choice slot names several options at once (a retouch's jobs)
 
     @property
     def workflow(self):
         return self.expand is not None
+
+    def choice_on_menu(self, choice, words=''):
+        """(the choice as the menu spells it, fits). An empty choice fits (the pipeline reads its
+        words or uses its default), and so does one naming an option in other words (“warm and
+        moody” names the moody look); a choice that names nothing on the menu does not."""
+        if not self.options or not choice or self.many:
+            return choice, True
+        from .models.contract import menu_choice
+
+        exact = menu_choice(choice, list(self.options))
+        if exact:
+            return exact, True
+        text = f'{choice} {words}'.lower()
+        return choice, any(option.lower() in text for option in self.options)
 
     def fits(self, edit):
         if self.requires is None:

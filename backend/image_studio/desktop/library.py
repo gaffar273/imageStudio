@@ -15,6 +15,7 @@ from PySide6.QtGui import (
     QLinearGradient,
     QPainter,
     QPainterPath,
+    QPen,
     QPixmap,
     QShortcut,
 )
@@ -38,6 +39,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
+from image_studio.desktop.controls import PageHeader, cover
 from image_studio.desktop.theme import label
 
 CELL = 210  # target card width; the grid divides the row evenly
@@ -134,13 +136,6 @@ def save_to(parent, client, notify, path, name, suffix, caption):
     client.bytes(path, write, lambda error: notify(error, error=True), timeout=300000)
 
 
-def cover(target, pixmap):
-    """The part of pixmap that fills target without distortion, like CSS object-fit: cover."""
-    scale = max(target.width() / pixmap.width(), target.height() / pixmap.height())
-    width, height = target.width() / scale, target.height() / scale
-    return QRectF((pixmap.width() - width) / 2, (pixmap.height() - height) / 2, width, height)
-
-
 class CardDelegate(QStyledItemDelegate):
     def __init__(self, model, parent=None):
         super().__init__(parent)
@@ -167,7 +162,7 @@ class CardDelegate(QStyledItemDelegate):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         shape = QPainterPath()
-        shape.addRoundedRect(card, 12, 12)
+        shape.addRoundedRect(card, 10, 10)
         painter.setClipPath(shape)
         pixmap = self.model.thumbnail(item)
         if pixmap is not None and not pixmap.isNull():
@@ -194,13 +189,13 @@ class CardDelegate(QStyledItemDelegate):
             painter.setPen(Qt.PenStyle.NoPen)
             painter.setBrush(QColor(18, 20, 20, 190))
             painter.drawEllipse(heart)
-            symbol = theme.icon('heart', theme.LIME, theme.LIME) if favorite else theme.icon('heart', '#f3f5f1')
+            symbol = theme.icon('heart', '#ef4444', '#ef4444') if favorite else theme.icon('heart', '#ffffff')
             symbol.paint(painter, heart.adjusted(8, 8, -8, -8).toRect())
         painter.setClipping(False)
         if option.state & QStyle.StateFlag.State_HasFocus and self.parent().hasFocus():
-            painter.setPen(QColor(theme.LIME))
+            painter.setPen(QPen(QColor(theme.ACCENT), 2))
             painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawRoundedRect(card.adjusted(1, 1, -1, -1), 12, 12)
+            painter.drawRoundedRect(card.adjusted(1, 1, -1, -1), 10, 10)
         painter.restore()
 
 
@@ -263,7 +258,7 @@ class ImageView(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor('#0d0f0f'))
+        painter.fillRect(self.rect(), QColor(theme.STAGE))
         if self.pixmap is None or self.pixmap.isNull():
             return
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
@@ -296,7 +291,7 @@ class ImageDetails(QDialog):
         column.setContentsMargins(24, 22, 24, 22)
         column.setSpacing(10)
         top = QHBoxLayout()
-        top.addWidget(label('YOUR CREATION', 'eyebrow'))
+        top.addWidget(label('Details', 'title'))
         top.addStretch()
         close = QPushButton(theme.icon('x', theme.MUTED), '')
         close.setProperty('kind', 'flat')
@@ -304,7 +299,6 @@ class ImageDetails(QDialog):
         close.clicked.connect(self.close)
         top.addWidget(close)
         column.addLayout(top)
-        column.addWidget(label('A moment, made real.', 'title'))
         self.date = label('', 'muted')
         column.addWidget(self.date)
         column.addSpacing(6)
@@ -334,7 +328,7 @@ class ImageDetails(QDialog):
         column.addSpacing(8)
 
         def button(text, icon, action, kind=''):
-            widget = QPushButton(theme.icon(icon, theme.INK if kind == 'primary' else theme.TEXT), text)
+            widget = QPushButton(theme.icon(icon, theme.ON_ACCENT if kind == 'primary' else theme.TEXT), text)
             if kind:
                 widget.setProperty('kind', kind)
             widget.clicked.connect(action)
@@ -356,7 +350,7 @@ class ImageDetails(QDialog):
         self.heart.clicked.connect(self.toggle_favorite)
         column.addWidget(self.heart)
         column.addStretch()
-        column.addWidget(label('← → to move through your library', 'small'))
+        column.addWidget(label('Use ← and → to move through the library', 'small'))
         layout.addWidget(side)
 
         QShortcut(QKeySequence(Qt.Key.Key_Left), self, lambda: self.browse(-1))
@@ -408,7 +402,7 @@ class ImageDetails(QDialog):
 
     def update_heart(self):
         favorite = self.item['name'] in self.page.model.favorites
-        self.heart.setIcon(theme.icon('heart', theme.LIME, theme.LIME) if favorite else theme.icon('heart'))
+        self.heart.setIcon(theme.icon('heart', '#ef4444', '#ef4444') if favorite else theme.icon('heart'))
         self.heart.setText('Saved to favorites' if favorite else 'Save to favorites')
 
     def toggle_favorite(self):
@@ -476,18 +470,20 @@ class LibraryPage(QWidget):
         self.ready = False
         self.model = LibraryModel(client, self)
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(32, 26, 32, 0)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = PageHeader('Library')
+        outer.addWidget(self.header)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 16, 18, 0)
         layout.setSpacing(6)
-        layout.addWidget(label('A COLLECTION OF POSSIBILITIES', 'eyebrow'))
-        layout.addWidget(label('Made by your imagination.', 'title'))
-        layout.addWidget(label('Every experiment, happy accident, and beautiful idea. Right here.', 'muted'))
-        layout.addSpacing(12)
+        outer.addLayout(layout, 1)
 
         bar = QHBoxLayout()
         bar.setSpacing(8)
-        self.everything = QPushButton('All creations')
-        self.favorites_only = QPushButton(theme.icon('folder-heart'), 'Favorites')
+        self.everything = QPushButton('All')
+        self.favorites_only = QPushButton(theme.icon('heart'), 'Favorites')
         group = QButtonGroup(self)
         for widget in (self.everything, self.favorites_only):
             widget.setCheckable(True)
@@ -496,7 +492,7 @@ class LibraryPage(QWidget):
         self.everything.setChecked(True)
         group.buttonClicked.connect(lambda _: self.apply())
         self.search = QLineEdit()
-        self.search.setPlaceholderText('Search your creations…')
+        self.search.setPlaceholderText('Search by prompt, or press Enter to search by what is in the picture')
         self.search.setClearButtonEnabled(True)
         self.search.addAction(theme.icon('search', theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(lambda _: self.apply())
@@ -514,6 +510,7 @@ class LibraryPage(QWidget):
         reload.clicked.connect(self.refresh)
         bar.addWidget(reload)
         layout.addLayout(bar)
+        layout.addSpacing(6)
 
         self.banner = QFrame()
         self.banner.setProperty('banner', True)
@@ -613,7 +610,8 @@ class LibraryPage(QWidget):
         if self.results is None:
             visible.sort(key=lambda item: item['created'], reverse=not self.oldest)
         self.model.set_items(visible)
-        self.everything.setText(f'All creations  {len(self.all)}')
+        self.everything.setText(f'All  {len(self.all)}')
+        self.header.set_note(f'{len(self.all)} picture{"" if len(self.all) == 1 else "s"}' if self.all else '')
         self.favorites_only.setText(f'Favorites  {len(favorites)}')
         if visible:
             self.stack.setCurrentIndex(0)
@@ -622,7 +620,7 @@ class LibraryPage(QWidget):
         elif only_favorites:
             self.waiting('No favorites yet.', 'Click the heart on a picture to keep it here.')
         else:
-            self.waiting('No creations here yet.', 'Create your first image to begin your collection.')
+            self.waiting('No pictures yet.', 'Pictures you create or edit are saved here.')
 
     def flip_sort(self):
         self.oldest = not self.oldest

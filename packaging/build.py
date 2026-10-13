@@ -45,6 +45,7 @@ CONTENT = [
     'backend/image_studio',
     'backend/requirements-torch.txt',
     'backend/requirements-models.txt',
+    'backend/requirements-cloud.txt',
     'backend/requirements-search.txt',
     'integrations/krita-plugin',
     'training/lora',

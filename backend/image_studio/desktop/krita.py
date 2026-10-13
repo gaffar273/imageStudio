@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
-from image_studio.desktop.controls import Box, Flow, Section, Thumb
+from image_studio.desktop.controls import Box, Flow, PageHeader, Section, Thumb
 from image_studio.desktop.edit import PICTURES, check_size, encode, read_picture
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.library import ImageView, prompt_of, searchable
@@ -119,9 +119,19 @@ class KritaPage(QWidget):
         self.poller.setInterval(POLL_MS)
         self.poller.timeout.connect(self.poll)
 
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = PageHeader('Krita')
+        self.title = ElidedLabel('', 'muted')
+        self.header.actions.insertWidget(3, self.title, 1)
+        self.dimensions = label('', 'small')
+        self.header.add(self.dimensions)
+        outer.addWidget(self.header)
+        layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        outer.addLayout(layout, 1)
         layout.addWidget(self.canvas_area(), 1)
         layout.addWidget(self.panel())
         QShortcut(QKeySequence('Ctrl+Return'), self, self.send_prompt)
@@ -134,26 +144,14 @@ class KritaPage(QWidget):
     def canvas_area(self):
         area = QWidget()
         column = QVBoxLayout(area)
-        column.setContentsMargins(32, 26, 24, 18)
+        column.setContentsMargins(20, 18, 20, 14)
         column.setSpacing(6)
-        head = QHBoxLayout()
-        titles = QVBoxLayout()
-        titles.setSpacing(2)
-        self.eyebrow = label('YOUR CANVAS', 'eyebrow')
-        titles.addWidget(self.eyebrow)
-        self.title = ElidedLabel('Start with an image', 'title')
-        titles.addWidget(self.title)
-        head.addLayout(titles, 1)
-        self.dimensions = label('', 'muted')
-        head.addWidget(self.dimensions, 0, Qt.AlignmentFlag.AlignBottom)
-        column.addLayout(head)
-        column.addSpacing(8)
 
         self.stage = QStackedLayout()
         self.preview = ImageView()
         self.stage.addWidget(self.preview)
         empty = QFrame()
-        empty.setProperty('card', True)
+        empty.setProperty('stage', True)
         inside = QVBoxLayout(empty)
         inside.addStretch(1)
         self.empty_icon = QPushButton(theme.icon('image-plus', theme.MUTED), '')
@@ -169,14 +167,14 @@ class KritaPage(QWidget):
         inside.addSpacing(8)
         buttons = QHBoxLayout()
         buttons.addStretch()
-        self.empty_open = QPushButton(theme.icon('upload', theme.INK), 'Open a picture…')
+        self.empty_open = QPushButton(theme.icon('upload', theme.ON_ACCENT), 'Open a picture…')
         self.empty_open.setProperty('kind', 'primary')
         self.empty_open.clicked.connect(self.choose_file)
         buttons.addWidget(self.empty_open)
-        self.empty_library = QPushButton(theme.icon('images'), 'From your library')
+        self.empty_library = QPushButton(theme.icon('images'), 'From the library')
         self.empty_library.clicked.connect(self.choose_library)
         buttons.addWidget(self.empty_library)
-        self.get_krita = QPushButton(theme.icon('external-link', theme.INK), 'Get Krita (free)')
+        self.get_krita = QPushButton(theme.icon('external-link', theme.ON_ACCENT), 'Get Krita (free)')
         self.get_krita.setProperty('kind', 'primary')
         self.get_krita.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(KRITA_DOWNLOAD)))
         buttons.addWidget(self.get_krita)
@@ -198,6 +196,7 @@ class KritaPage(QWidget):
     def panel(self):
         panel = QWidget()
         panel.setObjectName('Panel')
+        panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
         panel.setFixedWidth(340)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -224,7 +223,7 @@ class KritaPage(QWidget):
         column.addWidget(self.connection_note)
 
         column.addSpacing(6)
-        column.addWidget(label('Add to your workspace', 'value'))
+        column.addWidget(label('Open', 'eyebrow'))
         row = QHBoxLayout()
         self.open_file = QPushButton(theme.icon('upload'), 'Open picture…')
         self.open_file.setToolTip('A picture from this PC, as a new Krita document. You can also drop or paste one.')
@@ -241,7 +240,7 @@ class KritaPage(QWidget):
         column.addWidget(label('Opens a new document. Your current canvas stays open in Krita.', 'small', wrap=True))
 
         column.addSpacing(6)
-        column.addWidget(label('What would you like to change?', 'value'))
+        column.addWidget(label('What to change', 'eyebrow'))
         self.prompt = QPlainTextEdit()
         self.prompt.setPlaceholderText('Make the background warmer and bring out the details…')
         self.prompt.setFixedHeight(110)
@@ -249,7 +248,7 @@ class KritaPage(QWidget):
         column.addWidget(self.prompt)
         self.hint = label('', 'small', wrap=True)
         column.addWidget(self.hint)
-        self.send = QPushButton(theme.icon('send', theme.INK), 'Send to canvas')
+        self.send = QPushButton(theme.icon('send', theme.ON_ACCENT), 'Send to canvas')
         self.send.setProperty('kind', 'primary')
         self.send.setProperty('size', 'large')
         self.send.clicked.connect(self.send_prompt)
@@ -372,7 +371,7 @@ class KritaPage(QWidget):
         elif self.lost:
             dot, text, note = theme.WARN, 'Connection lost. Retrying…', ''
         elif connected:
-            dot, text, note = theme.LIME, 'Krita connected', ''
+            dot, text, note = theme.ACCENT, 'Krita connected', ''
         else:
             dot, text = theme.MUTED, 'Krita is not open'
             note = 'Open Krita to connect. Its AI panel starts with it.'
@@ -391,8 +390,7 @@ class KritaPage(QWidget):
         self.stop.setEnabled(self.ready and connected)
         self.send.setText('Sending…' if self.sending else 'Send to canvas')
 
-        self.eyebrow.setText('ACTIVE DOCUMENT' if has_document else 'YOUR CANVAS')
-        self.title.setText(document_name(document['name']) if has_document else 'Start with an image')
+        self.title.setText(document_name(document['name']) if has_document else 'No document open')
         self.dimensions.setText(f'{document["width"]} × {document["height"]}' if has_document else '')
         shown = has_document and (self.state or {}).get('preview') and self.preview.pixmap is not None
         self.stage.setCurrentIndex(0 if shown else 1)
@@ -405,10 +403,10 @@ class KritaPage(QWidget):
             self.empty_text.setText('Krita is a free painting app. Once it is installed, pictures open here as '
                                     'Krita documents and you can edit them by typing.')
         elif has_document:
-            self.empty_title.setText('Your preview is on its way')
-            self.empty_text.setText('Your canvas appears here as Krita updates.')
+            self.empty_title.setText('Waiting for the preview')
+            self.empty_text.setText('The canvas appears here as Krita updates.')
         else:
-            self.empty_title.setText('A place for your next idea')
+            self.empty_title.setText('Open a picture in Krita')
             self.empty_text.setText('Drop or paste a picture here, or open one, to start a new document in Krita.')
         if has_document:
             self.caption.setText('Live preview · Paint and select areas in Krita.')

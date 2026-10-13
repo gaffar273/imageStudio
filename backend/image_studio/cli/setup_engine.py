@@ -4,6 +4,10 @@ Studio settings runs this in an installed copy (Install on the Engine row); it a
 by hand: `python -m image_studio.cli.setup_engine`. Running it again is always safe: it
 finishes an interrupted setup, and after an app update installs only what changed.
 
+`--cloud` sets up the engine without PyTorch, for a PC with no NVIDIA graphics card: it then
+creates and edits through cloud providers only. Running it without `--cloud` later adds
+PyTorch and the model libraries to the same environment.
+
 Its output is shaped for the app's installer (desktop/installs.py): pip's download
 progress is printed as "name: 45%| 1.2 GB/3.3 GB" lines.
 """
@@ -40,6 +44,8 @@ CHECK = (
     'import json, torch, torchvision, diffusers, transformers, cv2, numpy; '
     'print(json.dumps(dict(torch=torch.__version__, cuda=torch.cuda.is_available())))'
 )
+CLOUD_CHECK = 'import json, cv2, numpy, anthropic; print(json.dumps(dict(torch=None, cuda=False)))'
+LABELS = dict(full=('PyTorch', 'the model libraries'), cloud=('the engine libraries',))
 
 
 def amount(size):
@@ -125,10 +131,10 @@ def pip_install(python, requirements):
     return process.wait(), '\n'.join(tail)
 
 
-def check(python):
+def check(python, kind='full'):
     """The installed versions, or None when the libraries do not load."""
     result = subprocess.run(
-        [str(python), '-c', CHECK],
+        [str(python), '-c', CLOUD_CHECK if kind == 'cloud' else CHECK],
         capture_output=True,
         text=True,
         encoding='utf-8',
@@ -148,7 +154,10 @@ def main(argv=None):
         description='Set up the engine: PyTorch with CUDA and the model libraries.'
     )
     parser.add_argument('--env', type=Path, default=paths.ENGINE_ENV, help='the folder for the environment')
+    parser.add_argument('--cloud', action='store_true',
+                        help='no PyTorch: create and edit through cloud providers only (no NVIDIA card needed)')
     args = parser.parse_args(argv)
+    kind = 'cloud' if args.cloud else 'full'
     env = args.env.expanduser().resolve()
     try:
         prepare(env)
@@ -156,7 +165,7 @@ def main(argv=None):
         print(f'The engine environment could not be made in {env}: {exc}')
         return FINAL
     python = engine_env.env_python(env)
-    for label, requirements in zip(('PyTorch', 'the model libraries'), engine_env.REQUIREMENTS):
+    for label, requirements in zip(LABELS[kind], engine_env.KINDS[kind]):
         print(f'Installing {label}.', flush=True)
         code, output = pip_install(python, requirements)
         if code:
@@ -164,23 +173,24 @@ def main(argv=None):
             print(output.strip().splitlines()[-1] if output.strip() else f'Installing {label} failed.')
             return 1 if network else FINAL
     print('Checking that the libraries load.', flush=True)
-    versions = check(python)
+    versions = check(python, kind)
     if versions is None:
         return FINAL
-    if not versions['cuda']:
+    if kind == 'full' and not versions['cuda']:
         print(
             'PyTorch is installed but cannot use an NVIDIA graphics card. Updating the NVIDIA driver '
             'usually fixes this.',
             flush=True,
         )
     record = dict(
-        engine_env.wanted(),
+        engine_env.wanted(kind),
+        kind=kind,
         torch=versions['torch'],
         cuda=versions['cuda'],
         finished=time.strftime('%Y-%m-%d %H:%M:%S'),
     )
     (env / engine_env.MARKER).write_text(json.dumps(record, indent=2), encoding='utf-8')
-    print('The engine is ready.', flush=True)
+    print('The engine is ready (cloud mode).' if kind == 'cloud' else 'The engine is ready.', flush=True)
     return 0
 
 

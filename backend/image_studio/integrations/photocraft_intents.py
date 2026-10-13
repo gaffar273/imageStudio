@@ -221,6 +221,129 @@ def numbers_in(text):
     return [float(value) for value in re.findall(r'(?<![\w.])-?\d+(?:\.\d+)?', text or '')]
 
 
+# Which way an amount goes, read from the words. Each word moves one quantity (an axis) up or down;
+# an action reads the words of its own axis. “Less”, “too” and “reduce” turn a word around: “less
+# dark” and “too dark” are brighter, “reduce the warmth” is cooler.
+AXES = {
+    'light': ('brightness', 'exposure', 'exposure_fix', 'whites', 'blacks', 'shadows', 'highlights', 'vignette'),
+    'warm': ('temperature',),
+    'color': ('saturation', 'vibrance'),
+    'punch': ('contrast', 'clarity', 'texture', 'sharpen', 'dehaze'),
+    'haze': ('dehaze',),
+}
+AXIS_WORDS = [  # (word pattern, {axis: +1 more of it, -1 less})
+    (r'bright\w*|light(er|en\w*)?|lift\w*|illuminat\w*|sunn\w*', {'light': 1}),
+    (r'dark\w*|dim(mer|med|ming)?|gloom\w*|crush\w*|underexposed', {'light': -1}),
+    (r'overexposed|blown(\s+out)?', {'light': -1}),
+    (r'deep(en\w*|er)?', {'light': -1, 'color': 1, 'punch': 1}),
+    (r'warm\w*|golden', {'warm': 1}),
+    (r'cool\w*|cold\w*|chill\w*', {'warm': -1}),
+    (r'vivid\w*|vibran\w*|colou?rful|saturated|rich\w*|intens\w*|bold\w*|pop\w*|punch\w*', {'color': 1, 'punch': 1}),
+    (r'desaturat\w*|mut(e|ed|ing)|dull\w*|pale\w*|bland', {'color': -1, 'punch': -1}),
+    (r'washed[\s-]*out|fad(e|ed|ing)|flat\w*|matte|muddy', {'color': -1, 'punch': -1}),
+    (r'contrast\w*|crisp\w*|sharp\w*|defin\w*|detail\w*', {'punch': 1}),
+    (r'soft\w*|smooth\w*|blurr?\w*', {'punch': -1}),
+    (r'clear\w*', {'haze': 1, 'punch': 1}),
+    (r'haz(e|y|ier|iness)|fog\w*|mist\w*', {'haze': -1}),
+]
+TURN_WORDS = [  # words that set or reverse the direction of what follows them
+    (r'too|overly|less|reduc\w*|decreas\w*|tone\s+down|weaker|minimi[sz]\w*|remov\w*|'
+     r'eliminat\w*', -1),
+    (r'more|increas\w*|boost\w*|enhanc\w*|add\w*|amplif\w*|intensif\w*|stronger|bump\s+up|maximi[sz]\w*', 1),
+]
+# Only verbs when they start the clause: “lower the exposure”, but “the lower half”.
+LEAD_TURN_WORDS = [(r'lower|cut|turn\s+down|dial\s+down|recover\w*|tame', -1), (r'raise|push|turn\s+up|dial\s+up', 1)]
+NAMING = re.compile(r'add\w*|remov\w*|eliminat\w*')  # “add a shadow”, “remove the dog”: things, not amounts
+PHRASE_BREAK = ('and', 'but', 'or', 'while', 'then', 'with', 'except', 'keep', 'keeping')
+LEAD = {'please', 'pls', 'can', 'could', 'would', 'you', 'kindly', 'i', 'want', 'to', 'd', 'like', 'let', 's',
+        'lets', 'and', 'also', 'then', 'now', 'just', 'so', 'ok', 'okay'}
+
+
+def _axis_sign(word, action):
+    """+1/-1 when the word moves the action's quantity, None when it says nothing about it."""
+    axes = [axis for axis, actions in AXES.items() if action in actions]
+    word = re.sub(r' (up|down)$', '', word)  # “warm up”, “cool down”
+    for pattern, signs in AXIS_WORDS:
+        if re.fullmatch(pattern, word, re.IGNORECASE):
+            if not axes:
+                return None  # not an amount pipeline: its direction is the planner's
+            found = [signs[axis] for axis in axes if axis in signs]
+            return found[0] if found else None
+    return None
+
+
+def _turn_sign(word, leading=False):
+    for pattern, sign in TURN_WORDS + (LEAD_TURN_WORDS if leading else []):
+        if re.fullmatch(pattern, word, re.IGNORECASE):
+            return sign
+    return None
+
+
+def direction_from_words(text, action):
+    """('increase' | 'decrease' | None, sure) for the edit's own words. `sure` answers override
+    the planner; the rest only fill a direction it left empty. Only the amount pipelines (light,
+    warmth, colour, punch, haze) are ever sure: for the rest (“remove the dog”, “add a soft
+    shadow”) direction is not an amount, so words never overrule the planner. Shadows read only
+    light words (“reduce the shadows” lifts them, “deepen the shadows” darkens them), and so does a
+    vignette."""
+    words = re.findall(r"[a-z]+(?:[\s-]+(?:out|down|up))?", (text or '').lower())
+    words = [re.sub(r'[\s-]+', ' ', word) for word in words]
+    joined = ' '.join(words)
+    pick = lambda sign: 'increase' if sign > 0 else 'decrease'  # noqa: E731
+    amount = any(action in actions for actions in AXES.values())
+    generic = action not in ('shadows', 'vignette')
+    start = next((number for number, word in enumerate(words) if word not in LEAD), len(words))
+
+    def answer(sign):
+        return pick(sign), amount
+
+    # 1. A turning word in front of a word of the action's axis (“less dark”, “reduce the warmth”).
+    for number, word in enumerate(words):
+        # “Recover the blown out sky” lowers the highlights; it does not turn “blown out” around.
+        turn = None if re.fullmatch(r'recover\w*|tame', word) else _turn_sign(word, leading=number == start)
+        if re.match(r'not (so|as|too)\b', ' '.join(words[number:number + 2])):
+            turn, number = -1, number + 1
+        if turn is None:
+            continue
+        for follower in words[number + 1:number + 5]:
+            if follower in PHRASE_BREAK or _turn_sign(follower) is not None:
+                break
+            sign = _axis_sign(follower, action)
+            if sign is not None:
+                return answer(turn * sign)
+    # “not bright enough” asks for more of it.
+    enough = re.search(r'\bnot (\w+ )?(\w+) enough\b', joined)
+    if enough and _axis_sign(enough.group(2), action) is not None:
+        return answer(_axis_sign(enough.group(2), action))
+    # 2. The verb the clause starts with (“brighten the darker areas”, “recover the blown out sky”).
+    first = words[start] if start < len(words) else ''
+    sign = _axis_sign(first, action)
+    if sign is not None:
+        return answer(sign)
+    if generic and _turn_sign(first, leading=True) is not None and first not in ('too', 'less') and             not NAMING.fullmatch(first):
+        return answer(_turn_sign(first, leading=True))
+    # 3. “The photo is blurry, make it sharper”: what it should be made, then any word of the axis.
+    for number, word in enumerate(words):
+        if word in ('make', 'get', 'turn', 'render'):
+            for follower in words[number + 1:number + 6]:
+                if follower in PHRASE_BREAK:
+                    break
+                sign = _axis_sign(follower, action)
+                if sign is not None:
+                    return answer(sign)
+    for word in words:
+        sign = _axis_sign(word, action)
+        if sign is not None:
+            return answer(sign)
+    if generic:
+        # “More”, “less”, “increase”: only fills an empty direction. “Add” and “remove” name things
+        # (“add a soft shadow”, “remove the dog”), not amounts.
+        for word in words:
+            if _turn_sign(word) is not None and not NAMING.fullmatch(word):
+                return pick(_turn_sign(word)), False
+    return None, False
+
+
 def strength_from_words(text, chosen):
     """Words beat the planner's guess: “slightly” is subtle, “much more” is strong."""
     lowered = (text or '').lower()
@@ -559,24 +682,22 @@ def normalize(edit, prompt):
     }
     value = edit.get('value')
     if isinstance(value, (int, float)) and not isinstance(value, bool):
-        written = numbers_in(quote) + numbers_in(prompt)
+        # Only a number written in this edit's own words: “crop to 4:5 and boost vibrance” has no
+        # vibrance amount. The quote must also be the person's (a number the model put in its own
+        # paraphrase does not count).
+        in_prompt = numbers_in(prompt)
+        written = [number for number in numbers_in(quote) if any(abs(number - n) < 1e-6 for n in in_prompt)]
         if any(abs(abs(value) - abs(number)) < 1e-6 for number in written):
             result['value'] = float(value)
         else:
             notes.append(f'Ignored a number ({value:g}) that is not in your request; used a {result["strength"]} '
                          'amount instead.')
-    # Direction words in the person's text override the planner.
+    # Direction words in the person's text override the planner, read as a phrase: “less dark” is
+    # brighter, and “brighten the darker areas” is brighter (the verb leads, “darker” names where).
     lowered = quote.lower()
-    if re.search(r'\b(less|reduce|decrease|lower|darker|darken|cooler|tone down|remove some|soften|'
-                 r'recover|desaturat|mute|dim)\w*', lowered):
-        if result['direction'] == 'none' or action not in ('shadows', 'highlights', 'vignette'):
-            result['direction'] = 'decrease'
-    elif re.search(r'\b(more|increase|boost|raise|brighter|brighten|warmer|lift|enhance|add|stronger|pop)\w*',
-                   lowered) and result['direction'] == 'none':
-        result['direction'] = 'increase'
-    if action in ('saturation', 'vibrance', 'contrast', 'clarity', 'dehaze', 'texture') and re.search(
-            r'\b(deepen|deeper|richer|vivid|intensif|punch|pop|bolder|stronger)\w*', lowered):
-        result['direction'] = 'increase'  # “deepen the blues” means more color, not less
+    worded, sure = direction_from_words(quote, action)
+    if worded and (sure or result['direction'] == 'none'):
+        result['direction'] = worded
     if action == 'color_filter' and result['target'] == 'color' and re.search(
             r'\b(deepen|deeper|richer|vivid|intensif|boost|more saturated)\w*', lowered):
         result['action'], result['direction'] = 'saturation', 'increase'
@@ -731,6 +852,12 @@ def normalize(edit, prompt):
         result['position'] = position_from_words(quote)
     if result['action'] != 'keep' and pipeline is not None and not pipeline.fits(result):
         result['misfit'] = True  # the planner is asked again for this clause (photocraft_planner.understand)
+    elif pipeline is not None and result['action'] != 'keep':
+        # Each pipeline's own menu for its choice slot: a choice naming nothing on it is asked
+        # again with that menu alone (photocraft_planner.rechoose_slot).
+        result['choice'], fits = pipeline.choice_on_menu(result['choice'], quote)
+        if not fits:
+            result['slot_misfit'] = True
     return result, notes
 
 
@@ -806,10 +933,11 @@ def expand(edits, preserve=(), prompt=''):
             # A professional headshot is framed, polished and lightly retouched.
             if not any(other['action'] == 'look' for other in result):
                 result.append(blank('look', quote='Gentle professional polish for the headshot',
-                                    choice='professional polish', strength='subtle'))
+                                    choice='professional polish', strength='subtle', part_of='headshot'))
             if not any(other['action'] == 'retouch_portrait' for other in result):
                 result.append(blank('retouch_portrait', quote='Light skin smoothing for the headshot',
-                                    choice='smooth', strength='subtle', target='main subject'))
+                                    choice='smooth', strength='subtle', target='main subject',
+                                    part_of='headshot'))
             continue
         if edit['action'] != 'passport_photo' or keeps_background:
             continue
@@ -817,7 +945,7 @@ def expand(edits, preserve=(), prompt=''):
             continue
         color = edit['color'] if hex_color(edit['color']) else 'white'
         result.append(blank('remove_background', quote=f'Plain {color} passport backdrop behind the person',
-                            target='main subject', color=color))
+                            target='main subject', color=color, part_of='passport_photo'))
     return result
 
 
@@ -1603,7 +1731,10 @@ def local_tone_check(index, edit, pairs, before, after, others=()):
         detail = f'{name} {old * 255:.0f} → {new * 255:.0f} of 255'
         if passed and abs(moved) < 0.012:
             detail += ' (a small change)'
-    return {'requirement': index, 'check': f'Measured: {what} {detail}', 'passed': passed, 'measured': True}
+    record = {'requirement': index, 'check': f'Measured: {what} {detail}', 'passed': passed, 'measured': True}
+    if not passed and (moved > 0 if rising else moved < 0):
+        record['weak'] = True  # the asked way, not far enough: a stronger run can fix it
+    return record
 
 
 def blur_checks(index, boxes, before, after):
@@ -1764,7 +1895,9 @@ def measure(edits, regions, before, after, geometry_changed):
                 falling = new < old - 0.004
                 passed = rising if edit['direction'] == 'increase' else falling
                 checks.append({'requirement': index, 'check': f'Measured: {name} {old:.3f} → {new:.3f}',
-                               'passed': passed, 'measured': True})
+                               'passed': passed, 'measured': True,
+                               **({'weak': True} if not passed and (new > old if edit['direction'] == 'increase'
+                                                                     else new < old) else {})})
             elif action in ('saturation', 'vibrance') and edit['target'] == 'color' and hex_color(edit['color']) \
                     and not geometry_changed and edit['direction'] != 'none':
                 family = color_family(hex_color(edit['color']))

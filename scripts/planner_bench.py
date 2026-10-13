@@ -13,6 +13,8 @@ after a code change only asks again for prompts the change affected.
 import argparse
 import hashlib
 import json
+import os
+import re
 import sys
 import tempfile
 import time
@@ -242,6 +244,118 @@ CASES = [
 ]
 
 
+# Held out (written 2026-10-13, after every fix above): requests none of the guards, fit rules or
+# prompt wording were tuned on. Run it to measure, never to tune: a fix made because of a case
+# here moves that case into CASES and a fresh request takes its place.
+HOLDOUT = [
+    ('format', 'woman', 'I need this as a 2 by 2 inch passport picture', ['passport_photo']),
+    ('format', 'town', 'shrink it to 1600 pixels on the long side for email', ['resize|web_export']),
+    ('social', 'street', 'crop it for a pinterest pin', ['crop_aspect|resize']),
+    ('social', 'puppy', 'turn this into a square profile picture', ['crop_aspect|resize']),
+    ('portrait', 'woman', 'soften her skin but keep it looking natural', ['retouch_portrait']),
+    ('portrait', 'man', 'whiten his teeth slightly', ['retouch_portrait']),
+    ('portrait', 'woman', 'get rid of the shine on her forehead', ['retouch_portrait']),
+    ('portrait', 'man', 'make the background behind him a soft blur', ['blur_background']),
+    ('background', 'puppy', 'swap the background for plain light blue', ['remove_background']),
+    ('background', 'mugs', 'put a soft shadow under the mugs', ['drop_shadow']),
+    ('color', 'town', 'make the sea a deeper blue', ['saturation|hue_shift|color_grade']),
+    ('color', 'room', 'the whites look yellow, fix the colour cast', ['auto_fix|temperature']),
+    ('color', 'woman', 'give it a cooler, bluish tone', ['temperature|color_grade|color_filter|look']),
+    ('color', 'street', 'mute the colours a bit', ['saturation|vibrance']),
+    ('light', 'room', 'open up the shadows a little', ['shadows']),
+    ('light', 'town', 'tone down the bright sky', ['highlights|graduated_filter|exposure']),
+    ('light', 'group', 'the photo looks flat, add some contrast', ['contrast|tone_curve']),
+    ('light', 'street', 'make it a touch brighter overall', ['brightness|exposure|exposure_fix']),
+    ('repair', 'woman', 'reduce the grain, it is too noisy', ['noise_reduction']),
+    ('repair', 'town', 'the horizon is tilted, level it', ['straighten']),
+    ('repair', 'street', 'fix the leaning walls of the building', ['perspective']),
+    ('repair', 'room', 'sharpen it a bit, it looks soft', ['sharpen|high_pass_sharpen']),
+    ('object', 'room', 'erase the dog from the picture', ['remove_object']),
+    ('object', 'mugs', 'change the colour of the blue mug to red', ['recolor']),
+    ('object', 'room', 'make the cat a bit bigger', ['transform_object']),
+    ('product', 'mugs', 'clean product shot on a white background for my store',
+     ['product_marketplace|product_transparent|remove_background']),
+    ('landscape', 'town', 'bring out more detail in the clouds', ['highlights|clarity|dehaze|landscape_enhance']),
+    ('landscape', 'town', 'make it look like a misty morning', ['dehaze|look|weather']),
+    ('creative', 'street', 'give it a vintage film look', ['look|cinematic_film|grain']),
+    ('creative', 'neon', 'make the neon glow stronger', ['glow']),
+    ('creative', 'town', 'add a dark vignette around the edges', ['vignette']),
+    ('creative', 'puppy', 'pencil sketch effect', ['artistic']),
+    ('graphics', 'town', 'write "Amalfi" in big white letters at the bottom', ['add_text']),
+    ('graphics', 'puppy', 'put a black frame around it', ['canvas_border|frame|picture_frame']),
+    ('combined', 'woman', 'warm it up a little, crop to 4:5 and smooth her skin',
+     ['temperature', 'crop_aspect', 'retouch_portrait']),
+    ('combined', 'town', 'straighten it, then make the colours richer', ['straighten', 'saturation|vibrance']),
+    ('workflow', 'room', 'make this living room look bright and inviting for Airbnb', ['real_estate_interior']),
+    ('workflow', 'mugs', 'prepare these mugs for an online shop listing', ['product_marketplace|product_polish']),
+    ('workflow', 'woman', 'make this into a professional LinkedIn headshot', ['headshot|headshot_studio']),
+    ('workflow', 'street', 'make it moody and cinematic', ['cinematic_film|look|color_grade']),
+]
+
+# Which way the edit goes, not only which pipeline: "a>increase" passes when a planned edit of
+# pipeline a goes up. Each phrasing once flipped a correct answer in the guards (2026-10-13).
+DIRECTIONS = [
+    ('direction', 'room', 'make it less dark', ['brightness|exposure|exposure_fix>increase']),
+    ('direction', 'woman', 'make it less cold', ['temperature>increase']),
+    ('direction', 'room', 'brighten the darker areas', ['brightness|exposure|shadows>increase']),
+    ('direction', 'group', 'make it a lot less washed out', ['contrast|saturation|vibrance|tone_curve>increase']),
+    ('direction', 'town', 'the sky is too bright', ['highlights|exposure|brightness|graduated_filter>decrease']),
+    ('direction', 'street', 'reduce the warmth a bit', ['temperature>decrease']),
+    ('direction', 'town', 'less saturated please', ['saturation|vibrance>decrease']),
+    ('direction', 'woman', 'not so contrasty', ['contrast>decrease']),
+    ('direction', 'town', 'the colours are dull, make them richer', ['saturation|vibrance>increase']),
+    ('direction', 'room', 'lower the exposure slightly', ['exposure|brightness>decrease']),
+    ('direction', 'street', 'make the lower half brighter', ['brightness|exposure>increase']),
+    ('direction', 'town', 'clear up the haze over the town', ['dehaze>increase']),
+    ('direction', 'town', 'add some mist', ['dehaze>decrease']),
+    ('direction', 'man', 'not bright enough', ['brightness|exposure|exposure_fix>increase']),
+    ('direction', 'woman', 'cool it down a touch', ['temperature>decrease']),
+    ('direction', 'group', 'deepen the shadows', ['shadows|blacks>decrease']),
+    ('direction', 'room', 'lift the shadows', ['shadows>increase']),
+    ('direction', 'town', 'recover the blown out highlights', ['highlights>decrease']),
+]
+SETS = {'main': CASES, 'holdout': HOLDOUT, 'direction': DIRECTIONS}
+# Pipelines whose direction the scoring reads (the rest have no amount to go up or down).
+AMOUNT = {'brightness', 'exposure', 'exposure_fix', 'whites', 'blacks', 'shadows', 'highlights', 'vignette',
+          'temperature', 'saturation', 'vibrance', 'contrast', 'clarity', 'texture', 'sharpen', 'dehaze'}
+
+
+def cached_adapters(folder):
+    """Hosted and OpenAI-compatible answers cached by their exact request, like the local model's,
+    so a rerun after a code change pays only for prompts the change affected."""
+    from image_studio.pipelines.models import adapters
+
+    for kind in (adapters.OpenAICompatible, adapters.Anthropic):
+        original = kind.complete
+
+        def complete(self, system, content, schema=None, max_tokens=2500, temperature=0.0, _original=original):
+            spec = {k: v for k, v in self.spec.items() if k not in ('api_key',)}
+            key = hashlib.sha256(json.dumps([spec, system, content, schema, max_tokens, temperature],
+                                            sort_keys=True).encode('utf-8')).hexdigest()
+            path = folder / f'{key}.json'
+            if path.exists():
+                return json.loads(path.read_text(encoding='utf-8'))
+            answer = _original(self, system, content, schema, max_tokens, temperature)
+            path.write_text(json.dumps(answer), encoding='utf-8')
+            return answer
+
+        kind.complete = complete
+
+
+def connect_planner(text):
+    """--planner preset[:model]: the planner and checker use it; the grounder too when the model is
+    known to give boxes on the grid, else it stays on the bundled model (as the app does)."""
+    from image_studio.pipelines import models
+
+    preset, _, model = text.partition(':')
+    spec = {'preset': preset, **({'model': model} if model else {})}
+    models.connect('planner', **spec)
+    models.connect('checker', **spec)
+    if models.can_ground(spec):
+        models.connect('grounder', **spec)
+    return models.describe()
+
+
 def cached_chat(folder):
     """brain.chat with a disk cache keyed by the exact request."""
     original = brain.chat
@@ -282,17 +396,37 @@ def run_case(category, photo, prompt, expected, photos):
         return {'category': category, 'photo': photo, 'prompt': prompt, 'expected': expected, 'passed': False,
                 'error': f'{type(exc).__name__}: {exc}', 'seconds': round(time.time() - started, 1)}
     # A workflow counts by its own name too (its parts are the procedures it expanded into).
-    actions = [edit['action'] for edit in plan['edits']] + sorted(
-        {edit['workflow'] for edit in plan['edits'] if edit.get('workflow')})
-    remaining = list(actions)
-    missing = []
+    edits = plan['edits']
+    actions = [edit['action'] for edit in edits] + sorted({edit['workflow'] for edit in edits if edit.get('workflow')})
+    remaining = [(edit['action'], edit) for edit in edits] + [
+        (name, None) for name in sorted({edit['workflow'] for edit in edits if edit.get('workflow')})]
+    missing, wrong_direction = [], []
     asks = 'ask' in expected
     for want in [want for want in expected if want != 'ask']:
-        hit = next((a for a in remaining if a in want.split('|')), None)
+        names, _, direction = want.partition('>')
+        names = names.split('|')
+        hit = next((item for item in remaining if item[0] in names and (
+            not direction or item[1] is not None and item[1]['direction'] == direction)), None)
         if hit:
             remaining.remove(hit)
+            # A workflow's own part stands in for a named one; remove the parts it covered too.
+            if hit[1] is None:
+                remaining = [item for item in remaining if not (item[1] and item[1].get('workflow') == hit[0])]
         else:
             missing.append(want)
+            wrong = [item[1]['direction'] for item in remaining if item[0] in names and item[1] is not None]
+            if direction and wrong:
+                wrong_direction.append(f'{want} planned as {wrong[0]}')
+    # Edits nobody asked for (rule 3: only what was asked): an unmatched edit whose words are not in
+    # the request, or that repeats another edit's words. Parts a workflow or a pipeline adds on
+    # purpose (a passport photo's backdrop) are not extra; a clause that rightly needs two edits is
+    # not either.
+    said = re.sub(r'\W+', ' ', prompt.lower())
+    quotes = [edit['quote'].lower() for edit in edits]
+    extra = [name for name, edit in remaining if edit is not None and not edit.get('workflow')
+             and not edit.get('part_of') and name != 'keep'
+             and (re.sub(r'\W+', ' ', edit['quote'].lower()).strip() not in said
+                  or quotes.count(edit['quote'].lower()) > 1)] if not asks else []
     # Measuring that nothing needs doing (“the horizon is already level”) is a correct answer.
     settled = any('already' in note for note in plan['notes'])
     problems = list(plan['unresolved']) + ([] if plan['steps'] or settled else ['no engine steps'])
@@ -302,7 +436,10 @@ def run_case(category, photo, prompt, expected, photos):
         'category': category, 'photo': photo, 'prompt': prompt, 'expected': expected, 'actions': actions,
         'missing': missing, 'problems': problems, 'questions': plan['questions'], 'notes': plan['notes'],
         'steps': [step['command'] for step in plan['steps']], 'edits': plan['edits'],
-        'passed': not missing and not problems, 'seconds': round(time.time() - started, 1),
+        'wrong_direction': wrong_direction, 'extra': extra,
+        'other': sum(1 for edit in edits if edit['action'] == 'other'),
+        'passed': not missing and not problems, 'strict': not missing and not problems and not extra,
+        'seconds': round(time.time() - started, 1),
     }
 
 
@@ -310,15 +447,46 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--only', default='', help='run cases whose category or request contains this')
     parser.add_argument('--fresh', action='store_true', help='ignore cached brain answers')
-    parser.add_argument('--out', default=str(WORK / 'planner-bench' / 'results.json'))
+    parser.add_argument('--out', default='')
+    parser.add_argument('--set', default='main', choices=[*SETS, 'all'],
+                        help='main: the tuned cases; holdout: never tuned on; direction: up or down')
+    parser.add_argument('--planner', default='',
+                        help='preset[:model] for the planner and checker, e.g. anthropic:claude-opus-5-5, '
+                             'ollama:qwen3-vl:8b, openai:<model> (default: the bundled model)')
+    parser.add_argument('--menu', default='', choices=['', 'full', 'categories'],
+                        help='the planner menu: every pipeline at once, or categories first')
+    parser.add_argument('--photos', default='', help='a folder with the bench photos as <name>.png/.jpg '
+                                                     '(see --export-photos), instead of this PC’s workspaces')
+    parser.add_argument('--export-photos', default='', help='write the bench photos to this folder and stop')
     args = parser.parse_args()
-    out = Path(args.out)
+    if args.export_photos:
+        folder = Path(args.export_photos)
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, workspace in PHOTOS.items():
+            original_photo(workspace)[2].save(folder / f'{name}.png')
+        print(f'Wrote {len(PHOTOS)} photos to {folder}')
+        return
+    if args.menu:
+        os.environ['IMAGE_STUDIO_PLANNER_MENU'] = args.menu
+    label = (args.planner.split(':')[0] if args.planner else 'local') + (f'-{args.menu}' if args.menu else '')
+    out = Path(args.out or WORK / 'planner-bench' / f'results-{args.set}-{label}.json')
     cache = out.parent / 'cache'
     cache.mkdir(parents=True, exist_ok=True)
     if not args.fresh:
         brain.chat = cached_chat(cache)
-    cases = [case for case in CASES if args.only.lower() in (case[0] + ' ' + case[2]).lower()]
-    photos = {name: original_photo(workspace) for name, workspace in PHOTOS.items()
+        cached_adapters(cache)
+    if args.planner:
+        print('Models:', json.dumps(connect_planner(args.planner), ensure_ascii=False))
+    pool = [case for name, cases in SETS.items() if args.set in (name, 'all') for case in cases]
+    cases = [case for case in pool if args.only.lower() in (case[0] + ' ' + case[2]).lower()]
+    sources = dict(PHOTOS)
+    if args.photos:
+        folder = Path(args.photos)
+        sources = {name: next(iter(sorted(folder.glob(f'{name}.*'))), None) for name in PHOTOS}
+        lost = [name for name, path in sources.items() if path is None and any(c[1] == name for c in cases)]
+        if lost:
+            raise SystemExit(f'Missing photos in {folder}: {", ".join(lost)}')
+    photos = {name: original_photo(workspace) for name, workspace in sources.items()
               if any(case[1] == name for case in cases)}
     results = []
     for number, case in enumerate(cases, 1):
@@ -327,10 +495,17 @@ def main():
         mark = 'PASS' if result['passed'] else 'FAIL'
         detail = result.get('error') or (f'{result["actions"]} missing={result["missing"]} '
                                          f'problems={result["problems"][:2]}')
+        if result.get('extra'):
+            detail += f' extra={result["extra"]}'
+        if result.get('wrong_direction'):
+            detail += f' direction={result["wrong_direction"]}'
         print(f'{number:3}/{len(cases)} {mark} [{case[0]}] {case[2]} -> {detail}', flush=True)
         out.write_text(json.dumps(results, indent=1, ensure_ascii=False), encoding='utf-8')
     passed = sum(result['passed'] for result in results)
-    print(f'\n{passed}/{len(results)} passed')
+    strict = sum(result.get('strict', False) for result in results)
+    print(f'\n{passed}/{len(results)} passed; {strict}/{len(results)} with no unrequested edit')
+    print(f'  wrong direction: {sum(bool(r.get("wrong_direction")) for r in results)}; '
+          f'"other" (no pipeline, tools at default settings): {sum(r.get("other", 0) for r in results)}')
     by_category = {}
     for result in results:
         by_category.setdefault(result['category'], []).append(result['passed'])

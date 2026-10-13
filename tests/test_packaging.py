@@ -92,9 +92,42 @@ class EngineEnvironmentTests(unittest.TestCase):
             self.assertEqual(engine_env.engine_python(), 'custom-python')
 
     def test_requirement_files_ship_with_the_app(self):
-        for file in engine_env.REQUIREMENTS:
+        for file in engine_env.REQUIREMENTS + engine_env.CLOUD_REQUIREMENTS:
             self.assertTrue(file.is_file(), file)
         self.assertIn('--index-url', engine_env.REQUIREMENTS[0].read_text(encoding='utf-8'))
+
+    def test_cloud_mode_has_no_pytorch_and_keeps_the_full_engines_versions(self):
+        def pins(files):
+            lines = [line.split('#')[0].strip() for file in files for line in file.read_text().splitlines()]
+            return dict(line.split('==') for line in lines if '==' in line)
+
+        cloud = pins(engine_env.CLOUD_REQUIREMENTS)
+        self.assertFalse({'torch', 'torchvision', 'diffusers', 'transformers'} & set(cloud))
+        full = pins(engine_env.REQUIREMENTS)
+        for name, version in cloud.items():  # adding the full engine later must not change these
+            self.assertEqual(full.get(name, version), version, name)
+
+    def test_a_cloud_engine_is_ready_for_its_own_libraries(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = fake_env(folder, kind='cloud')
+            self.assertEqual(engine_env.status(env), 'update')  # marked cloud, but pinned like the full engine
+            (env / engine_env.MARKER).write_text(json.dumps(dict(engine_env.wanted('cloud'), kind='cloud')))
+            self.assertEqual((engine_env.status(env), engine_env.kind(env)), ('ready', 'cloud'))
+            (env / engine_env.MARKER).write_text(json.dumps(engine_env.wanted()))
+            self.assertEqual((engine_env.status(env), engine_env.kind(env)), ('ready', 'full'))  # older markers
+
+    def test_cloud_setup_installs_only_the_engine_libraries(self):
+        with (
+            tempfile.TemporaryDirectory() as folder,
+            patch.object(setup_engine, 'prepare'),
+            patch.object(setup_engine, 'pip_install', return_value=(0, '')) as install,
+            patch.object(setup_engine, 'check', return_value=dict(torch=None, cuda=False)) as check,
+        ):
+            self.assertEqual(setup_engine.main(['--env', folder, '--cloud']), 0)
+            self.assertEqual([call.args[1] for call in install.call_args_list], engine_env.CLOUD_REQUIREMENTS)
+            self.assertEqual(check.call_args.args[1], 'cloud')
+            record = engine_env.recorded(folder)
+            self.assertEqual((record['kind'], record['requirements']), ('cloud', engine_env.wanted('cloud')['requirements']))
 
 
 class SetupOutputTests(unittest.TestCase):
@@ -132,7 +165,7 @@ class BuildTests(unittest.TestCase):
         for item in build.CONTENT:
             self.assertTrue((ROOT / item).exists(), item)
         copied = {Path(item) for item in build.CONTENT}
-        for file in engine_env.REQUIREMENTS:
+        for file in engine_env.REQUIREMENTS + engine_env.CLOUD_REQUIREMENTS:
             self.assertIn(file.relative_to(ROOT), copied)
         self.assertIn(Path('integrations/krita-plugin'), copied)  # install_krita_plugin.SOURCE
         self.assertIn(Path('training/lora'), copied)  # personal_lora

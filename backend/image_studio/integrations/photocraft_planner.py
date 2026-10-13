@@ -65,11 +65,56 @@ def _example_text():
     return '\n\n'.join(lines)
 
 
-def system_prompt():
+ALWAYS = ('ai',)  # generate and other stay on every menu: the way out when nothing else fits
+
+
+def menu_mode():
+    """'full': every pipeline on one menu. 'categories': the planner first names the kinds of edit
+    the request needs, then chooses from those categories' pipelines only, so the menu it reads
+    stays short however many pipelines the studio has (settings: planner_menu)."""
+    import os
+
+    from image_studio.core.paths import load_settings
+
+    mode = os.environ.get('IMAGE_STUDIO_PLANNER_MENU') or load_settings().get('planner_menu') or 'full'
+    return mode if mode in ('full', 'categories') else 'full'
+
+
+def choose_categories(content):
+    """The categories (pipelines.CATEGORIES keys) a request needs, chosen from their titles and the
+    pipelines each holds."""
+    from image_studio.pipelines import menu
+
+    listed = menu()
+    lines = '\n'.join(f'- {key}: {title} ({", ".join(p.title.lower() for p in pipelines[:14])}'
+                      f'{"…" if len(pipelines) > 14 else ""})' for key, title, pipelines in listed)
+    keys = [key for key, _, _ in listed]
+    schema = {'type': 'object', 'properties': {'categories': {'type': 'array', 'items': {'type': 'string', 'enum': keys}}},
+              'required': ['categories'], 'additionalProperties': False}
+    answer = models.chat(
+        'planner', 'You sort photo-edit requests. Name every kind of edit the request asks for, from this list. '
+        'When unsure between two, name both. A whole professional job (a product listing, a portrait retouch, '
+        f'a real-estate edit) is "workflow".\n{lines}', content, schema=schema, max_tokens=200, temperature=0.0)
+    chosen = {key for key in answer.get('categories') or [] if key in keys}
+    return (chosen | set(ALWAYS)) if chosen else None
+
+
+def understand_schema(categories=None):
+    if not categories:
+        return UNDERSTAND_SCHEMA
+    from image_studio.pipelines import menu
+
+    allowed = [p.id for key, _, pipelines in menu() if key in categories for p in pipelines]
+    edit = {**EDIT_SCHEMA, 'properties': {**EDIT_SCHEMA['properties'], 'action': {'type': 'string', 'enum': allowed}}}
+    return {**UNDERSTAND_SCHEMA, 'properties': {**UNDERSTAND_SCHEMA['properties'],
+                                                'edits': {**UNDERSTAND_SCHEMA['properties']['edits'], 'items': edit}}}
+
+
+def system_prompt(categories=None):
     from image_studio.pipelines import menu
 
     actions = '\n'.join(f'{title}:\n' + '\n'.join(f'- {p.id}: {p.summary}' for p in pipelines)
-                        for _, title, pipelines in menu())
+                        for key, title, pipelines in menu() if not categories or key in categories)
     return (
         'You are the planning mind of a professional photo editor, PhotoCraft. Read the person’s request word by '
         'word and list every change they ask for. You choose from menus; exact code does the craft, so never '
@@ -159,10 +204,16 @@ def understand(prompt, preview, state, area=None):
             'or “this area” mean that selection; do not ask where it is or guess a wider target. '
             'Choose target area. The engine protects everything outside the marks.'}]
     content.append({'type': 'text', 'text': f'{describe(state)}\n\nRequest: {prompt}'})
-    answer = models.chat('planner', system_prompt(), content, schema=UNDERSTAND_SCHEMA, max_tokens=2600, temperature=0.0)
+    categories = choose_categories(content) if menu_mode() == 'categories' else None
+    answer = models.chat('planner', system_prompt(categories), content, schema=understand_schema(categories),
+                         max_tokens=2600, temperature=0.0)
     edits, notes = [], []
     preserve = [p for p in answer.get('preserve') or [] if p.strip()]
     for raw in answer.get('edits') or []:
+        if not isinstance(raw, dict) or not raw.get('action'):
+            # No pipeline chosen even after asking again: its words are reported as not
+            # understood (uncovered_clauses), never sent to “other” or given a guessed pipeline.
+            continue
         edit, found = intents.normalize(raw, prompt)
         rejected = []
         while edit.pop('misfit', False):
@@ -177,6 +228,10 @@ def understand(prompt, preview, state, area=None):
             edit, found = intents.normalize({**again, 'quote': edit['quote']}, prompt)
         if edit is None:
             continue
+        if edit.pop('slot_misfit', False):
+            edit['choice'], note = rechoose_slot(edit, content)
+            if note:
+                notes.append(note)
         notes += found
         if edit['action'] == 'keep':
             preserve.append(edit['quote'])
@@ -201,6 +256,29 @@ def rechoose(edit, rejected, content):
     answer = models.chat('planner', system_prompt(), list(content) + [{'type': 'text', 'text': note}], schema=schema,
                          max_tokens=700, temperature=0.0)
     return answer.get('edit') or None
+
+
+def rechoose_slot(edit, content):
+    """(choice, note) for an edit whose choice names nothing on its pipeline's own menu: the
+    planner picks again from that menu alone, or leaves it empty for the pipeline's default."""
+    from image_studio.pipelines import get
+
+    pipeline = get(edit['action'])
+    menu = list(pipeline.options)
+    schema = {'type': 'object', 'properties': {'choice': {'type': 'string', 'enum': menu + ['']}},
+              'required': ['choice'], 'additionalProperties': False}
+    note = (f'For “{edit["quote"]}” you chose {pipeline.id} ({pipeline.title}) with choice “{edit["choice"]}”, '
+            f'which is not one of its options. Choose its option from this menu: {", ".join(menu)}; or "" when '
+            'none of them is what the words ask for. Answer {"choice": ...}.')
+    try:
+        answer = models.chat('planner', system_prompt(), list(content) + [{'type': 'text', 'text': note}],
+                             schema=schema, max_tokens=120, temperature=0.0)
+    except models.ModelAnswerError:
+        answer = {}
+    chosen = answer.get('choice') if answer.get('choice') in menu else ''
+    if chosen:
+        return chosen, ''
+    return '', f'“{edit["choice"]}” is not a {pipeline.title.lower()} option; its default was used.'
 
 
 def queries_for(edit):
@@ -357,7 +435,14 @@ def review(requirements, preserve, before, after):
             f'Items:\n{numbered}\nReturn exactly {len(items)} verdicts in order.'}],
         schema=REVIEW_SCHEMA, max_tokens=1000, temperature=0.0,
     )
-    verdicts = (answer.get('verdicts') or [])[: len(items)]
+    verdicts = [verdict if isinstance(verdict, dict) else {} for verdict in answer.get('verdicts') or []][:len(items)]
+    # A verdict the model left out or wrote off the menu is “unclear”, never “done”; items it
+    # skipped are listed as unchecked rather than silently dropped.
+    verdicts += [{'verdict': 'unclear', 'note': 'The reviewer gave no verdict for this item.'}] * (
+        len(items) - len(verdicts))
+    menu = REVIEW_SCHEMA['properties']['verdicts']['items']['properties']['verdict']['enum']
     return [{'requirement': index if index < len(requirements) else None,
-             'item': items[index], 'preserve': index >= len(requirements), **verdict}
+             'item': items[index], 'preserve': index >= len(requirements), **verdict,
+             'verdict': verdict.get('verdict') if verdict.get('verdict') in menu else 'unclear',
+             'note': str(verdict.get('note') or '')}
             for index, verdict in enumerate(verdicts)]

@@ -6,6 +6,10 @@ and the model libraries (several GB) go into their own environment in the user's
 folder, set up once from Studio settings (cli/setup_engine.py). The environment shares the
 app's packages (fastapi, the studio itself), so an app update reaches the engine at once,
 and an update that pins different libraries asks for a quick refresh.
+
+A PC without an NVIDIA graphics card gets the engine in cloud mode instead: no PyTorch, only
+what the engine's server loads (about 100 MB), so Create and Edit work through the providers
+connected in Studio settings. Installing the full engine later adds to the same environment.
 """
 
 import hashlib
@@ -20,6 +24,8 @@ REQUIREMENTS = [
     paths.ROOT / 'backend' / 'requirements-torch.txt',
     paths.ROOT / 'backend' / 'requirements-models.txt',
 ]
+CLOUD_REQUIREMENTS = [paths.ROOT / 'backend' / 'requirements-cloud.txt']
+KINDS = dict(full=REQUIREMENTS, cloud=CLOUD_REQUIREMENTS)  # 'cloud': no PyTorch, providers only
 MARKER = 'image-studio-engine.json'
 
 
@@ -54,10 +60,10 @@ def python_version():
     return f'{sys.version_info.major}.{sys.version_info.minor}'
 
 
-def wanted():
+def wanted(kind='full'):
     """What a ready environment matches: this Python's version and the pinned libraries."""
     digest = hashlib.sha256()
-    for file in REQUIREMENTS:
+    for file in KINDS[kind]:
         digest.update(file.read_bytes().replace(b'\r\n', b'\n'))
     return dict(python=python_version(), requirements=digest.hexdigest()[:16])
 
@@ -69,6 +75,11 @@ def recorded(env=None):
         return values if isinstance(values, dict) else {}
     except (OSError, ValueError):
         return {}
+
+
+def kind(env=None):
+    """'full' (PyTorch and the model libraries) or 'cloud' (providers only), as last set up."""
+    return 'cloud' if recorded(env).get('kind') == 'cloud' else 'full'
 
 
 def base_home(env=None):
@@ -101,7 +112,7 @@ def status(env=None):
     record = recorded(env)
     if not env_python(env).is_file() or not record:
         return 'missing'
-    if {key: record.get(key) for key in ('python', 'requirements')} != wanted() or not same_base(env):
+    if {key: record.get(key) for key in ('python', 'requirements')} != wanted(kind(env)) or not same_base(env):
         return 'update'
     return 'ready'
 

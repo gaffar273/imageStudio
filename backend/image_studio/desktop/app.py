@@ -11,6 +11,7 @@ from PySide6.QtGui import QColor, QFont, QGuiApplication, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
+    QFrame,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -21,30 +22,36 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from image_studio.core import hardware
+from image_studio.core import engine_env, hardware, paths
 from image_studio.desktop import theme
+from image_studio.desktop.controls import Toast
 from image_studio.desktop.create import CreatePage
 from image_studio.desktop.edit import EditPage
 from image_studio.desktop.engine import Client, Engine, in_background
 from image_studio.desktop.krita import KritaPage
 from image_studio.desktop.library import LibraryPage
 from image_studio.desktop.photocraft import PhotoCraftPage
+from image_studio.desktop.providers_page import ProvidersPage
 from image_studio.desktop.settings_page import SettingsPage
 from image_studio.desktop.system_page import SystemPage
 from image_studio.desktop.theme import label
 
-# (id, label, icon)
+# (id, label, icon), in the sidebar's three groups
 SCREENS = [
-    ('create', 'Create image', 'sparkles'),
-    ('edit', 'Edit image', 'square-pen'),
-    ('photocraft', 'PhotoCraft studio', 'layers'),
-    ('library', 'My library', 'folder-heart'),
-    ('krita', 'Krita canvas', 'image-plus'),
+    ('create', 'Create', 'sparkles'),
+    ('edit', 'Edit', 'square-pen'),
+    ('library', 'Library', 'images'),
+]
+APPS = [
+    ('photocraft', 'PhotoCraft', 'layers'),
+    ('krita', 'Krita', 'brush'),
 ]
 FOOTER = [
-    ('system', 'This PC', 'cpu'),
-    ('settings', 'Studio settings', 'sliders-horizontal'),
+    ('settings', 'Settings', 'settings-2'),
 ]
+# Routes that open a tab of Settings: (screen, tab)
+TABS = {'system': ('settings', 'system'), 'providers': ('settings', 'providers'),
+        'models': ('settings', 'models')}
 USAGE_SECONDS = 3
 
 
@@ -52,7 +59,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle('Image Studio')
-        self.setWindowIcon(theme.icon('aperture', theme.LIME))
+        self.setWindowIcon(theme.icon('aperture', theme.ACCENT))
         self.setMinimumSize(1080, 640)
         self.settings = QSettings()
         self.client = Client(self)
@@ -68,29 +75,35 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.sidebar())
         self.pages = QStackedWidget()
         layout.addWidget(self.pages, 1)
+        self.toast = Toast(central)
 
         self.library = LibraryPage(self.client, self.notify)
         self.system = SystemPage(self.client, self.engine, self.notify)
+        self.providers = ProvidersPage(self.notify, self.providers_changed)
         self.create = CreatePage(
-            self.client, self.library, self.notify, lambda: self.settings, lambda: self.navigate('library')
+            self.client, self.library, self.notify, lambda: self.settings, lambda: self.navigate('library'),
+            lambda: self.navigate('providers'),
         )
         self.edit = EditPage(
             self.client, self.library, self.notify, lambda: self.settings, lambda: self.navigate('library'),
-            self.open_photocraft,
+            self.open_photocraft, lambda: self.navigate('providers'),
         )
         self.photocraft = PhotoCraftPage(self.client, self.library, self.notify, lambda: self.settings)
         self.krita = KritaPage(self.client, self.library, self.notify)
         self.studio_settings = SettingsPage(self.client, self.notify, self.use_profile, self.parts_installed,
-                                            self.engine.start)
+                                            self.engine.start, self.engine.pause)
+        self.studio_settings.add_tab('providers', 'Providers', 'key-round', self.providers, first=True)
+        self.studio_settings.add_tab('system', 'This PC', 'cpu', self.system)
+        self.studio_settings.tab_opened.connect(self.tab_opened)
         self.library.reuse = self.reuse
         self.library.edit = self.edit_picture
         self.screens = {
-            'create': self.create, 'edit': self.edit, 'photocraft': self.photocraft, 'library': self.library,
-            'krita': self.krita, 'system': self.system, 'settings': self.studio_settings,
+            'create': self.create, 'edit': self.edit, 'library': self.library, 'photocraft': self.photocraft,
+            'krita': self.krita, 'settings': self.studio_settings,
         }
         for page in self.screens.values():
             self.pages.addWidget(page)
-        self.status_bar()
+        self.engine_changed(self.engine.state, self.engine.message)
 
         self.usage = QTimer(self)
         self.usage.setInterval(USAGE_SECONDS * 1000)
@@ -110,26 +123,26 @@ class MainWindow(QMainWindow):
     def sidebar(self):
         bar = QWidget()
         bar.setObjectName('Sidebar')
-        bar.setFixedWidth(232)
+        bar.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        bar.setFixedWidth(220)
         column = QVBoxLayout(bar)
-        column.setContentsMargins(14, 18, 14, 14)
-        column.setSpacing(4)
+        column.setContentsMargins(12, 14, 12, 12)
+        column.setSpacing(2)
         brand = QHBoxLayout()
+        brand.setContentsMargins(8, 0, 0, 0)
+        brand.setSpacing(8)
         mark = QLabel()
-        mark.setPixmap(theme.icon('aperture', theme.LIME).pixmap(26, 26))
+        mark.setPixmap(theme.icon('aperture', theme.ACCENT).pixmap(22, 22))
         brand.addWidget(mark)
-        name = QLabel('image<span style="color:#898f89">studio</span>')
-        name.setTextFormat(Qt.TextFormat.RichText)
+        name = QLabel('Image Studio')
         font = name.font()
-        font.setPointSizeF(14)
+        font.setPointSizeF(11)
         font.setWeight(QFont.Weight.DemiBold)
         name.setFont(font)
         brand.addWidget(name)
         brand.addStretch()
         column.addLayout(brand)
         column.addSpacing(18)
-        column.addWidget(label('WORKSPACE', 'eyebrow'))
-        column.addSpacing(4)
         self.nav = QButtonGroup(self)
         self.nav_buttons = {}
 
@@ -137,7 +150,7 @@ class MainWindow(QMainWindow):
             button = QPushButton(theme.icon(icon, theme.MUTED), f'  {title}')
             button.setProperty('nav', True)
             button.setCheckable(True)
-            button.setIconSize(QSize(18, 18))
+            button.setIconSize(QSize(17, 17))
             button.clicked.connect(lambda _=False, route=route: self.navigate(route))
             self.nav.addButton(button)
             self.nav_buttons[route] = (button, icon)
@@ -145,45 +158,71 @@ class MainWindow(QMainWindow):
 
         for route, title, icon in SCREENS:
             add(route, title, icon)
+        column.addSpacing(16)
+        apps = label('Apps', 'group')
+        apps.setContentsMargins(10, 0, 0, 4)
+        column.addWidget(apps)
+        for route, title, icon in APPS:
+            add(route, title, icon)
         column.addStretch()
         for route, title, icon in FOOTER:
             add(route, title, icon)
+        column.addSpacing(8)
+        column.addWidget(self.engine_card())
         return bar
 
-    def status_bar(self):
-        bar = self.statusBar()
-        bar.setSizeGripEnabled(False)
-        self.engine_label = QLabel()
-        bar.addWidget(self.engine_label)
-        self.message = QLabel()
-        bar.addWidget(self.message, 1)
-        self.message_timer = QTimer(self)
-        self.message_timer.setSingleShot(True)
-        self.message_timer.timeout.connect(lambda: self.message.setText(''))
-        self.gpu_label = QLabel()
-        bar.addPermanentWidget(self.gpu_label)
-        self.ram_label = QLabel()
-        bar.addPermanentWidget(self.ram_label)
-        self.free = QPushButton(theme.icon('memory-stick', theme.MUTED), 'Free GPU')
+    def engine_card(self):
+        """The engine's state and what it uses, kept in view at the foot of the sidebar."""
+        card = QFrame()
+        card.setObjectName('EngineCard')
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        column = QVBoxLayout(card)
+        column.setContentsMargins(11, 8, 4, 9)
+        column.setSpacing(1)
+        top = QHBoxLayout()
+        top.setSpacing(7)
+        self.engine_dot = QLabel()
+        top.addWidget(self.engine_dot)
+        self.engine_label = label('', 'value')
+        top.addWidget(self.engine_label, 1)
+        self.free = QPushButton(theme.icon('memory-stick', theme.MUTED), '')
         self.free.setProperty('kind', 'flat')
-        self.free.setToolTip('Unload every model so games and other programs get the video memory back.')
-        self.free.clicked.connect(self.system.free_gpu)
-        bar.addPermanentWidget(self.free)
-        self.engine_changed(self.engine.state, self.engine.message)
+        self.free.setIconSize(QSize(15, 15))
+        self.free.setToolTip('Free GPU memory: unload every model so games and other programs get it back.')
+        self.free.clicked.connect(lambda: self.system.free_gpu())
+        top.addWidget(self.free)
+        column.addLayout(top)
+        self.usage_label = label('', 'small')
+        column.addWidget(self.usage_label)
+        card.mousePressEvent = lambda event: self.navigate('system')
+        card.setCursor(Qt.CursorShape.PointingHandCursor)
+        card.setToolTip('This PC: hardware, engine and folders')
+        return card
 
     # Behaviour ---------------------------------------------------------------------------
 
     def navigate(self, route):
+        tab = None
+        if route in TABS:
+            route, tab = TABS[route]
         if route not in self.screens:
             route = 'create'
         for name, (button, icon) in self.nav_buttons.items():
             button.setChecked(name == route)
-            button.setIcon(theme.icon(icon, theme.LIME if name == route else theme.MUTED))
+            button.setIcon(theme.icon(icon, theme.TEXT if name == route else theme.MUTED))
         page = self.screens[route]
         self.pages.setCurrentWidget(page)
         self.settings.setValue('page', route)
-        if page is self.system or (hasattr(page, 'refresh') and self.engine.state == 'ready'):
+        if tab:
+            page.open_tab(tab)
+        elif hasattr(page, 'refresh') and (self.engine.state == 'ready' or page is self.studio_settings):
             page.refresh()
+
+    def tab_opened(self, key):
+        if key == 'system':
+            self.system.refresh()
+        elif key == 'providers':
+            self.providers.refresh()
 
     def reuse(self, item):
         self.navigate('create')
@@ -204,7 +243,7 @@ class MainWindow(QMainWindow):
             self.photocraft.open_image(source['image'], source.get('name') or 'photo.png')
 
     def use_profile(self, profile):
-        """Your usual settings, from Studio settings, loaded into Create."""
+        """Your usual settings, from Settings, loaded into Create."""
         config = self.create.config
         if not config:
             self.notify('The engine is not ready yet.', error=True)
@@ -225,21 +264,32 @@ class MainWindow(QMainWindow):
         self.notify('Your usual settings are loaded.')
 
     def parts_installed(self):
-        """A model or tool was installed from Studio settings: the other screens see it at once."""
+        """A model or tool was installed from Settings: the other screens see it at once."""
         if self.engine.state == 'ready':
             for page in (self.library, self.create, self.edit, self.photocraft, self.krita):
                 page.engine_ready()
 
+    def providers_changed(self):
+        """A provider or the assistant changed: Create, Edit and PhotoCraft see it at once."""
+        if self.engine.state == 'ready':
+            for page in (self.create, self.edit, self.photocraft):
+                page.engine_ready()
+
     def notify(self, text, error=False):
-        self.message.setText(text)
-        self.message.setStyleSheet(f'color: {theme.DANGER if error else theme.TEXT};')
-        self.message_timer.start(9000 if error else 5000)
+        self.toast.show_message(text, error)
 
     def engine_changed(self, state, message):
-        colors = {'ready': theme.LIME, 'starting': theme.WARN, 'setup': theme.WARN}
+        colors = {'ready': theme.SUCCESS, 'starting': theme.WARN, 'setup': theme.WARN}
+        cloud = paths.INSTALLED and engine_env.kind() == 'cloud'  # no PyTorch: cloud providers only
+        names = {'ready': 'Engine ready · cloud mode' if cloud else 'Engine ready', 'starting': 'Engine starting…',
+                 'setup': 'Engine not set up', 'failed': 'Engine stopped', 'stopped': 'Engine stopped'}
         dot = colors.get(state, theme.DANGER)
-        self.engine_label.setText(f'<span style="color:{dot}">●</span>&nbsp; {message}')
+        self.engine_dot.setText(f'<span style="color:{dot}; font-size:9pt">●</span>')
+        self.engine_label.setText(names.get(state, message))
+        self.engine_label.setToolTip(message)
         self.free.setEnabled(state == 'ready')
+        if not hasattr(self, 'screens'):
+            return  # the pages are not built yet
         pages = (self.library, self.create, self.edit, self.photocraft, self.krita, self.studio_settings)
         if state == 'ready':
             for page in pages:
@@ -248,10 +298,10 @@ class MainWindow(QMainWindow):
             for page in pages:
                 page.engine_gone()
             if state == 'failed':
-                self.library.waiting('The engine is not running.', message + ' Use This PC to restart it.')
+                self.library.waiting('The engine is not running.', message + ' Restart it in Settings → This PC.')
             elif state == 'setup':
                 self.library.waiting('The engine is not set up yet.', message)
-                self.navigate('settings')  # its first row installs it
+                self.navigate('models')  # its first row installs it
 
     def measure(self):
         if self.isMinimized():
@@ -264,14 +314,13 @@ class MainWindow(QMainWindow):
         if error or usage is None:
             return
         gpus = usage['gpus']
+        parts = []
         if gpus:
             gpu = max(gpus, key=lambda card: card['vram_gb'])
-            load = f' · {gpu["load"]:.0f}%' if gpu['load'] is not None else ''
-            self.gpu_label.setText(f'GPU {gpu["used_gb"]:.1f} / {gpu["vram_gb"]:.0f} GB{load}')
-            self.gpu_label.setToolTip(f'{gpu["name"]}: video memory in use and current load')
-        else:
-            self.gpu_label.setText('No NVIDIA GPU')
-        self.ram_label.setText(f'RAM {usage["ram_used_gb"]:.0f} / {usage["ram_gb"]:.0f} GB')
+            parts.append(f'GPU {gpu["used_gb"]:.1f}/{gpu["vram_gb"]:.0f} GB')
+            self.usage_label.setToolTip(f'{gpu["name"]}: video memory in use')
+        parts.append(f'RAM {usage["ram_used_gb"]:.0f}/{usage["ram_gb"]:.0f} GB')
+        self.usage_label.setText(' · '.join(parts))
 
     def closeEvent(self, event):
         installer = self.studio_settings.installer
@@ -305,17 +354,17 @@ def palette():
     roles = {
         QPalette.ColorRole.Window: theme.BG,
         QPalette.ColorRole.WindowText: theme.TEXT,
-        QPalette.ColorRole.Base: theme.PANEL,
-        QPalette.ColorRole.AlternateBase: theme.RAISED,
+        QPalette.ColorRole.Base: theme.FIELD,
+        QPalette.ColorRole.AlternateBase: theme.PANEL,
         QPalette.ColorRole.Text: theme.TEXT,
-        QPalette.ColorRole.Button: theme.RAISED,
+        QPalette.ColorRole.Button: theme.FIELD,
         QPalette.ColorRole.ButtonText: theme.TEXT,
-        QPalette.ColorRole.Highlight: '#4d5d36',
+        QPalette.ColorRole.Highlight: theme.SELECTION,
         QPalette.ColorRole.HighlightedText: theme.TEXT,
-        QPalette.ColorRole.ToolTipBase: theme.RAISED,
-        QPalette.ColorRole.ToolTipText: theme.TEXT,
-        QPalette.ColorRole.PlaceholderText: theme.MUTED,
-        QPalette.ColorRole.Link: theme.LIME,
+        QPalette.ColorRole.ToolTipBase: '#1f1f26',
+        QPalette.ColorRole.ToolTipText: '#ffffff',
+        QPalette.ColorRole.PlaceholderText: theme.FAINT,
+        QPalette.ColorRole.Link: theme.ACCENT,
     }
     for role, color in roles.items():
         colors.setColor(role, QColor(color))
@@ -334,7 +383,7 @@ def build():
     QGuiApplication.setDesktopFileName('image-studio')  # Linux: the menu entry packaging/linux/install.sh adds
     app = QApplication(sys.argv)
     app.setStyle('Fusion')
-    QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Dark)
+    QGuiApplication.styleHints().setColorScheme(Qt.ColorScheme.Light)
     app.setPalette(palette())
     if theme.font_family():
         font = app.font()

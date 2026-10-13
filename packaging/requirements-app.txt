@@ -1,6 +1,7 @@
 # What the installed app's own Python carries: the window (Qt) and the engine's web server.
 # Pinned to the versions the studio is tested with. The engine's GPU libraries are not here;
-# the app installs them on first run (backend/requirements-torch.txt, requirements-models.txt).
+# the app installs them on first run (backend/requirements-torch.txt, requirements-models.txt;
+# requirements-cloud.txt on a PC without an NVIDIA card).
 PySide6-Essentials==6.12.0
 shiboken6==6.12.0
 fastapi==0.142.2

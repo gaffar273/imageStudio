@@ -2,24 +2,24 @@
 
 import time
 
-from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtCore import QSize, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QDialog,
-    QFrame,
     QHBoxLayout,
     QLineEdit,
     QMessageBox,
     QProgressBar,
     QPushButton,
-    QScrollArea,
+    QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
 from image_studio.core import engine_env, hardware, paths
 from image_studio.desktop import installs, theme
-from image_studio.desktop.controls import Box, Toggle
+from image_studio.desktop.controls import Box, PageHeader, Toggle, rule, scroll_page
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.system_page import card
 from image_studio.desktop.theme import label
@@ -98,7 +98,8 @@ class PartRow(Box):
         top.addWidget(self.cancel)
         self.install = QPushButton(theme.icon('download'), 'Install')
         top.addWidget(self.install)
-        top.addWidget(link_button(part.page, 'Model page and licence'))
+        if part.page:
+            top.addWidget(link_button(part.page, 'Model page and licence'))
         column.addLayout(top)
         details = f'{part.what} {part.size[0].upper()}{part.size[1:]}.'
         if part.note:
@@ -150,9 +151,9 @@ class TokenDialog(QDialog):
         steps = label(
             f'Its maker lets you download it once you accept the licence. This is free:<br><br>'
             f'1. Sign in at Hugging Face and accept the licence on '
-            f'<a style="color:{theme.LIME}" href="{part.page}">the model page</a>.<br>'
+            f'<a style="color:{theme.ACCENT}" href="{part.page}">the model page</a>.<br>'
             f'2. Create a token of the <b>Read</b> type on '
-            f'<a style="color:{theme.LIME}" href="{TOKENS}">your tokens page</a>.<br>'
+            f'<a style="color:{theme.ACCENT}" href="{TOKENS}">your tokens page</a>.<br>'
             f'3. Paste it here. It is used for this download only and is not saved.',
             wrap=True,
         )
@@ -168,7 +169,7 @@ class TokenDialog(QDialog):
         cancel = QPushButton('Cancel')
         cancel.clicked.connect(self.reject)
         buttons.addWidget(cancel)
-        self.ok = QPushButton(theme.icon('download', theme.INK), 'Install')
+        self.ok = QPushButton(theme.icon('download', theme.ON_ACCENT), 'Install')
         self.ok.setProperty('kind', 'primary')
         self.ok.setEnabled(False)
         self.ok.clicked.connect(self.accept)
@@ -178,15 +179,20 @@ class TokenDialog(QDialog):
 
 
 class SettingsPage(QWidget):
-    def __init__(self, client, notify, use_profile, installed, start_engine=None):
+    tab_opened = Signal(str)
+
+    def __init__(self, client, notify, use_profile, installed, start_engine=None, stop_engine=None):
         super().__init__()
         self.client, self.notify = client, notify
         self.use_profile = use_profile  # loads your usual settings into Create
         self.installed = installed  # tells the other screens a model arrived
         self.start_engine = start_engine  # after the engine itself is installed
+        self.stop_engine = stop_engine  # before PyTorch goes into the environment the engine runs from
         self.ready = False
-        self.engine_status = engine_env.status() if paths.INSTALLED else 'ready'
-        self.nvidia = None  # NVIDIA cards found, once looked up (the engine needs one)
+        self.engine_status, self.engine_kind = 'ready', 'full'
+        self.read_engine()
+        self.nvidia = None  # NVIDIA cards found, once looked up (without one, the engine runs in cloud mode)
+        self.engine_installing = 'full'  # which engine the running install sets up
         self.config, self.learned, self.models_dir = None, None, ''
         self.progress = {}  # part key -> (text, percent) while installing
         self.messages = {}  # part key -> how its last install ended
@@ -200,33 +206,85 @@ class SettingsPage(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        outer.addWidget(scroll)
-        content = QWidget()
-        scroll.setWidget(content)
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(32, 26, 32, 32)
-        layout.setSpacing(14)
-        layout.addWidget(label('YOUR OWN CREATIVE ENGINE', 'eyebrow'))
-        layout.addWidget(label('Everything, close to home.', 'title'))
-        layout.addWidget(label('Your models and pictures live on this computer. Nothing is sent anywhere.', 'muted'))
+        outer.setSpacing(0)
+        outer.addWidget(PageHeader('Settings'))
+        body = QHBoxLayout()
+        body.setSpacing(0)
+        outer.addLayout(body, 1)
+        tabs = QWidget()
+        tabs.setObjectName('Panel')
+        tabs.setProperty('side', 'left')
+        tabs.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
+        tabs.setFixedWidth(200)
+        self.tab_column = QVBoxLayout(tabs)
+        self.tab_column.setContentsMargins(10, 14, 10, 14)
+        self.tab_column.setSpacing(2)
+        self.tab_column.addStretch()
+        body.addWidget(tabs)
+        self.stack = QStackedWidget()
+        body.addWidget(self.stack, 1)
+        self.tab_group = QButtonGroup(self)
+        self.tabs = {}  # key -> (button, icon, page)
+
+        page, layout = scroll_page('Models and tools', 'Models that run on this PC. Each downloads once from its '
+                                                         'maker into your models folder, and resumes if the '
+                                                         'connection drops.')
         self.waiting_note = label('Waiting for the engine…', 'muted')
         layout.addWidget(self.waiting_note)
         layout.addWidget(self.engine_card())
-        layout.addWidget(self.learning_card())
         layout.addWidget(self.models_card())
         layout.addWidget(self.apps_card())
         layout.addStretch()
+        self.add_tab('models', 'Models', 'hard-drive', page)
+        page, layout = scroll_page('Personalization', 'What the studio has learned from your favorites and '
+                                                       'your corrections. It stays on this PC.')
+        layout.addWidget(self.learning_card())
+        layout.addStretch()
+        self.add_tab('learning', 'Personalization', 'heart', page)
         self.show_learned()
         self.show_parts()
+
+    # Tabs ------------------------------------------------------------------------------
+
+    def add_tab(self, key, title, icon, page, first=False):
+        button = QPushButton(theme.icon(icon, theme.MUTED), f'  {title}')
+        button.setProperty('kind', 'tab')
+        button.setCheckable(True)
+        button.setIconSize(QSize(16, 16))
+        button.clicked.connect(lambda _=False, key=key: self.open_tab(key))
+        self.tab_group.addButton(button)
+        self.tab_column.insertWidget(0 if first else self.tab_column.count() - 1, button)
+        self.stack.addWidget(page)
+        self.tabs[key] = (button, icon, page)
+        if len(self.tabs) == 1 or first:
+            self.open_tab(key)
+
+    def open_tab(self, key):
+        if key not in self.tabs:
+            return
+        for name, (button, icon, _) in self.tabs.items():
+            button.setChecked(name == key)
+            button.setIcon(theme.icon(icon, theme.TEXT if name == key else theme.MUTED))
+        self.stack.setCurrentWidget(self.tabs[key][2])
+        self.tab_opened.emit(key)
+
+    @property
+    def tab_order(self):
+        """The tabs as they are listed, top to bottom."""
+        buttons = {button: key for key, (button, _, _) in self.tabs.items()}
+        items = (self.tab_column.itemAt(index).widget() for index in range(self.tab_column.count()))
+        return [buttons[widget] for widget in items if widget in buttons]
+
+    @property
+    def current_tab(self):
+        return next((key for key, (_, _, page) in self.tabs.items() if page is self.stack.currentWidget()), None)
 
     # Layout ----------------------------------------------------------------------------
 
     def learning_card(self):
         frame, box = card()
         self.learning = frame
-        box.addWidget(label('What the studio has learned from you', 'heading'))
+        box.addWidget(label('Learned from you', 'heading'))
         self.learning_off = label('', 'muted', wrap=True)
         box.addWidget(self.learning_off)
 
@@ -318,17 +376,25 @@ class SettingsPage(QWidget):
         return frame
 
     def engine_card(self):
-        """An installed copy's first install: the engine every model runs on."""
+        """An installed copy's first install: the engine every model runs on, or its cloud mode."""
         self.engine_frame, box = card()
         box.addWidget(label('Engine', 'heading'))
         self.engine_intro = label(
             'One-time setup: the app itself is small, and the engine downloads once from PyTorch and the '
-            'Python package index. After that, install the models you want below.', 'small', wrap=True)
+            'Python package index. After that, install the models you want below. No NVIDIA graphics card? '
+            'Cloud mode is a small download that creates and edits with the providers you connect.',
+            'small', wrap=True)
         box.addWidget(self.engine_intro)
         self.engine_row = PartRow(installs.ENGINE)
-        self.engine_row.install.clicked.connect(self.install_engine)
+        self.engine_row.install.clicked.connect(lambda: self.install_engine('full'))
         self.engine_row.cancel.clicked.connect(self.installer.cancel)
         box.addWidget(self.engine_row)
+        self.cloud_rule = rule()
+        box.addWidget(self.cloud_rule)
+        self.cloud_row = PartRow(installs.ENGINE_CLOUD)
+        self.cloud_row.install.clicked.connect(lambda: self.install_engine('cloud'))
+        self.cloud_row.cancel.clicked.connect(self.installer.cancel)
+        box.addWidget(self.cloud_row)
         if paths.INSTALLED:
             in_background(hardware.nvidia, self.found_cards)
         return self.engine_frame
@@ -340,21 +406,16 @@ class SettingsPage(QWidget):
     def models_card(self):
         frame, box = card()
         top = QHBoxLayout()
-        top.addWidget(label('Models and tools', 'heading'))
+        top.addWidget(label('On this PC', 'heading'))
         top.addStretch()
         self.space = label('', 'small')
         top.addWidget(self.space)
         box.addLayout(top)
-        box.addWidget(label(
-            'The studio never ships models. Each one downloads from its maker, straight into your models folder '
-            '(This PC shows where). Downloads resume if the connection drops.', 'small', wrap=True))
+        box.addWidget(label('No GPU for these? Connect a cloud provider in Providers instead.', 'small', wrap=True))
         self.rows = {}
         for index, part in enumerate(installs.PARTS):
             if index:
-                line = QFrame()
-                line.setFixedHeight(1)
-                line.setStyleSheet(f'background: {theme.LINE};')
-                box.addWidget(line)
+                box.addWidget(rule())
             row = PartRow(part)
             row.install.clicked.connect(lambda _=False, key=part.key: self.install(key))
             row.cancel.clicked.connect(self.installer.cancel)
@@ -364,7 +425,7 @@ class SettingsPage(QWidget):
 
     def apps_card(self):
         frame, box = card()
-        box.addWidget(label('Apps and extras', 'heading'))
+        box.addWidget(label('Apps', 'heading'))
         self.apps = {}
         for key, title, what, url in (
             ('photocraft', 'PhotoCraft', 'The photo editor behind PhotoCraft studio and its layered edits.', ''),
@@ -398,10 +459,14 @@ class SettingsPage(QWidget):
         self.engine_status = 'ready'
         self.refresh()
 
+    def read_engine(self):
+        """What the installed engine is: its status, and 'full' or 'cloud' (a source checkout: full, ready)."""
+        if paths.INSTALLED:
+            self.engine_status, self.engine_kind = engine_env.status(), engine_env.kind()
+
     def engine_gone(self):
         self.ready = False
-        if paths.INSTALLED:
-            self.engine_status = engine_env.status()
+        self.read_engine()
         self.poll.stop()
         self.show_learned()
         self.show_parts()
@@ -547,6 +612,8 @@ class SettingsPage(QWidget):
             blocked = ''
             if self.engine_status != 'ready':
                 blocked = 'Set up the engine first.'
+            elif config is not None and not config.get('local_models', True):
+                blocked = 'Needs the full engine and an NVIDIA graphics card; this engine runs in cloud mode.'
             elif config is None or not self.models_dir:
                 blocked = 'Installing needs the engine running.'
             elif self.installer.running and not running:
@@ -569,24 +636,35 @@ class SettingsPage(QWidget):
             restyle(badge, tone='' if found else 'off')
 
     def show_engine(self):
-        """The Engine row (installed copies only): set up, needing an update, or installing."""
+        """The Engine rows (installed copies only): the full engine and cloud mode, each set up,
+        needing an update, or installing. Once the full engine is set up, cloud mode is part of it."""
         self.engine_frame.setVisible(paths.INSTALLED)
-        status = self.engine_status
-        running = self.installer.key == 'engine'
-        blocked = ''
-        if self.installer.running and not running:
-            blocked = BUSY
-        elif self.nvidia == []:
-            blocked = ('The engine needs an NVIDIA graphics card, and none was found. This PC shows what '
-                       'this computer has.')
-        text, percent = (self.progress.get('engine', ('', None)) if running else
-                         (self.messages.get('engine', ''), None))
-        if not text and not running and status == 'update':
-            text = 'An update changed what the engine needs. Install to finish it; only what changed downloads.'
-        if blocked not in ('', BUSY) and not running and not text and status != 'ready':
-            text = blocked
+        status, kind = self.engine_status, self.engine_kind
+        full_ready = status == 'ready' and kind == 'full'
+        self.cloud_rule.setVisible(not full_ready)
+        self.cloud_row.setVisible(not full_ready)
         self.engine_intro.setVisible(status != 'ready')
-        self.engine_row.show_state(status == 'ready', running, text, percent, blocked)
+        for row, this in ((self.engine_row, 'full'), (self.cloud_row, 'cloud')):
+            running = self.installer.key == 'engine' and self.engine_installing == this
+            mine = status != 'missing' and kind == this  # the engine set up here is this one
+            blocked = ''
+            if self.installer.running and not running:
+                blocked = BUSY
+            elif this == 'full' and self.nvidia == []:
+                blocked = ('The full engine needs an NVIDIA graphics card, and none was found (This PC shows what '
+                           'this computer has). Cloud mode works without one.')
+            elif this == 'cloud' and kind == 'full' and status != 'missing':
+                blocked = 'The full engine is set up here; finish it above instead.'
+            text, percent = (self.progress.get('engine', ('', None)) if running else
+                             (self.messages.get('engine', '') if self.engine_installing == this else '', None))
+            if not text and not running and mine and status == 'update':
+                text = 'An update changed what the engine needs. Install to finish it; only what changed downloads.'
+            if not text and not running and this == 'full' and kind == 'cloud' and status == 'ready' and self.nvidia:
+                text = ('This PC has an NVIDIA graphics card: install the full engine to run models on it. '
+                        'Cloud mode keeps working alongside.')
+            if blocked not in ('', BUSY) and not running and not text and not (mine and status == 'ready'):
+                text = blocked
+            row.show_state(mine and status == 'ready', running, text, percent, blocked)
 
     def room_for(self, part, folder, drive):
         """Whether to go ahead: true, or the person says so when the drive is nearly full."""
@@ -609,12 +687,17 @@ class SettingsPage(QWidget):
         self.installer.start(part, self.config, self.models_dir, token)
         self.show_parts()
 
-    def install_engine(self):
-        if self.installer.running or not self.room_for(installs.ENGINE, paths.ENGINE_ENV, 'drive it goes on'):
+    def install_engine(self, kind='full'):
+        part = installs.ENGINE_CLOUD if kind == 'cloud' else installs.ENGINE
+        if self.installer.running or not self.room_for(part, paths.ENGINE_ENV, 'drive it goes on'):
             return
+        if self.engine_status == 'ready' and self.stop_engine is not None:
+            # Libraries go into the environment the engine runs from: it starts again once the install ends.
+            self.stop_engine('Stopped while the engine is installed.')
+        self.engine_installing = kind
         self.messages.pop('engine', None)
         self.progress['engine'] = ('Starting…', None)
-        self.installer.start(installs.ENGINE, {}, paths.WORK)
+        self.installer.start(part, {}, paths.WORK)
         self.show_parts()
 
     def install_progress(self, key, text, percent):
@@ -623,10 +706,12 @@ class SettingsPage(QWidget):
 
     def install_finished(self, key, ok, message):
         self.progress.pop(key, None)
-        part = installs.BY_KEY[key]
+        part = installs.ENGINE_CLOUD if key == 'engine' and self.engine_installing == 'cloud' else installs.BY_KEY[key]
+        if key == 'engine':
+            self.read_engine()
         if ok and key == 'engine':
-            self.engine_status = engine_env.status()
-            self.notify('The engine is installed. Starting it…')
+            self.notify('The engine is installed (cloud mode). Starting it…' if self.engine_kind == 'cloud' else
+                        'The engine is installed. Starting it…')
             if self.start_engine is not None:
                 self.start_engine()
         elif ok:
@@ -643,6 +728,8 @@ class SettingsPage(QWidget):
         else:
             self.messages[key] = message
             self.notify(f'{part.title}: {message}', error=True)
+            if key == 'engine' and self.engine_status == 'ready' and self.start_engine is not None:
+                self.start_engine()  # an upgrade that did not finish: the engine as it was still runs
         self.show_parts()
 
     def release_gpu(self, then):

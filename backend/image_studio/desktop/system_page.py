@@ -12,13 +12,13 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QMessageBox,
     QPushButton,
-    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
 
 from image_studio.core import hardware, paths
 from image_studio.desktop import theme
+from image_studio.desktop.controls import scroll_page
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.theme import label
 
@@ -58,21 +58,13 @@ class SystemPage(QWidget):
         self.client, self.engine, self.notify = client, engine, notify
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
+        scroll, layout = scroll_page('This PC', 'What this computer can run locally, the engine, and where '
+                                                'files are kept.')
         outer.addWidget(scroll)
-        content = QWidget()
-        scroll.setWidget(content)
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(32, 26, 32, 32)
-        layout.setSpacing(14)
-        layout.addWidget(label('THIS PC', 'eyebrow'))
-        layout.addWidget(label('What your computer can run', 'title'))
-        layout.addWidget(label('Detected on this computer. Nothing is sent anywhere.', 'muted'))
 
         frame, box = card()
         top = QHBoxLayout()
-        top.addWidget(label('Local generation', 'heading'))
+        top.addWidget(label('Local models', 'heading'))
         self.badge = label('Checking…', 'badge')
         top.addWidget(self.badge)
         top.addStretch()
@@ -156,7 +148,8 @@ class SystemPage(QWidget):
         self.badge.setProperty('tone', tone)
         self.badge.style().unpolish(self.badge)
         self.badge.style().polish(self.badge)
-        extra = '' if summary['tier'] != 'cloud' else ' A cloud mode for PCs like this one is planned.'
+        extra = '' if summary['tier'] != 'cloud' else (
+            ' Connect a cloud provider in Settings → Providers to create and edit pictures without one.')
         self.verdict.setText(summary['verdict'] + extra)
         while self.hardware.count():
             self.hardware.takeAt(0).widget().deleteLater()

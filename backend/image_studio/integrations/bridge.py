@@ -37,6 +37,7 @@ import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, urlparse
 from PIL import Image
+from image_studio.core.engine import explain
 
 PORT = 7861
 MAX_BODY = 300 * 1024 * 1024
@@ -264,7 +265,7 @@ def start(handlers, stop):
                     job.state = 'done'
                 except Exception as exc:  # Reported to the editor instead of crashing the server.
                     traceback.print_exc()
-                    job.state, job.message = 'error', str(exc) or exc.__class__.__name__
+                    job.state, job.message = 'error', explain(exc)
 
             threading.Thread(target=run, daemon=True).start()
             self.reply(200, dict(id=job.id))

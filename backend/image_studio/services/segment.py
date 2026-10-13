@@ -70,6 +70,9 @@ def parse_boxes(answer, width, height):
                 continue
             x0, x1 = sorted((x0, x1))
             y0, y1 = sorted((y0, y1))
+            # The grid is 0-1000; a box past it is clipped to the picture, and one wholly outside
+            # is dropped by the size test below.
+            x0, y0, x1, y1 = (max(0.0, min(1000.0, v)) for v in (x0, y0, x1, y1))
             box = (x0 * width / 1000, y0 * height / 1000, x1 * width / 1000, y1 * height / 1000)
             if box[2] - box[0] >= 2 and box[3] - box[1] >= 2:
                 boxes.append(tuple(round(v) for v in box))
@@ -198,9 +201,9 @@ def select(image, target, status=print):
     small = image.convert('RGB')
     small.thumbnail((LONGEST, LONGEST), Image.LANCZOS)
     status(f'Finding {target}...')
-    from image_studio.services import brain
+    from image_studio.pipelines import models
 
-    if brain.available():
+    if models.available('grounder'):
         boxes = find_boxes_brain(small, query)
     else:
         with assistant.Session(keep=True) as session:

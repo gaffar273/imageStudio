@@ -17,10 +17,12 @@ from image_studio.api.schemas import (
     PersonalLoraRequest,
 )
 from image_studio.core.catalog import MODELS, SIZES, DEFAULT_NEGATIVE, KONTEXT, EDIT_QUALITY, krita_executable
+from image_studio.core.engine import local_models
 from image_studio.core.paths import CACHE, IMAGES, WORK
 from image_studio.services.runtime import render_session
 from image_studio.services import workflows, library, assistant, search, repair, faces, memory, personal
-from image_studio.services import brain, segment
+from image_studio.services import brain, cloud, segment
+from image_studio.core import providers
 from image_studio.services.jobs import store, BusyError
 from image_studio.integrations import bridge, photocraft
 
@@ -64,25 +66,29 @@ def health():
 
 @router.get('/config')
 def config():
+    local = local_models()  # false in cloud mode: no model on this PC can run, downloaded or not
     return dict(
         models=[
-            dict(id=key, label=value['label'], ready=(value['folder'] / 'model_index.json').exists())
+            dict(id=key, label=value['label'], ready=local and (value['folder'] / 'model_index.json').exists())
             for key, value in MODELS.items()
         ],
+        local_models=local,
         sizes=[dict(id=name, width=size[0], height=size[1]) for name, size in SIZES.items()],
         negative_prompt=DEFAULT_NEGATIVE,
-        assistant=assistant.available(),
+        assistant=local and assistant.available(),
         search=search.available(),
-        repair=repair.available(),
-        references=faces.available(),
+        repair=local and repair.available(),
+        references=local and faces.available(),
         lora=workflows.lora_ready(),
         personal_lora=personal.ready(),
-        editing=(KONTEXT['folder'] / 'model_index.json').exists(),
+        editing=local and (KONTEXT['folder'] / 'model_index.json').exists(),
         photocraft=photocraft.available(),
         krita=krita_executable() is not None,
         brain=brain.available(),
-        segment=segment.available(),
+        segment=local and segment.available(),
         face_model=faces.downloaded(),
+        cloud_models=providers.image_models(),
+        cloud_editors=providers.edit_models(),
         active_job=store.active,
     )
 
@@ -152,7 +158,10 @@ def download(name: str):
 def generate(request: GenerateRequest):
     if request.size not in SIZES or not request.prompt.strip():
         raise HTTPException(422, 'Choose a valid size and describe your image.')
-    sketch = workflows.editor_value(decode_image(request.sketch)) if request.sketch else None
+    provider, _ = providers.split(request.model)
+    if provider:
+        return submit(cloud_generate(request, provider))
+    sketch =workflows.editor_value(decode_image(request.sketch)) if request.sketch else None
 
     def run(progress, update):
         # The personal style applies to this request only (RealVisXL images and finishes).
@@ -198,13 +207,40 @@ def generate(request: GenerateRequest):
     return submit(run)
 
 
+def cloud_generate(request, provider):
+    """A Create request answered by a cloud provider: no GPU, just the provider's API."""
+    width, height = SIZES[request.size]
+    label = providers.PROVIDERS[provider]['label']
+
+    def run(progress, update):
+        made = cloud.generate(request.model, request.prompt, width, height, request.count, progress,
+                              workflows.engine.cancelled)
+        count = len(made)
+        update(message=f'{count} picture{"" if count == 1 else "s"} from {label}.' if made else 'Stopped.',
+               images=[library.item(path) for path in made])
+
+    return run
+
+
 @router.post('/edit', status_code=202)
 def edit(request: EditRequest):
+    provider, _ = providers.split(request.engine)
     image = decode_image(request.image).convert('RGBA' if request.engine == 'photocraft' else 'RGB')
     mask = decode_image(request.mask).convert('L') if request.mask else None
     if mask and mask.size != image.size:
         raise HTTPException(422, 'The mask must have the same dimensions as the image.')
     prompt, _ = memory.rewrite(request.prompt)  # words the person has taught
+
+    if provider:
+        if mask is not None:
+            raise HTTPException(422, 'Cloud edits change the whole photo. Clear the painted area first.')
+        label = providers.PROVIDERS[provider]['label']
+
+        def run_cloud(progress, update):
+            result = cloud.edit(request.engine, image, prompt, progress)
+            update(message=f'Edited by {label}.', images=[library.item(result)])
+
+        return submit(run_cloud)
 
     if request.engine == 'photocraft':
         if mask is not None:

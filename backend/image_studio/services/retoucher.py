@@ -11,7 +11,8 @@ own color grades before Krita gets them.
 import json
 import re
 
-from image_studio.services import agent, brain, grading
+from image_studio.pipelines import models
+from image_studio.services import agent, grading
 
 REVIEWS = 2
 PREVIEW = 768
@@ -214,12 +215,13 @@ def plan(request, image, state=None, status=print, known=None, whole=None):
     if known:
         done = (f'\n(The rest of the request, "{whole}", is already handled by these steps: '
                 f'{", ".join(agent.summary(step) for step in known)}. Plan only the request below.)')
-    answer = brain.chat(
-        SYSTEM,
-        [brain.image_part(preview),
+    # Through the model layer, so the Krita assistant runs on whichever model plans PhotoCraft edits.
+    answer = models.chat(
+        'planner', SYSTEM,
+        [models.image_part(preview),
          {'type': 'text', 'text': f'{describe_state(state)}\nMeasurements: {json.dumps(measurements)}{done}\n'
                                   f'Request: {request}'}],
-        schema=PLAN_SCHEMA, max_tokens=3000)
+        schema=PLAN_SCHEMA, max_tokens=3000, temperature=0.2)
     notes = [answer.get('seen', ''), answer.get('approach', '')]
     steps = list(known or [])
     for raw in answer.get('steps') or []:
@@ -377,12 +379,12 @@ def review(request, preview, knobs, masks, status):
         if attempt == REVIEWS:
             break
         status('Checking the result...')
-        verdict = brain.chat(
-            REVIEW_SYSTEM,
-            [{'type': 'text', 'text': 'ORIGINAL:'}, brain.image_part(preview),
-             {'type': 'text', 'text': 'GRADED:'}, brain.image_part(graded),
+        verdict = models.chat(
+            'checker', REVIEW_SYSTEM,
+            [{'type': 'text', 'text': 'ORIGINAL:'}, models.image_part(preview),
+             {'type': 'text', 'text': 'GRADED:'}, models.image_part(graded),
              {'type': 'text', 'text': f'Request: {request}'}],
-            schema=REVIEW_SCHEMA, max_tokens=600)
+            schema=REVIEW_SCHEMA, max_tokens=600, temperature=0.2)
         if not changed(verdict):
             break
         status(f'Adjusting: {short(verdict.get("problems", ""))}')

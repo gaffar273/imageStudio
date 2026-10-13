@@ -1,12 +1,33 @@
 """Validated browser requests; keep resource limits at the API boundary."""
 
 from typing import Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from image_studio.core import providers
+
+LOCAL_MODELS = ('realistic', 'accurate', 'turbo')
+LOCAL_EDITORS = ('kontext', 'photocraft')
+
+
+def model_choice(value, local):
+    """A local model id, or a cloud one written provider:model (core/providers.py)."""
+    if value in local:
+        return value
+    provider, model = providers.split(value)
+    if provider and model and len(value) <= 200:
+        return value
+    raise ValueError(f'Choose one of {", ".join(local)}, or a connected cloud model.')
 
 
 class GenerateRequest(BaseModel):
     prompt: str = Field(min_length=1, max_length=6000)
-    model: Literal['realistic', 'accurate', 'turbo'] = 'realistic'
+    model: str = 'realistic'
+
+    @field_validator('model')
+    @classmethod
+    def known_model(cls, value):
+        return model_choice(value, LOCAL_MODELS)
+
     size: str
     seed: int | None = Field(default=None, ge=0, le=4294967295)
     steps: int = Field(default=30, ge=1, le=50)
@@ -32,7 +53,13 @@ class GenerateRequest(BaseModel):
 
 
 class EditRequest(BaseModel):
-    engine: Literal['kontext', 'photocraft'] = 'kontext'
+    engine: str = 'kontext'
+
+    @field_validator('engine')
+    @classmethod
+    def known_engine(cls, value):
+        return model_choice(value, LOCAL_EDITORS)
+
     image: str = Field(max_length=40_000_000)
     mask: str | None = Field(default=None, max_length=40_000_000)
     prompt: str = Field(min_length=1, max_length=6000)

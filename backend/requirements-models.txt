@@ -10,3 +10,4 @@ sentencepiece==0.2.2
 protobuf==7.36.1
 ultralytics==8.4.174
 peft==0.21.2
+anthropic==1.13.0

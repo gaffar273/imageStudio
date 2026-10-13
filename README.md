@@ -6,19 +6,20 @@ A private image workspace with a React + TypeScript interface and a local Python
 
 Double-click **Start Image Studio app.bat**. It opens Image Studio as a native Qt window (no browser), starts the engine, and stops it again when you close the window, which frees the GPU. If the app ends abruptly, Windows closes the engine with it. Krita and PhotoCraft windows opened from the studio stay open.
 
-- Every screen is native: **Create image**, **Edit image**, **PhotoCraft studio**, **My library**, **Krita canvas**, **This PC** and **Studio settings**. Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
+- Every screen is native, in a light theme: **Create**, **Edit** and **Library**, the apps **PhotoCraft** and **Krita**, and **Settings** (Providers, Models, Personalization and This PC). Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
 - **Edit image** takes a photo you drop on it, paste (Ctrl + V), choose from a file, or pick from your recent creations; **Edit image** in a picture's details opens it there too. PhotoCraft changes light and color across the whole photo and saves a layered PSD; AI content editing (FLUX.1 Kontext) changes what is in the picture, and can be limited to an area you paint (Ctrl + Z takes back a stroke). Before and After compare the result with the photo it came from, and **Keep editing** carries on from the result. Ctrl + Enter applies the edit.
-- **PhotoCraft studio** is native too, with everything described in [PhotoCraft studio](#photocraft-studio) below: the Assistant (describe an edit, optionally only inside an area you mark with a brush or lasso, review the plan, apply it and see the result check), the Adjust, Looks, Crop, Select, Text, Filters and All tools panels, layers and history, Compare (drag the split), zoom, and Export to a file you choose. **Open** opens a photo or layered document from the PC (or drop one on the screen), a picture from your library (a PhotoCraft edit opens with its layers), a recent document, or a new blank canvas. **Open full PhotoCraft workspace** on Edit image brings the photo on screen along. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter plans, Ctrl + O opens. In a narrow window the tool panel and the layers take turns (the layers button switches).
-- This PC shows which graphics card will be used, whether the local models will run on it, the engine's state, and the models and library folders.
+- **PhotoCraft studio** is native too, with everything described in [PhotoCraft studio](#photocraft-studio) below: the Assistant (describe an edit, optionally only inside an area you mark with a brush or lasso, review the plan, apply it and see the result check), the Adjust, Looks, Crop, Select, Text, Filters and All tools panels, layers and history, Compare (drag the split), zoom, and Export to a file you choose. **Open** opens a photo or layered document from the PC (or drop one on the screen), a picture from your library (a PhotoCraft edit opens with its layers), a recent document, or a new blank canvas. **Open in PhotoCraft** on Edit brings the photo on screen along. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter plans, Ctrl + O opens. In a narrow window the tool panel and the layers take turns (the layers button switches).
+- **Settings → Providers** connects cloud services with your own API key: OpenAI, Google Gemini, fal.ai and Replicate create pictures (their models appear in Create's model list, under "Cloud"), OpenAI, Gemini and fal.ai edit photos (in Edit's tool list), and Anthropic, OpenRouter, Ollama, LM Studio or any OpenAI-compatible server can run the editing assistant that plans PhotoCraft edits. **Test connection** checks the key and lists the models it can reach; model names are editable, since providers rename them. Keys are stored in `credentials.json` next to the settings, encrypted for your Windows account (DPAPI; elsewhere readable by you only), never in `settings.json`, and an environment variable such as `OPENAI_API_KEY` takes priority. Cloud pictures are saved to the library like local ones.
+- **Settings → This PC** shows which graphics card will be used, whether the local models will run on it, the engine's state, and the models and library folders.
 - **Krita canvas** opens a picture in Krita (from a file, a drop, Ctrl + V or your library) or a blank canvas, shows Krita's live canvas, layers and activity, and sends typed edits to it (Ctrl + Enter), with Undo, Stop and Save to library. Krita is found as the portable copy in the models folder, a normal installation, or `IMAGE_STUDIO_KRITA`; without it the screen links to krita.org.
-- **Studio settings** shows what the studio has learned from you: your style training (train now, or overnight), the words you taught, how strong you like edits, and your usual settings (**Use these** loads them into Create). Its **Models and tools** list installs each model with one click: it downloads from the maker into your models folder, shows progress, resumes after a dropped connection, and can be stopped and resumed later. FLUX.1 Kontext first asks you to accept its licence on Hugging Face and paste a read token, which is used for that download only. It also shows whether PhotoCraft and Krita were found.
-- The status bar shows live GPU memory and load. **Free GPU** unloads every model, so a game gets the video memory back.
+- **Settings → Personalization** shows what the studio has learned from you: your style training (train now, or overnight), the words you taught, how strong you like edits, and your usual settings (**Use these** loads them into Create). **Settings → Models** installs each model with one click: it downloads from the maker into your models folder, shows progress, resumes after a dropped connection, and can be stopped and resumed later. FLUX.1 Kontext first asks you to accept its licence on Hugging Face and paste a read token, which is used for that download only. It also shows whether PhotoCraft and Krita were found.
+- The engine card at the foot of the sidebar shows the engine's state and live GPU and RAM use; its memory button unloads every model, so a game gets the video memory back. Messages appear briefly near the top of the window.
 
 The app needs Qt for Python: `pip install -e .[desktop]`. Run it with `python -m image_studio.desktop` or the `image-studio-app` command.
 
 ### Installing it (Windows)
 
-Run **ImageStudio-<version>-Setup.exe**. It installs for your user only (no administrator prompt) and adds Image Studio to the Start menu. The installer is small because it carries only the app and its own Python. On first start the app opens **Studio settings**, where the **Engine** row installs PyTorch with CUDA and the model libraries in one click (about 3.5 GB to download). After that, install the models you want from the same page. The engine needs an NVIDIA graphics card.
+Run **ImageStudio-<version>-Setup.exe**. It installs for your user only (no administrator prompt) and adds Image Studio to the Start menu. The installer is small because it carries only the app and its own Python. On first start the app opens **Settings → Models**, where the **Engine** row installs PyTorch with CUDA and the model libraries in one click (about 3.5 GB to download). After that, install the models you want from the same page. The engine needs an NVIDIA graphics card to run models; on a PC without one, **Engine in cloud mode** installs it without PyTorch (about 60 MB), and Create and Edit work through the providers connected in Settings → Providers. The full engine can be added later on the same page.
 
 The installer is not code-signed yet, so Windows SmartScreen asks once before it runs (**More info**, then **Run anyway**). Uninstalling removes the app and the engine's libraries. Your models, pictures and settings stay.
 
@@ -32,7 +33,7 @@ This works with any Python 3.10 or newer. It downloads a standalone Python (chec
 
 On Linux, `python3 packaging/build.py` makes `dist/image-studio-<version>-linux-x86_64.tar.gz`. Unpack it anywhere and run `./install.sh` to add a menu entry, or `./image-studio` to start it. Qt needs `libxcb-cursor0` on X11. The Linux build has not been tested yet.
 
-In an installed copy the engine runs on its own environment in `%LOCALAPPDATA%\Image Studio\engine` (Linux: `~/.local/share/image-studio/engine`, or `IMAGE_STUDIO_ENGINE_ENV`). `python -m image_studio.cli.setup_engine` sets it up or refreshes it from the command line. When an update pins different libraries, Studio settings asks to finish the engine update, and only what changed downloads.
+In an installed copy the engine runs on its own environment in `%LOCALAPPDATA%\Image Studio\engine` (Linux: `~/.local/share/image-studio/engine`, or `IMAGE_STUDIO_ENGINE_ENV`). `python -m image_studio.cli.setup_engine` sets it up or refreshes it from the command line. When an update pins different libraries, Settings → Models asks to finish the engine update, and only what changed downloads.
 
 ### Where files are kept
 
@@ -67,6 +68,7 @@ text-to-image/
 │   │   └── __main__.py      # Local server entry point
 │   ├── requirements-torch.txt   # CUDA PyTorch for the engine
 │   ├── requirements-models.txt
+│   ├── requirements-cloud.txt   # the engine in cloud mode (no PyTorch)
 │   └── requirements-search.txt
 ├── frontend/
 │   ├── src/
@@ -138,7 +140,7 @@ To set up another computer from source, install `backend/requirements-torch.txt`
 - **Edit image:** upload or select a library image, describe the change, and optionally paint a mask. Download the result or continue editing it.
 - **My library:** filter saved prompts, search images visually, sort, favorite, download, or reuse settings. Favorites and draft settings are kept in the current browser.
 - **Krita canvas:** upload or drop an image, or choose one from your library, to open a new document in Krita. Follow the live canvas and layers, send editing instructions (Ctrl+Enter), create a blank canvas, undo, stop, or save to the library. Paint, select areas, and manage layers in Krita. Imports are normalized to PNG in `studio-cache/krita-imports` without changing the source file.
-- **Studio settings:** review and change what the studio has learned, and install models and optional tools.
+- **Settings:** connect cloud providers, install models and optional tools, and review what the studio has learned.
 
 ## PhotoCraft studio
 
@@ -181,14 +183,18 @@ and what running every pipeline in the real engine taught, is in
 The model is replaceable per role (planner, grounder, checker): the bundled local model (default), any
 OpenAI-compatible server (Ollama, LM Studio, vLLM, OpenAI, Gemini, OpenRouter) or Claude. Answers are
 validated against the schema, repaired where that needs no guess, and asked for again otherwise; a
-choice whose pipeline does not fit the words is re-asked with that pipeline off the menu.
+choice whose pipeline does not fit the words is re-asked with that pipeline off the menu. Finding
+objects stays on the bundled model when the assistant is a model not trained to give boxes (Claude,
+GPT), and the Providers page says so. An edit that measures too faint is run once more a step stronger.
+`python scripts/planner_bench.py --set holdout|direction|all [--planner preset:model]` measures the
+planner on requests it was never tuned on, and on any connected model.
 
 ```powershell
 # which model answers each role
 curl http://127.0.0.1:7860/api/photocraft/models
 # connect the planner to a local Ollama model (keys, when needed, stay in environment variables)
 curl -X PUT http://127.0.0.1:7860/api/photocraft/models -H "Content-Type: application/json" `
-     -d '{"role": "planner", "preset": "ollama", "model": "qwen2.5vl:7b"}'
+     -d '{"role": "planner", "preset": "ollama", "model": "qwen3-vl:8b"}'
 ```
 
 **Edit image** still offers a one-step PhotoCraft light-and-colour option for quick presets.

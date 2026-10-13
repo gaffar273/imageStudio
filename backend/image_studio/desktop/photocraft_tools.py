@@ -236,7 +236,7 @@ class ColorButton(QPushButton):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setOpacity(1 if self.isEnabled() else 0.4)
-        painter.setPen(QColor(theme.LIME if self.underMouse() else theme.LINE))
+        painter.setPen(QColor(theme.ACCENT if self.underMouse() else theme.LINE))
         painter.setBrush(QColor(self.color))
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 7, 7)
 
@@ -316,7 +316,7 @@ class Panel(QScrollArea):
 
     def button(self, text, slot, icon=None, kind='', ready=None):
         text = text.replace('&', '&&')  # a lone & would mark a keyboard shortcut
-        widget = QPushButton(theme.icon(icon, theme.INK if kind == 'primary' else theme.TEXT), text) if icon else (
+        widget = QPushButton(theme.icon(icon, theme.ON_ACCENT if kind == 'primary' else theme.TEXT), text) if icon else (
             QPushButton(text))
         if kind:
             widget.setProperty('kind', kind)
@@ -391,9 +391,9 @@ class AssistantPanel(Panel):
         self.prompt.textChanged.connect(self.prompt_changed)
         self.column.addWidget(self.prompt)
         foot = QHBoxLayout()
-        self.planner = label('', 'small')
+        self.planner = label('', 'small', wrap=True)  # a long model name must not widen the panel
         foot.addWidget(self.planner, 1)
-        self.plan_button = QPushButton(theme.icon('send', theme.INK), 'Plan')
+        self.plan_button = QPushButton(theme.icon('send', theme.ON_ACCENT), 'Plan')
         self.plan_button.setProperty('kind', 'primary')
         self.plan_button.clicked.connect(self.plan)
         foot.addWidget(self.plan_button)
@@ -472,8 +472,16 @@ class AssistantPanel(Panel):
         self.undo_mark.setEnabled(free and bool(marks))
         self.clear_marks.setEnabled(free and bool(marks))
         self.area_state.setText('Marked area only · outside protected' if marks else 'Mark the photo before planning.')
-        self.planner.setText('Local vision planner · Ctrl + Enter' if capabilities.get('brain')
-                             else 'Planner not installed · presets only')
+        planner = (capabilities.get('models') or {}).get('planner') or {}
+        local = planner.get('kind', 'local') == 'local'
+        name = 'Local vision planner' if local else ' · '.join(
+            part for part in (planner.get('name'), planner.get('model')) if part)
+        if capabilities.get('brain'):
+            self.planner.setText(f'{name} · Ctrl + Enter')
+        else:
+            self.planner.setText('Planner not installed · presets only' if local
+                                 else f'{name} is not reachable · check Settings → Providers')
+        self.planner.setToolTip('Choose the model that plans edits in Settings → Providers.')
         self.plan_button.setEnabled(self.can_plan())
         self.plan_button.setText('Planning…' if studio.busy and studio.job_kind == 'plan' else 'Plan')
         self.examples.setVisible(studio.plan_data is None)
@@ -526,7 +534,7 @@ class AssistantPanel(Panel):
         for index, edit in enumerate(edits):
             layout.addWidget(EditCard(index, edit, studio.set_highlight))
         if plan.get('preserve'):
-            self.note(layout, 'Kept unchanged: ' + '; '.join(plan['preserve']), 'lock', theme.LIME)
+            self.note(layout, 'Kept unchanged: ' + '; '.join(plan['preserve']), 'lock', theme.ACCENT)
         for text in [*(plan.get('questions') or []), *(plan.get('notes') or [])]:
             self.note(layout, text)
         unresolved = plan.get('unresolved') or []
@@ -554,7 +562,7 @@ class AssistantPanel(Panel):
         elif steps:
             text = 'Apply the understood parts' if unresolved else (
                 f'Apply {len(edits) or ""} change{"" if len(edits) == 1 else "s"}'.replace('  ', ' '))
-            apply = QPushButton(theme.icon('sparkles', theme.INK), ' ' + text)
+            apply = QPushButton(theme.icon('sparkles', theme.ON_ACCENT), ' ' + text)
             apply.setProperty('kind', 'primary')
             apply.setProperty('size', 'large')
             apply.setEnabled(not studio.busy)
@@ -583,13 +591,13 @@ class AssistantPanel(Panel):
         head.addStretch()
         summary = label(f'{failed} item{"s" if failed > 1 else ""} to look at' if failed else 'Everything checked out',
                         'value')
-        summary.setStyleSheet(f'color: {theme.WARN if failed else theme.LIME};')
+        summary.setStyleSheet(f'color: {theme.WARN if failed else theme.ACCENT};')
         head.addWidget(summary)
         layout.addLayout(head)
         for check in checks:
             passed = check.get('passed')
             self.note(layout, check.get('check') or '', 'check' if passed else 'x',
-                      theme.LIME if passed else theme.DANGER)
+                      theme.ACCENT if passed else theme.DANGER)
         if review:
             layout.addWidget(label('AI visual review (can be wrong; measured checks above are exact)', 'small',
                                    wrap=True))
@@ -600,7 +608,7 @@ class AssistantPanel(Panel):
                 if not item and isinstance(verdict.get('requirement'), int) and verdict['requirement'] < len(
                         requirements):
                     item = requirements[verdict['requirement']]
-                icon, color = {'done': ('check', theme.LIME), 'not done': ('x', theme.DANGER)}.get(
+                icon, color = {'done': ('check', theme.ACCENT), 'not done': ('x', theme.DANGER)}.get(
                     state, ('circle-help', theme.WARN))
                 self.note(layout, f'{item or ""}: {verdict.get("note") or state}', icon, color)
         for text in notes:
@@ -1311,8 +1319,8 @@ class CommandsPanel(Panel):
         self.list.setMinimumHeight(260)
         self.list.setStyleSheet(f'QListWidget {{ background: {theme.BG}; border: 1px solid {theme.LINE}; '
                                 f'border-radius: 8px; }} QListWidget::item {{ padding: 5px 8px; }} '
-                                f'QListWidget::item:selected {{ background: rgba(196, 244, 119, 0.12); '
-                                f'color: {theme.LIME}; }}')
+                                f'QListWidget::item:selected {{ background: {theme.ACCENT_SOFT}; '
+                                f'color: {theme.ACCENT}; }}')
         self.list.currentItemChanged.connect(self.picked)
         self.column.addWidget(self.list)
         row = QHBoxLayout()
@@ -1399,8 +1407,8 @@ class PipelinesPanel(Panel):
         self.list.setMinimumHeight(220)
         self.list.setStyleSheet(f'QListWidget {{ background: {theme.BG}; border: 1px solid {theme.LINE}; '
                                 f'border-radius: 8px; }} QListWidget::item {{ padding: 5px 8px; }} '
-                                f'QListWidget::item:selected {{ background: rgba(196, 244, 119, 0.12); '
-                                f'color: {theme.LIME}; }}')
+                                f'QListWidget::item:selected {{ background: {theme.ACCENT_SOFT}; '
+                                f'color: {theme.ACCENT}; }}')
         self.list.currentItemChanged.connect(self.picked)
         self.column.addWidget(self.list)
         self.count = label('', 'small')

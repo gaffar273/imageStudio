@@ -8,14 +8,10 @@ import json
 import random
 import re
 
-from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QRectF, QSize, Qt, QTimer
+from PySide6.QtCore import QBuffer, QByteArray, QIODevice, QSize, Qt, QTimer
 from PySide6.QtGui import (
-    QColor,
     QImage,
     QKeySequence,
-    QLinearGradient,
-    QPainter,
-    QPainterPath,
     QPixmap,
     QShortcut,
 )
@@ -38,8 +34,8 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.desktop import theme
-from image_studio.desktop.controls import Box, Flow, Range, Section, Thumb, Toggle, shape_icon
-from image_studio.desktop.library import ImageView, cover, save_to
+from image_studio.desktop.controls import Box, PageHeader, Range, Section, Thumb, Toggle, rule, shape_icon
+from image_studio.desktop.library import ImageView, save_to
 from image_studio.desktop.theme import label
 
 IDEAS = [
@@ -101,17 +97,36 @@ SCENIC = re.compile(
 )
 
 
+def cloud_models(config):
+    """{id: model} for the cloud models the engine offers (Settings → Providers)."""
+    return {model['id']: model for model in (config or {}).get('cloud_models') or []}
+
+
+def is_cloud(model):
+    return ':' in str(model or '')
+
+
+def model_ready(model, config):
+    """Whether Generate can use this model now: installed locally, or its provider connected."""
+    if is_cloud(model):
+        return bool(cloud_models(config).get(model, {}).get('ready'))
+    return any(item['id'] == model and item['ready'] for item in (config or {}).get('models', []))
+
+
 def clean(settings, config):
     """Settings the engine accepts: known choices, numbers in range, and switches only for installed parts."""
     result = dict(DEFAULTS)
     result.update({key: value for key, value in settings.items() if key in DEFAULTS})
     for key, options in CHOICES.items():
+        if key == 'model' and result[key] in cloud_models(config):
+            continue
         if result[key] not in options:
             result[key] = DEFAULTS[key]
     sizes = [size['id'] for size in config['sizes']]
     if result['size'] not in sizes:
         result['size'] = sizes[0]
-    for key, (low, high) in dict(LIMITS, steps=MODELS[result['model']][2][:2]).items():
+    steps = MODELS[result['model']][2][:2] if result['model'] in MODELS else MODELS[DEFAULTS['model']][2][:2]
+    for key, (low, high) in dict(LIMITS, steps=steps).items():
         try:
             value = float(result[key])
         except (TypeError, ValueError):
@@ -136,6 +151,8 @@ def reused(meta, config):
     combined = bool(meta.get('texture_from'))
     name = meta.get('model') or ''
     model = 'accurate' if combined or 'Z-Image' in name else 'turbo' if 'sdxl-turbo' in name else 'realistic'
+    if meta.get('cloud_model') and meta['cloud_model'] in cloud_models(config):
+        model = meta['cloud_model']
     width = meta.get('base_width') or meta.get('width')
     height = meta.get('base_height') or meta.get('height')
     size = next((size['id'] for size in config['sizes'] if (size['width'], size['height']) == (width, height)), '')
@@ -184,70 +201,50 @@ def from_data_url(value):
     return image
 
 
-def rule():
-    line = QFrame()
-    line.setFixedHeight(1)
-    line.setStyleSheet(f'background: {theme.LINE};')
-    return line
+class Hero(QFrame):
+    """The empty canvas: what to do first, and a few prompts to start from."""
 
-
-class Hero(QWidget):
-    """The welcome canvas: one of your own landscapes behind an invitation to begin."""
-
-    def __init__(self, spark):
+    def __init__(self, use_idea):
         super().__init__()
         self.setObjectName('Hero')
-        self.pixmap = None
+        self.setProperty('stage', True)
         column = QVBoxLayout(self)
-        column.setContentsMargins(44, 40, 44, 32)
+        column.setContentsMargins(40, 40, 40, 40)
+        column.setSpacing(6)
         column.addStretch(1)
-        column.addWidget(label('A SPACE FOR YOUR IMAGINATION', 'eyebrow'))
+        symbol = label('')
+        symbol.setPixmap(theme.icon('image', theme.FAINT).pixmap(40, 40))
+        symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(symbol)
         column.addSpacing(6)
-        title = label(f'What if you could<br>make <i style="color:{theme.LIME}">anything?</i>', 'hero')
-        title.setTextFormat(Qt.TextFormat.RichText)
-        title.setWordWrap(True)
-        column.addWidget(title)
-        text = label(
-            'A passing thought. A faraway place. Something that only exists in your head. '
-            'Start with a few words.', 'muted', wrap=True,
-        )
-        text.setMaximumWidth(420)
-        column.addWidget(text)
-        column.addSpacing(14)
-        button = QPushButton(theme.icon('sparkles', theme.INK), ' Find your first spark')
-        button.setProperty('kind', 'primary')
-        button.clicked.connect(spark)
-        column.addWidget(button, 0, Qt.AlignmentFlag.AlignLeft)
+        for text, role in (('Describe a picture to get started', 'heading'),
+                           ('Write a prompt on the left, then press Generate or Ctrl + Enter.', 'muted')):
+            widget = label(text, role, wrap=True)
+            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+            column.addWidget(widget)
+        column.addSpacing(12)
+        ideas = QHBoxLayout()
+        ideas.setSpacing(8)
+        ideas.addStretch()
+        for title, text in IDEAS:
+            button = QPushButton(title)
+            button.setToolTip(text)
+            button.clicked.connect(lambda _=False, text=text: use_idea(text))
+            ideas.addWidget(button)
+        ideas.addStretch()
+        column.addLayout(ideas)
         column.addStretch(1)
-        column.addWidget(label('FROM A SPARK TO SOMETHING BEAUTIFUL', 'small'))
 
     def set_pixmap(self, pixmap):
-        self.pixmap = pixmap
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        box = QRectF(self.rect())
-        shape = QPainterPath()
-        shape.addRoundedRect(box, 14, 14)
-        painter.setClipPath(shape)
-        painter.fillRect(box, QColor('#0d0f0f'))
-        if self.pixmap is not None and not self.pixmap.isNull():
-            painter.drawPixmap(box, self.pixmap, cover(box, self.pixmap))
-            shade = QLinearGradient(box.topLeft(), box.topRight())
-            shade.setColorAt(0, QColor(10, 12, 12, 235))
-            shade.setColorAt(0.55, QColor(10, 12, 12, 150))
-            shade.setColorAt(1, QColor(10, 12, 12, 40))
-            painter.fillRect(box, shade)
+        """Kept for callers; the empty canvas no longer shows a picture."""
 
 
 class CreatePage(QWidget):
-    def __init__(self, client, library, notify, store, show_library):
+    def __init__(self, client, library, notify, store, show_library, show_providers=None):
         super().__init__()
         self.client, self.library, self.notify = client, library, notify
         self.store = store  # returns the QSettings the form is remembered in
+        self.show_providers = show_providers or (lambda: None)
         self.config = None
         self.settings = dict(DEFAULTS)
         self.job = None  # the latest image job, shown on the canvas
@@ -261,9 +258,21 @@ class CreatePage(QWidget):
         self.recent_items = []
         self.inputs = {}
 
-        layout = QHBoxLayout(self)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        self.header = PageHeader('Create')
+        self.where = label('', 'small')
+        self.header.add(self.where)
+        fresh = QPushButton(theme.icon('plus'), 'New')
+        fresh.setToolTip('Start a new picture: clears the prompt, seed and sketch.')
+        fresh.clicked.connect(self.new_creation)
+        self.header.add(fresh)
+        outer.addWidget(self.header)
+        layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        outer.addLayout(layout, 1)
         layout.addWidget(self.panel())
         layout.addWidget(self.workspace(show_library), 1)
         for keys in ('Ctrl+Return', 'Ctrl+Enter'):
@@ -283,24 +292,10 @@ class CreatePage(QWidget):
         panel.setObjectName('Panel')
         panel.setProperty('side', 'left')
         panel.setAttribute(Qt.WidgetAttribute.WA_StyledBackground)
-        panel.setFixedWidth(384)
+        panel.setFixedWidth(372)
         outer = QVBoxLayout(panel)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
-
-        heading = QHBoxLayout()
-        heading.setContentsMargins(22, 18, 14, 10)
-        mark = label('')
-        mark.setPixmap(theme.icon('wand-sparkles', theme.LIME).pixmap(18, 18))
-        heading.addWidget(mark)
-        heading.addWidget(label('Your vision', 'heading'))
-        heading.addStretch()
-        fresh = QPushButton(theme.icon('plus', theme.MUTED), 'New')
-        fresh.setProperty('kind', 'flat')
-        fresh.setToolTip('Start a new creation: clears the prompt, seed and sketch.')
-        fresh.clicked.connect(self.new_creation)
-        heading.addWidget(fresh)
-        outer.addLayout(heading)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -309,54 +304,50 @@ class CreatePage(QWidget):
         self.form = QWidget()
         scroll.setWidget(self.form)
         column = QVBoxLayout(self.form)
-        column.setContentsMargins(22, 4, 18, 18)
-        column.setSpacing(10)
+        column.setContentsMargins(20, 18, 18, 18)
+        column.setSpacing(9)
 
         top = QHBoxLayout()
-        top.addWidget(label('PROMPT', 'eyebrow'))
+        top.addWidget(label('Prompt', 'eyebrow'))
         top.addStretch()
-        surprise = QPushButton(theme.icon('dices', theme.MUTED), 'Surprise me')
+        surprise = QPushButton(theme.icon('dices', theme.MUTED), 'Random')
         surprise.setProperty('kind', 'flat')
+        surprise.setToolTip('Fill in an example prompt')
         surprise.clicked.connect(lambda: self.set_prompt(random.choice(IDEAS)[1]))
         top.addWidget(surprise)
         column.addLayout(top)
         self.prompt = QPlainTextEdit()
-        self.prompt.setPlaceholderText("A place you've never been. A moment you've imagined. Describe it here…")
-        self.prompt.setFixedHeight(132)
+        self.prompt.setPlaceholderText('Describe the picture: the subject, the setting, the light and the style…')
+        self.prompt.setFixedHeight(140)
         self.prompt.setTabChangesFocus(True)
         self.prompt.textChanged.connect(self.prompt_changed)
         column.addWidget(self.prompt)
         under = QHBoxLayout()
-        under.addWidget(label('Let your imagination do the talking.', 'small'))
         under.addStretch()
         self.counter = label(f'0/{MAX_PROMPT}', 'small')
         under.addWidget(self.counter)
         column.addLayout(under)
-        chips = Flow()
-        for title, text in IDEAS:
-            chip = QPushButton(f'{title} ↗')
-            chip.setProperty('kind', 'chip')
-            chip.setToolTip(text)
-            chip.clicked.connect(lambda _=False, text=text: self.set_prompt(text))
-            chips.addWidget(chip)
-        column.addLayout(chips)
-        self.smart = self.toggle(column, 'smart', 'Smart prompt', 'A little help shaping your idea')
-        column.addSpacing(4)
+        self.smart = self.toggle(column, 'smart', 'Smart prompt', 'Rewrites short or vague prompts')
+        column.addSpacing(2)
         column.addWidget(rule())
-        column.addSpacing(4)
+        column.addSpacing(2)
 
-        column.addWidget(label('MODEL', 'eyebrow'))
+        column.addWidget(label('Model', 'eyebrow'))
         self.model = QComboBox()
+        self.model.setMaxVisibleItems(14)
         self.model.currentIndexChanged.connect(self.model_changed)
         column.addWidget(self.model)
-        self.model_note = label('', 'small')
-        column.addWidget(self.model_note)
+        notes = QHBoxLayout()
+        self.model_note = label('', 'small', wrap=True)
+        notes.addWidget(self.model_note, 1)
+        self.connect_button = QPushButton('Connect…')
+        self.connect_button.setProperty('kind', 'link')
+        self.connect_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.connect_button.clicked.connect(lambda: self.show_providers())
+        notes.addWidget(self.connect_button, 0, Qt.AlignmentFlag.AlignTop)
+        column.addLayout(notes)
 
-        top = QHBoxLayout()
-        top.addWidget(label('IMAGE FORMAT', 'eyebrow'))
-        top.addStretch()
-        top.addWidget(label('Aspect ratio', 'small'))
-        column.addLayout(top)
+        column.addWidget(label('Size', 'eyebrow'))
         aspects = QHBoxLayout()
         aspects.setSpacing(6)
         self.aspects = QButtonGroup(self)
@@ -374,20 +365,25 @@ class CreatePage(QWidget):
         self.size.currentIndexChanged.connect(lambda _: self.set('size', self.size.currentData()))
         column.addWidget(self.size)
 
-        column.addWidget(label('PHOTO STYLE', 'eyebrow'))
+        self.style_box = Box()
+        style_column = QVBoxLayout(self.style_box)
+        style_column.setContentsMargins(0, 0, 0, 0)
+        style_column.setSpacing(9)
+        style_column.addWidget(label('Style', 'eyebrow'))
         styles = QHBoxLayout()
         styles.setSpacing(6)
-        self.styles = self.choice(styles, 'photo_style', [('Natural photo', '◉  Natural'), ('Polished', '✧  Polished')])
-        column.addLayout(styles)
+        self.styles = self.choice(styles, 'photo_style', [('Natural photo', 'Natural'), ('Polished', 'Polished')])
+        style_column.addLayout(styles)
+        column.addWidget(self.style_box)
         counts = QHBoxLayout()
         counts.setSpacing(6)
-        counts.addWidget(label('Number of images'))
+        counts.addWidget(label('Images'))
         counts.addStretch()
         self.counts = self.choice(counts, 'count', [(number, str(number)) for number in range(1, 5)], width=40)
         column.addLayout(counts)
         column.addSpacing(4)
 
-        self.tune = Section('Fine-tune your image', 'settings-2')
+        self.tune = Section('Advanced', 'sliders-horizontal')
         body = self.tune.body
         self.steps = self.slider(body, 'steps', 'Rendering steps', 20, 50)
         self.guidance = self.slider(body, 'guidance', 'Prompt strength', 1, 12, 0.5)
@@ -422,9 +418,10 @@ class CreatePage(QWidget):
         self.personal = self.slider(body, 'personal', 'My style (learned from favorites)', 0, 1, 0.05)
         column.addWidget(self.tune)
 
-        self.sketching = Section('Guide with a sketch', 'scan-line')
+        self.sketching = Section('Composition sketch', 'scan-line')
         body = self.sketching.body
-        body.addWidget(label('Use shapes and colors to guide the composition.', 'small', wrap=True))
+        body.addWidget(label('A rough sketch sets the layout. Upload one, or draw one from the prompt.', 'small',
+                             wrap=True))
         preview = QHBoxLayout()
         self.sketch_view = label('')
         self.sketch_view.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignTop)
@@ -449,9 +446,9 @@ class CreatePage(QWidget):
         column.addStretch()
 
         footer = QVBoxLayout()
-        footer.setContentsMargins(22, 12, 18, 14)
+        footer.setContentsMargins(20, 12, 18, 12)
         footer.setSpacing(6)
-        self.go = QPushButton(theme.icon('sparkles', theme.INK), ' Generate image')
+        self.go = QPushButton(theme.icon('sparkles', theme.ON_ACCENT), ' Generate')
         self.go.setProperty('kind', 'primary')
         self.go.setProperty('size', 'large')
         self.go.setIconSize(QSize(18, 18))
@@ -512,23 +509,18 @@ class CreatePage(QWidget):
     def workspace(self, show_library):
         area = QWidget()
         column = QVBoxLayout(area)
-        column.setContentsMargins(28, 22, 28, 18)
+        column.setContentsMargins(20, 18, 20, 16)
         column.setSpacing(10)
-        top = QHBoxLayout()
-        top.addWidget(label('YOUR CANVAS', 'eyebrow'))
-        top.addStretch()
-        top.addWidget(label(f'<span style="color:{theme.LIME}">●</span>&nbsp; Private: made on this PC', 'small'))
-        column.addLayout(top)
 
         self.canvas = QStackedLayout()
-        self.hero = Hero(lambda: self.set_prompt(IDEAS[0][1]))
+        self.hero = Hero(self.set_prompt)
         self.canvas.addWidget(self.hero)
         waiting = QFrame()
-        waiting.setProperty('card', True)
+        waiting.setProperty('stage', True)
         middle = QVBoxLayout(waiting)
         middle.addStretch()
         mark = label('')
-        mark.setPixmap(theme.icon('sparkles', theme.LIME).pixmap(40, 40))
+        mark.setPixmap(theme.icon('loader-circle', theme.FAINT).pixmap(36, 36))
         mark.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         middle.addWidget(mark)
         self.waiting_title = label('', 'heading')
@@ -583,7 +575,7 @@ class CreatePage(QWidget):
             self.strip_thumbs.append(thumb)
         self.strip.addStretch()
         column.addLayout(self.strip)
-        self.notes = Section('Prompt interpretation', 'file-text')
+        self.notes = Section('How the prompt was read', 'file-text')
         self.notes_text = label('', 'muted', wrap=True, selectable=True)
         self.notes.body.addWidget(self.notes_text)
         column.addWidget(self.notes)
@@ -593,10 +585,10 @@ class CreatePage(QWidget):
         lower.setContentsMargins(0, 6, 0, 0)
         lower.setSpacing(10)
         heading = QHBoxLayout()
-        self.recent_title = label('Fresh from your imagination', 'heading')
+        self.recent_title = label('Recent', 'heading')
         heading.addWidget(self.recent_title)
         heading.addStretch()
-        everything = QPushButton(theme.icon('folder-heart', theme.MUTED), 'View library')
+        everything = QPushButton('View all')
         everything.setProperty('kind', 'flat')
         everything.clicked.connect(show_library)
         heading.addWidget(everything)
@@ -612,7 +604,7 @@ class CreatePage(QWidget):
             recent.addWidget(thumb, 0, index)
             recent.setColumnStretch(index, 1)
             self.recent.append(thumb)
-        self.recent_empty = label('Your first creation belongs here.', 'muted')
+        self.recent_empty = label('Pictures you create appear here.', 'muted')
         self.recent_empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.recent_empty.setFixedHeight(132)
         recent.addWidget(self.recent_empty, 0, 0, 1, 4)
@@ -666,7 +658,7 @@ class CreatePage(QWidget):
             self.seed.setText(s['seed'])
             self.model.setCurrentIndex(max(0, self.model.findData(s['model'])))
             self.size.setCurrentIndex(max(0, self.size.findData(s['size'])))
-            low, high, _ = MODELS[s['model']][2]
+            low, high, _ = MODELS.get(s['model'], MODELS[DEFAULTS['model']])[2]
             self.steps.set_range(low, high)
             for key, show in self.inputs.items():
                 show(s[key])
@@ -679,15 +671,28 @@ class CreatePage(QWidget):
         """Show and enable what applies to the current choices."""
         s, config = self.settings, self.config or {}
         model = s['model']
+        cloud = is_cloud(model)
         self.counter.setText(f'{len(s["prompt"])}/{MAX_PROMPT}')
-        self.model_note.setText(MODELS[model][1])
+        if cloud:
+            entry = cloud_models(config).get(model, {})
+            self.model_note.setText(f'Runs on {entry.get("label", "the provider")} with your API key.'
+                                    if entry.get('ready') else f'Connect {entry.get("label", "the provider")} '
+                                                               'with an API key to use it.')
+            self.where.setText(f'Runs on {entry.get("label", "the cloud")}')
+        else:
+            self.model_note.setText(MODELS[model][1])
+            self.where.setText('Runs on this PC')
+        self.connect_button.setVisible(cloud and not model_ready(model, config))
+        self.style_box.setVisible(not cloud)
+        self.tune.setVisible(not cloud)
+        self.smart.setVisible(not cloud)
         sizes = [size['id'] for size in config.get('sizes', [])]
         for index, button in enumerate(self.aspects.buttons()):
             chosen = index < len(sizes) and sizes[index] == s['size']
             button.setChecked(chosen)
             if index < len(sizes):
                 size = config['sizes'][index]
-                button.setIcon(shape_icon(size['width'], size['height'], theme.LIME if chosen else theme.MUTED))
+                button.setIcon(shape_icon(size['width'], size['height'], theme.ACCENT if chosen else theme.MUTED))
         self.steps.setEnabled(model != 'turbo')
         self.guidance.setVisible(model == 'realistic')
         self.detail_strength.setVisible(s['detail'] != 'Off')
@@ -696,12 +701,12 @@ class CreatePage(QWidget):
         self.combine.setVisible(model == 'accurate')
         self.realism.setVisible(bool(config.get('lora')))
         self.personal.setVisible(bool(config.get('personal_lora')))
-        self.sketching.setVisible(model != 'turbo')
+        self.sketching.setVisible(model != 'turbo' and not cloud)
         for widget, need in ((self.smart, 'assistant'), (self.repair, 'repair'), (self.references, 'references'),
                              (self.check, 'assistant')):
             widget.setEnabled(bool(config.get(need)))
         self.smart.set_description(
-            'A little help shaping your idea' if config.get('assistant') else 'Needs the prompt assistant model'
+            'Rewrites short or vague prompts' if config.get('assistant') else 'Needs the prompt assistant model'
         )
         if s['sketch']:
             image = from_data_url(s['sketch'])
@@ -718,10 +723,10 @@ class CreatePage(QWidget):
 
     def update_buttons(self):
         busy = self.busy
-        installed = any(m['id'] == self.settings['model'] and m['ready'] for m in (self.config or {}).get('models', []))
+        installed = model_ready(self.settings['model'], self.config)
         self.go.setEnabled(self.ready and bool(self.config) and not busy and installed
                            and bool(self.settings['prompt'].strip()))
-        self.go.setText(' Creating your image…' if busy and self.kind == 'generate' else ' Generate image')
+        self.go.setText(' Generating…' if busy and self.kind == 'generate' else ' Generate')
         self.draft.setEnabled(
             bool((self.config or {}).get('assistant')) and self.ready and not busy
             and bool(self.settings['prompt'].strip())
@@ -730,7 +735,8 @@ class CreatePage(QWidget):
         if not self.ready:
             hint = 'Waiting for the engine…'
         elif self.config and not installed:
-            hint = 'This model is not installed yet.'
+            hint = ('Connect this provider in Settings → Providers.' if is_cloud(self.settings['model'])
+                    else 'This model is not installed yet. Install it in Settings → Models.')
         elif busy and self.kind not in ('generate', 'sketch'):
             hint = 'Another job is running in the studio.'
         else:
@@ -764,7 +770,8 @@ class CreatePage(QWidget):
     def model_changed(self, _):
         model = self.model.currentData()
         if model and model != self.settings['model']:
-            self.update_settings(model=model, steps=MODELS[model][2][2], detail='Off')
+            steps = MODELS[model][2][2] if model in MODELS else self.settings['steps']
+            self.update_settings(model=model, steps=steps, detail='Off')
 
     def pick_aspect(self, index):
         self.update_settings(size=self.config['sizes'][index]['id'])
@@ -806,9 +813,27 @@ class CreatePage(QWidget):
         for box in (self.model, self.size):
             box.blockSignals(True)
             box.clear()
+        def heading(text):
+            self.model.addItem(text, None)
+            item = self.model.model().item(self.model.count() - 1)
+            item.setEnabled(False)
+            font = item.font()
+            font.setPointSizeF(8.5)
+            font.setBold(True)
+            item.setFont(font)
+
+        cloud = config.get('cloud_models') or []
+        if cloud:
+            heading('On this PC')
         for model in config['models']:
             name = MODELS.get(model['id'], (model['label'],))[0]
             self.model.addItem(name + ('' if model['ready'] else '  ·  not installed'), model['id'])
+        if cloud:
+            self.model.insertSeparator(self.model.count())
+            heading('Cloud, with your API key')
+        for model in cloud:
+            self.model.addItem(f'{model["label"]} · {model["model"]}' + ('' if model['ready'] else '  ·  not connected'),
+                               model['id'])
         for size in config['sizes']:
             self.size.addItem(size['id'], size['id'])
         for index, button in enumerate(self.aspects.buttons()):
@@ -937,10 +962,11 @@ class CreatePage(QWidget):
         else:
             state = job['state']
             self.waiting_title.setText({
-                'running': 'A little imagination. A little magic.',
-                'error': 'Let’s give that another try.',
-            }.get(state, 'Paused at your request.'))
-            self.waiting_text.setText('Your image is taking shape.' if state == 'running' else job.get('message', ''))
+                'running': 'Generating',
+                'error': 'Generation failed',
+            }.get(state, 'Stopped'))
+            self.waiting_text.setText(job.get('message', '') if state != 'running' else (
+                job.get('message') or 'This can take a little while.'))
             self.canvas.setCurrentIndex(1)
         self.status.setVisible(job is not None)
         if job is not None:
@@ -994,23 +1020,13 @@ class CreatePage(QWidget):
     def show_recent(self):
         items = sorted(self.library.all, key=lambda item: item['created'], reverse=True)
         self.recent_title.setText(
-            f'Fresh from your imagination  <span style="color:{theme.MUTED}; font-weight:400">{len(items)}</span>'
+            f'Recent  <span style="color:{theme.FAINT}; font-weight:400">{len(items)}</span>'
         )
         for index, thumb in enumerate(self.recent):
             thumb.setVisible(index < len(items))
             thumb.set_item(items[index] if index < len(items) else None)
         self.recent_empty.setVisible(not items)
         self.recent_items = items[:4]
-        scenic = next((item for item in items if SCENIC.match((item.get('metadata') or {}).get('prompt') or '')),
-                      items[0] if items else None)
-        if scenic and scenic['name'] != self.scenic:
-            self.scenic = scenic['name']
-            self.client.bytes(scenic['url'], self.hero_loaded, None, timeout=120000)
-
-    def hero_loaded(self, data):
-        pixmap = QPixmap()
-        if pixmap.loadFromData(data):
-            self.hero.set_pixmap(pixmap)
 
     def open_recent(self, index):
         self.library.show_details(list(self.recent_items), index)

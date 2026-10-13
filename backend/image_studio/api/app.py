@@ -10,6 +10,7 @@ from image_studio.api.routes import router
 from image_studio.api.photocraft import router as photocraft_router
 from image_studio.services import workflows, assistant
 from image_studio.integrations import bridge
+from image_studio.core.engine import CLOUD_ONLY, explain
 from image_studio.services.runtime import render_session
 
 
@@ -45,6 +46,15 @@ async def lifespan(app):
 
 
 app = FastAPI(title='Local Image Studio', version='2.0.0', lifespan=lifespan)
+
+
+@app.exception_handler(ModuleNotFoundError)
+async def missing_library(request, exc):
+    # In cloud mode a model library is missing on purpose: say so instead of a bare server error.
+    message = explain(exc)
+    if message != CLOUD_ONLY:
+        raise exc
+    return JSONResponse(status_code=409, content=dict(detail=message))
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=['127.0.0.1', 'localhost', 'testserver'])
 
 

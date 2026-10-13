@@ -182,12 +182,18 @@ class LibraryScreenTests(unittest.TestCase):
         page.flip_sort()
 
     def test_every_screen_has_a_page(self):
-        from image_studio.desktop.app import FOOTER, SCREENS
+        from image_studio.desktop.app import APPS, FOOTER, SCREENS, TABS
 
-        self.assertEqual(set(self.window.screens), {route for route, *_ in SCREENS + FOOTER})
+        self.assertEqual(set(self.window.screens), {route for route, *_ in SCREENS + APPS + FOOTER})
         for route in self.window.screens:
             self.window.navigate(route)
             self.assertIs(self.window.pages.currentWidget(), self.window.screens[route])
+        settings = self.window.studio_settings
+        for route, (screen, tab) in TABS.items():  # This PC, Providers and Models are tabs of Settings
+            self.window.navigate(route)
+            self.assertIs(self.window.pages.currentWidget(), self.window.screens[screen])
+            self.assertEqual(settings.current_tab, tab)
+        self.assertEqual(settings.tab_order, ['providers', 'models', 'learning', 'system'])
 
     def test_a_failed_thumbnail_is_not_fetched_again(self):
         model = self.window.library.model
@@ -289,7 +295,7 @@ class CreateScreenTests(unittest.TestCase):
         self.assertTrue(page.sketching.isHidden())
         page.prompt.setPlainText('A fox')
         self.assertFalse(page.go.isEnabled())  # turbo is not installed in this config
-        self.assertEqual(page.hint.text(), 'This model is not installed yet.')
+        self.assertEqual(page.hint.text(), 'This model is not installed yet. Install it in Settings → Models.')
         page.model.setCurrentIndex(page.model.findData('realistic'))
         self.assertTrue(page.go.isEnabled())
         self.assertFalse(page.smart.isEnabled())  # no prompt assistant installed
@@ -894,7 +900,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         panel = page.assistant
         self.assertTrue(panel.examples.isHidden())
         texts = [widget.text() for widget in panel.plan_box.findChildren(type(panel.planner))]
-        self.assertIn('I UNDERSTOOD 1 CHANGE', texts)
+        self.assertIn('I understood 1 change', texts)
         apply = [button for button in panel.plan_box.findChildren(type(panel.plan_button))
                  if 'understood parts' in button.text()]
         self.assertEqual(len(apply), 1)
@@ -1153,6 +1159,9 @@ class InstallRulesTests(unittest.TestCase):
                          [('app', ['-m', 'image_studio.cli.setup_engine'])])
         self.assertIs(installs.BY_KEY['engine'], installs.ENGINE)
         self.assertNotIn(installs.ENGINE, installs.PARTS)  # its own card, above the models
+        steps = installs.plan(installs.ENGINE_CLOUD, {}, tempfile.gettempdir())
+        self.assertEqual([(step.python, step.args) for step in steps],
+                         [('app', ['-m', 'image_studio.cli.setup_engine', '--cloud'])])
 
 
 KRITA_DOCUMENT = dict(
@@ -1201,7 +1210,7 @@ class KritaScreenTests(unittest.TestCase):
 
     def test_follows_the_live_canvas(self):
         page = self.page
-        self.assertEqual(page.title.text(), 'Start with an image')
+        self.assertEqual(page.title.text(), 'No document open')
         self.assertFalse(page.send.isEnabled())
         fetched = self.connect()
         self.assertEqual([args[0] for args in fetched], ['/api/krita/preview?v=1'])
@@ -1372,6 +1381,7 @@ class SettingsScreenTests(unittest.TestCase):
                 page.show_parts()
                 self.assertFalse(page.engine_row.install.isEnabled())
                 self.assertIn('NVIDIA', page.engine_row.message.text())
+                self.assertTrue(page.cloud_row.install.isEnabled())  # no NVIDIA card: cloud mode instead
                 page.nvidia = [dict(name='RTX 4070')]
                 page.engine_status = 'update'
                 page.show_parts()
@@ -1389,6 +1399,59 @@ class SettingsScreenTests(unittest.TestCase):
                 self.assertEqual(page.engine_row.badge.text(), 'Installed')
         finally:
             page.engine_status, page.ready = 'ready', True
+            page.show_parts()
+
+    def test_a_pc_without_an_nvidia_card_gets_the_engine_in_cloud_mode(self):
+        from image_studio.desktop import settings_page
+
+        page = self.page
+        try:
+            with patch.object(settings_page.paths, 'INSTALLED', True):
+                page.engine_status, page.engine_kind, page.ready, page.nvidia = 'missing', 'full', False, []
+                page.show_parts()
+                self.assertFalse(page.cloud_row.isHidden())
+                with patch.object(page.installer, 'start') as start, patch.object(settings_page.installs, 'free_gb',
+                                                                                 return_value=500):
+                    page.install_engine('cloud')
+                self.assertIs(start.call_args[0][0], settings_page.installs.ENGINE_CLOUD)
+                page.progress['engine'] = ('numpy · 6 MB/12 MB', 50)
+                page.installer.key = 'engine'
+                page.show_parts()
+                self.assertEqual(page.cloud_row.badge.text(), 'Installing')
+                self.assertEqual(page.engine_row.badge.text(), 'Not installed')
+                page.installer.key = None
+                page.progress.pop('engine', None)
+                started = []
+                with patch.object(page, 'start_engine', lambda: started.append(True)),                         patch.object(settings_page.engine_env, 'status', return_value='ready'),                         patch.object(settings_page.engine_env, 'kind', return_value='cloud'):
+                    page.install_finished('engine', True, 'Installed.')
+                self.assertEqual(started, [True])
+                self.assertEqual(page.cloud_row.badge.text(), 'Installed')
+                self.assertFalse(page.engine_row.install.isEnabled())  # still no card for the full engine
+                # In cloud mode the engine offers no model on this PC, so they cannot be installed.
+                page.ready, page.config, page.models_dir = True, dict(local_models=False, models=[]), 'C:/models'
+                page.show_parts()
+                self.assertFalse(page.rows['turbo'].install.isEnabled())
+                self.assertIn('cloud mode', page.rows['turbo'].message.text())
+                # A card found later: the full engine installs on top, with the engine stopped meanwhile.
+                page.nvidia = [dict(name='RTX 4070')]
+                page.show_parts()
+                self.assertTrue(page.engine_row.install.isEnabled())
+                self.assertIn('NVIDIA graphics card', page.engine_row.message.text())
+                stopped = []
+                with patch.object(page.installer, 'start') as start,                         patch.object(page, 'stop_engine', lambda message: stopped.append(message)),                         patch.object(settings_page.installs, 'free_gb', return_value=500):
+                    page.install_engine('full')
+                self.assertIs(start.call_args[0][0], settings_page.installs.ENGINE)
+                self.assertEqual(len(stopped), 1)
+                page.progress.pop('engine', None)
+                started = []
+                with patch.object(page, 'start_engine', lambda: started.append(True)),                         patch.object(settings_page.engine_env, 'status', return_value='ready'),                         patch.object(settings_page.engine_env, 'kind', return_value='cloud'):
+                    page.install_finished('engine', False, 'Stopped. Install again to resume where it stopped.')
+                self.assertEqual(started, [True])  # the cloud engine as it was runs again
+                self.assertIn('Stopped', page.engine_row.message.text())
+                self.assertEqual(page.cloud_row.message.text(), '')
+        finally:
+            page.engine_status, page.engine_kind, page.nvidia = 'ready', 'full', None
+            page.engine_installing = 'full'
             page.show_parts()
 
     def test_the_window_opens_settings_when_the_engine_needs_setting_up(self):
@@ -1420,3 +1483,93 @@ class SettingsScreenTests(unittest.TestCase):
         finally:
             page.installer.key = None
             page.show_parts()
+
+
+CLOUD = [dict(id='openai:gpt-image-2', provider='openai', label='OpenAI', model='gpt-image-2', ready=True),
+         dict(id='fal:fal-ai/flux/dev', provider='fal', label='fal.ai', model='fal-ai/flux/dev', ready=False)]
+EDITORS = [dict(id='gemini:gemini-3.1-flash-image', provider='gemini', label='Google Gemini',
+                model='gemini-3.1-flash-image', ready=True)]
+
+
+@unittest.skipUnless(HAS_QT, 'PySide6 is not installed')
+class CloudScreenTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.window = desktop()
+
+    def test_create_offers_connected_cloud_models(self):
+        from image_studio.api.schemas import GenerateRequest
+        from image_studio.desktop.create import DEFAULTS, request_body
+
+        self.window.settings.clear()
+        page = self.window.create
+        page.config, page.job, page.active, page.settings = None, None, None, dict(DEFAULTS)
+        page.ready = True
+        page.configured(dict(CONFIG, cloud_models=CLOUD))
+        page.prompt.setPlainText('A red barn')
+        page.model.setCurrentIndex(page.model.findData('fal:fal-ai/flux/dev'))
+        self.assertFalse(page.go.isEnabled())  # fal.ai is not connected
+        self.assertFalse(page.connect_button.isHidden())
+        self.assertIn('Settings → Providers', page.hint.text())
+        page.model.setCurrentIndex(page.model.findData('openai:gpt-image-2'))
+        self.assertTrue(page.go.isEnabled())
+        self.assertTrue(page.connect_button.isHidden())
+        for local_only in (page.tune, page.sketching, page.style_box, page.smart):
+            self.assertTrue(local_only.isHidden())
+        self.assertEqual(page.where.text(), 'Runs on OpenAI')
+        body = request_body(page.settings)
+        self.assertEqual(body['model'], 'openai:gpt-image-2')
+        GenerateRequest(**body)
+        page.configured(dict(CONFIG, cloud_models=CLOUD))  # the choice survives a refresh
+        self.assertEqual(page.settings['model'], 'openai:gpt-image-2')
+        page.configured(dict(CONFIG))  # and falls back once the provider is gone
+        self.assertEqual(page.settings['model'], 'realistic')
+        self.assertEqual(page.where.text(), 'Runs on this PC')
+
+    def test_edit_offers_cloud_editors(self):
+        from image_studio.api.schemas import EditRequest
+        from image_studio.desktop.edit import edit_body
+
+        page = self.window.edit
+        page.config, page.job, page.active, page.submitting = None, None, None, False
+        page.ready = True
+        page.configured(dict(EDIT_CONFIG, cloud_editors=EDITORS))
+        page.tool.setCurrentIndex(page.tool.findData('gemini:gemini-3.1-flash-image'))
+        self.assertEqual(page.engine, 'gemini:gemini-3.1-flash-image')
+        self.assertTrue(page.brush.isHidden())  # cloud edits change the whole photo
+        self.assertIn('Google Gemini', page.engine_note.text())
+        body = edit_body('/images/a.png', page.engine, 'Make it night', True, 'data:image/png;base64,AA==')
+        self.assertEqual((body['smart'], body['mask']), (False, None))
+        EditRequest(**body)
+        page.set_engine('photocraft')
+
+    def test_the_providers_dialog_saves_a_key_and_models(self):
+        from image_studio.core import credentials, paths, providers
+        from image_studio.desktop.providers_page import ProviderDialog
+
+        with tempfile.TemporaryDirectory() as folder, \
+                patch.object(paths, 'SETTINGS_FILE', Path(folder) / 'settings.json'), \
+                patch.object(paths, 'config_dir', lambda: Path(folder)), \
+                patch.dict(os.environ, {'OPENAI_API_KEY': ''}):
+            page = self.window.providers
+            page.refresh()
+            self.assertEqual(page.rows['openai'].button.text(), 'Connect')
+            dialog = ProviderDialog(page, 'openai')
+            dialog.save()
+            self.assertIn('Paste a key', dialog.result.text())  # nothing saved without a key
+            self.assertFalse(providers.connected('openai'))
+            dialog.key.setText('  sk-new  ')
+            dialog.image_model.setCurrentText('gpt-image-2')
+            dialog.save()
+            self.assertEqual(credentials.get('provider:openai'), 'sk-new')
+            self.assertEqual(providers.options('openai')['image_model'], 'gpt-image-2')
+            page.refresh()
+            self.assertEqual(page.rows['openai'].button.text(), 'Manage')
+            self.assertFalse(page.rows['openai'].badge.isHidden())
+            page.assistant_provider.setCurrentIndex(page.assistant_provider.findData('openai'))
+            page.assistant_model.setCurrentText('gpt-5')
+            with patch.object(page, 'notify'):
+                page.save_assistant()
+            self.assertEqual(providers.assistant(), dict(provider='openai', model='gpt-5'))
+            self.assertIn('OpenAI · gpt-5', page.assistant_badge.text())
+        page.refresh()

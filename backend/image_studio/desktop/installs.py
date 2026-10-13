@@ -112,6 +112,16 @@ ENGINE = Part('engine', 'Engine (PyTorch with CUDA)',
               lambda config: engine_env.status() == 'ready',
               note='It goes in your user folder, apart from the models; uninstalling the app removes it.',
               steps=[Step('Setting up the engine', ['-m', 'image_studio.cli.setup_engine'], python='app')])
+# The engine without PyTorch, for a PC with no NVIDIA card: it creates and edits through cloud providers.
+# Same key as ENGINE: one engine either way, and installing ENGINE later adds to this one.
+ENGINE_CLOUD = Part('engine', 'Engine in cloud mode',
+                    'For a PC without an NVIDIA graphics card: Create and Edit work through the providers you '
+                    'connect in Providers. The models below cannot run in this mode.', 0.3,
+                    'about 60 MB to download, 210 MB on disk', '',
+                    lambda config: engine_env.status() == 'ready',
+                    note=ENGINE.note,
+                    steps=[Step('Setting up the engine', ['-m', 'image_studio.cli.setup_engine', '--cloud'],
+                                python='app')])
 BY_KEY = {part.key: part for part in [ENGINE, *PARTS]}
 
 

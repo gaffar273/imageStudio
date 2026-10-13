@@ -190,7 +190,7 @@ def dust_cleanup(b, index, edit):
 @procedure('retouch_portrait', 'Portrait retouch', 'portrait', 'retouch',
            'portrait retouching of faces: choice = smooth skin, blemishes (pimples, acne, spots), wrinkles, even skin '
            'tone, dark circles, shine, whiten teeth, brighten eyes, red eye, sculpt (dodge and burn)',
-           options=tuple(job for job, _ in lang.RETOUCH_JOBS), whole_picture=True,
+           options=tuple(job for job, _ in lang.RETOUCH_JOBS), many=True, whole_picture=True,
            finds=lambda edit: lang.retouch_queries(edit), measures=('skin_colors', 'teeth', 'teeth_colors'),
            examples=('smooth her skin a little', 'whiten their teeth', 'remove the dark circles under her eyes'))
 def retouch_portrait(b, index, edit):

@@ -3,6 +3,7 @@
 These run without PhotoCraft and without any model.
 """
 
+import io
 import json
 import unittest
 from unittest.mock import patch
@@ -219,6 +220,97 @@ class MeasureTests(unittest.TestCase):
         self.assertEqual(set(result), {'exposure'})
 
 
+def _photo(size=(160, 120)):
+    """A picture with colour, detail and flat areas, the same every run."""
+    import numpy as np
+
+    rng = np.random.default_rng(7)
+    y, x = np.mgrid[:size[1], :size[0]]
+    rgb = np.stack([(x * 255 / size[0]), (y * 255 / size[1]), np.full(x.shape, 140.0)], axis=-1)
+    rgb[20:60, 20:70] = (40, 90, 200)  # a blue patch
+    rgb[70:110, 90:150] = (200, 60, 40)  # a red patch
+    rgb += rng.normal(0, 6, rgb.shape) * ((x // 8 + y // 8) % 2)[..., None]  # textured squares
+    return Image.fromarray(np.clip(rgb, 0, 255).astype('uint8'))
+
+
+class CheckTests(unittest.TestCase):
+    """Every effect check passes on a picture that has the effect and fails on the untouched one."""
+
+    def assertCheck(self, action, after, before=None, **fields):
+        from image_studio.pipelines import checks
+
+        before = before or _photo()
+        edit = lang.blank(action, **fields)
+        done = checks.run(0, edit, before, after, [], [], False)
+        self.assertTrue(done and all(record['passed'] for record in done), (action, done))
+        undone = checks.run(0, edit, before, before.copy(), [], [], False)
+        self.assertTrue(undone and not any(record['passed'] for record in undone), (action, undone))
+
+    def test_effect_checks(self):
+        import numpy as np
+        from PIL import ImageEnhance, ImageFilter, ImageOps
+
+        photo = _photo()
+        self.assertCheck('sharpen', photo.filter(ImageFilter.UnsharpMask(2, 200, 0)))
+        self.assertCheck('blur', photo.filter(ImageFilter.GaussianBlur(2)))
+        self.assertCheck('motion_blur', photo.filter(ImageFilter.BoxBlur(2)))
+        self.assertCheck('tilt_shift', photo.filter(ImageFilter.GaussianBlur(3)))
+        self.assertCheck('noise_reduction', photo.filter(ImageFilter.MedianFilter(5)))
+        self.assertCheck('texture', photo.filter(ImageFilter.GaussianBlur(1.5)), quote='smooth the skin',
+                         direction='decrease')
+        self.assertCheck('invert', ImageOps.invert(photo))
+        self.assertCheck('flip', ImageOps.mirror(photo), quote='flip it horizontally')
+        self.assertCheck('posterize', ImageOps.posterize(photo, 2))
+        self.assertCheck('threshold', photo.convert('L').point(lambda v: 255 if v > 128 else 0).convert('RGB'))
+        rgb = np.asarray(photo, dtype=np.float32)
+        noisy = np.clip(rgb + np.random.default_rng(3).normal(0, 12, rgb.shape), 0, 255).astype('uint8')
+        self.assertCheck('grain', Image.fromarray(noisy))
+        h, w = rgb.shape[:2]
+        yy, xx = np.ogrid[:h, :w]
+        fall = np.clip(1.2 - 0.6 * np.hypot((xx - w / 2) / (w / 2), (yy - h / 2) / (h / 2)), 0, 1)[..., None]
+        self.assertCheck('vignette', Image.fromarray((rgb * np.minimum(fall, 1)).astype('uint8')),
+                         direction='decrease')
+        magenta = np.clip(rgb + np.array([12, -12, 12]), 0, 255).astype('uint8')
+        self.assertCheck('tint', Image.fromarray(magenta), direction='increase')
+        orange = Image.blend(photo, Image.new('RGB', photo.size, '#f77f00'), 0.25)
+        self.assertCheck('color_filter', orange, color='orange')
+        hsv = np.asarray(photo.convert('HSV')).copy()
+        hsv[..., 0] = (hsv[..., 0].astype(int) + 20) % 256
+        turned = Image.merge('HSV', [Image.fromarray(hsv[..., channel]) for channel in range(3)])
+        self.assertCheck('hue_shift', turned.convert('RGB'), color='blue')
+        self.assertCheck('tone_curve', ImageEnhance.Contrast(photo).enhance(1.4))
+
+    def test_a_faint_change_the_right_way_is_marked_weak(self):
+        from image_studio.pipelines import checks
+        from PIL import ImageFilter
+
+        import numpy as np
+
+        board = (np.indices((120, 160)).sum(axis=0) % 2).astype(np.uint8)
+        photo = Image.fromarray((100 + 50 * board).astype(np.uint8)).convert('RGB')
+        slightly = Image.fromarray((99 + 52 * board).astype(np.uint8)).convert('RGB')  # +4% detail
+        record = checks.run(0, lang.blank('sharpen'), photo, slightly, [], [], False)[0]
+        self.assertFalse(record['passed'])
+        self.assertTrue(record.get('weak'))
+        wrong_way = checks.run(0, lang.blank('sharpen'), photo, photo.filter(ImageFilter.GaussianBlur(2)), [], [],
+                               False)[0]
+        self.assertFalse(wrong_way.get('weak'))
+
+    def test_only_faint_amounts_without_a_written_number_are_run_again(self):
+        from image_studio.integrations import photocraft_workspace as ws
+
+        plan = {'planner': 'brain', 'steps': [], 'edits': [
+            lang.blank('brightness', direction='increase', strength='subtle'),
+            lang.blank('vibrance', direction='increase', value=12.0),
+            lang.blank('temperature', direction='increase', strength='strong'),
+            lang.blank('contrast', direction='increase')]}
+        checks = [{'requirement': i, 'measured': True, 'passed': False, 'weak': True} for i in range(4)]
+        checks.append({'requirement': 3, 'measured': True, 'passed': False})  # also failed another way
+        self.assertEqual(ws.too_faint(plan, checks), [0])
+        self.assertEqual(ws.too_faint({**plan, 'planner': 'manual'}, checks), [])
+        self.assertEqual(ws.too_faint({**plan, 'steps': [{'command': 'studio.ai_layer'}]}, checks), [])
+
+
 class ContractTests(unittest.TestCase):
     SCHEMA = {'type': 'object', 'properties': {
         'edits': {'type': 'array', 'maxItems': 2, 'items': {'type': 'object', 'properties': {
@@ -248,6 +340,52 @@ class ContractTests(unittest.TestCase):
 
     def test_portable_schema_drops_constraints_some_providers_reject(self):
         self.assertNotIn('maxItems', json.dumps(contract.portable(self.SCHEMA)))
+
+    def test_a_missing_menu_choice_is_asked_again_never_filled_with_the_first(self):
+        # A missing review verdict once read as “done”, the first value of its menu.
+        from image_studio.integrations import photocraft_planner as planner
+
+        for verdict in ({'note': 'x'}, {'verdict': '', 'note': 'x'}, {'verdict': None, 'note': 'x'}):
+            with self.subTest(verdict=verdict):
+                fixed, problems = contract.conform({'verdicts': [verdict]}, planner.REVIEW_SCHEMA)
+                self.assertIsNone(fixed['verdicts'][0]['verdict'])
+                self.assertEqual(len(problems), 1)
+        fixed, problems = contract.conform({'edits': [{'quote': 'x'}], 'preserve': [], 'questions': []},
+                                           planner.UNDERSTAND_SCHEMA)
+        self.assertIsNone(fixed['edits'][0]['action'])  # not “brightness”, the menu's first pipeline
+        self.assertTrue(any('action' in problem for problem in problems))
+
+    def test_a_near_spelling_is_not_a_menu_match(self):
+        menu = ['saturation', 'sharpen', 'vignette', 'blur_background']
+        self.assertIsNone(contract._menu_choice('desaturation', menu))  # the opposite edit
+        self.assertIsNone(contract._menu_choice('unsharpen', menu))
+        self.assertEqual(contract._menu_choice('vignettes', menu), 'vignette')
+        self.assertEqual(contract._menu_choice('Blur-Background', menu), 'blur_background')
+
+    def test_constraints_dropped_for_providers_are_checked_here(self):
+        schema = {'type': 'object', 'properties': {'boxes': {'type': 'array', 'items': {
+            'type': 'array', 'minItems': 4, 'maxItems': 4, 'items': {'type': 'number', 'minimum': 0, 'maximum': 1000}}},
+            'name': {'type': 'string', 'minLength': 2, 'maxLength': 5}}}
+        _, problems = contract.conform({'boxes': [[10, 20], [-50, 0, 4000, 900]], 'name': 'a'}, schema)
+        self.assertEqual(len(problems), 4)  # two numbers, one short box, one short name
+        fixed, problems = contract.conform({'boxes': [[0, 0, 500, 1000]], 'name': 'abcdefgh'}, schema)
+        self.assertEqual((problems, fixed['name']), ([], 'abcde'))
+
+    def test_the_review_reads_missing_or_skipped_verdicts_as_unclear(self):
+        from image_studio.integrations import photocraft_planner as planner
+
+        image = Image.new('RGB', (8, 8))
+        with patch.object(models, 'chat', return_value={'verdicts': [{'verdict': None, 'note': ''}]}):
+            verdicts = planner.review(['brighter', 'crop to 4:5'], ['keep the cat'], image, image)
+        self.assertEqual([v['verdict'] for v in verdicts], ['unclear', 'unclear', 'unclear'])
+        self.assertEqual([v['requirement'] for v in verdicts], [0, 1, None])
+
+    def test_grounder_boxes_past_the_grid_are_clipped(self):
+        from image_studio.services import segment
+
+        boxes = segment.parse_boxes(json.dumps([{'bbox_2d': [-50, 0, 4000, 900]}, {'bbox_2d': [1100, 0, 1200, 50]}]),
+                                    100, 100)
+        self.assertEqual(boxes, [(0, 0, 100, 90)])
 
 
 class ModelTests(unittest.TestCase):
@@ -298,6 +436,44 @@ class ModelTests(unittest.TestCase):
         with patch.object(models, 'chat', return_value={'boxes': [[100, 200, 300, 600]]}):
             boxes = segment.find_boxes_brain(Image.new('RGB', (1000, 1000)), 'the cat')
         self.assertEqual(boxes, [(200, 100, 600, 300)])
+
+    def test_rate_limits_and_server_errors_are_asked_again(self):
+        import urllib.error
+
+        calls, waits = [], []
+
+        class Reply:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *exc):
+                return False
+
+            def read(self):
+                return b'{"ok": true}'
+
+        def urlopen(request, timeout=0):
+            calls.append(request.full_url)
+            if len(calls) < 3:
+                raise urllib.error.HTTPError(request.full_url, 429 if len(calls) == 1 else 503, 'busy',
+                                             {'retry-after': '1'}, io.BytesIO(b'{}'))
+            return Reply()
+
+        with patch('urllib.request.urlopen', urlopen):
+            self.assertEqual(adapters._post('http://x/v1/chat', {}, {}, sleep=waits.append), {'ok': True})
+        self.assertEqual((len(calls), waits), (3, [1.0, 1.0]))
+
+        def refused(request, timeout=0):
+            raise urllib.error.HTTPError(request.full_url, 401, 'no', {}, io.BytesIO(b'bad key'))
+
+        with patch('urllib.request.urlopen', refused), self.assertRaises(RuntimeError):
+            adapters._post('http://x/v1/chat', {}, {}, sleep=waits.append)
+        self.assertEqual(len(waits), 2)  # a refused key is not asked again
+
+    def test_a_text_only_model_cannot_ground_or_check(self):
+        models.connect('grounder', preset='ollama', model='llama3', vision=False)
+        self.assertFalse(models.available('grounder'))
+        self.assertTrue(models.warnings('grounder'))
 
     def test_anthropic_messages_use_base64_images(self):
         adapter = adapters.Anthropic({'kind': 'anthropic'})
