@@ -9,6 +9,7 @@ from image_studio.services import agent
 from image_studio.services import assistant
 from image_studio.pipelines import models
 from image_studio.integrations import bridge
+from image_studio.integrations import krita_steps
 from image_studio.services import checker
 from image_studio.services import finish
 from image_studio.services import grading
@@ -585,15 +586,29 @@ def editor_plan(request, progress):
 
         with lock:
             if preview is not None and models.available('planner') and not agent.is_question(text):
-                # Parts the rules understand exactly ("make the buildings pastel pink") are planned
-                # by them; the brain plans the rest. (Measured: given the whole request, the brain
-                # sometimes dropped the recolor while planning the grade.)
-                known, rest = agent.partial_plan(text)
-                if rest:
-                    steps, notes = retoucher.plan(rest, preview, state, status=status, known=known, whole=text)
-                else:
-                    steps = known
-                how = 'brain'
+                # The same pipelines as PhotoCraft: chosen by the planner, built by code, translated
+                # into Krita's tools (krita_steps.py). What no pipeline can run in Krita goes to the
+                # Krita assistant below, which plans grades and Krita steps itself.
+                try:
+                    steps, notes, leftover, questions = krita_steps.plan(text, preview, state, status)
+                    how = 'pipelines'
+                except (ValueError, models.ModelAnswerError) as exc:
+                    steps, notes, leftover, questions = [], [f'Pipelines: {exc}'], [text], []
+                    how = 'brain'
+                notes += questions
+                if leftover:
+                    rest = '; '.join(leftover)
+                    # Parts the rules understand exactly ("make the buildings pastel pink") are planned
+                    # by them; the brain plans the rest. (Measured: given the whole request, the brain
+                    # sometimes dropped the recolor while planning the grade.)
+                    known, rest = agent.partial_plan(rest)
+                    extra, more = (retoucher.plan(rest, preview, state, status=status, known=known, whole=text)
+                                   if rest else (known, []))
+                    steps = steps + extra
+                    notes += more
+                    if steps and how == 'pipelines' and extra:
+                        notes.append('Planned by the Krita assistant (not a pipeline): ' + '; '.join(leftover))
+                        how = 'pipelines + brain'
             if not steps:
                 steps, how = agent.plan(text, state, preview, status=status)
     steps, how, notes = memory.finish(intent, steps, how, notes)
@@ -632,8 +647,24 @@ def editor_grade(request, progress):
 
 
 def editor_segment(request, progress):
-    """Bridge job: a selection mask for something described in words."""
+    """Bridge job: a selection mask for something described in words, for boxes a pipeline's
+    plan already found (percent of the picture), or for a colour range."""
     image = bridge.decode_png(request['image']).convert('RGB')
+    if request.get('color_range'):
+        return dict(mask=krita_steps.color_range_mask(image, request['color_range']), message='Selected by colour.')
+    if request.get('boxes'):
+        width, height = image.size
+        boxes = [[x * width / 100, y * height / 100, (x + w) * width / 100, (y + h) * height / 100]
+                 for x, y, w, h in request['boxes']]
+        if not segment.available():
+            mask = Image.new('L', image.size, 0)
+            for box in boxes:
+                mask.paste(255, [round(value) for value in box])
+            return dict(mask=mask, message='Selected the found boxes (install Outlines for exact edges).')
+        progress(0.5, desc=f'Outlining {request.get("target") or "it"}...')
+        with lock:
+            mask = segment.tidy(segment.outline(image, boxes))
+        return dict(mask=mask, message=f'Selected {request.get("target") or "it"}.')
     target = (request.get('target') or '').strip()
     if not target:
         raise ValueError('Say what to select.')

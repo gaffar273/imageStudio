@@ -14,7 +14,7 @@ SEGMENT_LONGEST = 1536
 # Extra picture around a selection for AI edits, as a share of its size.
 CONTEXT = 0.5
 AI_STEPS = {'select', 'ai_edit', 'ai_generate', 'remove_background', 'enhance', 'fix_faces', 'save_to_library',
-            'say', 'new_canvas', 'grade'}
+            'say', 'new_canvas', 'grade', 'select_color'}
 
 
 def b64(data):
@@ -190,8 +190,17 @@ class Run:
                 self.done()
                 return False
             image = fit(ops.projection(doc), SEGMENT_LONGEST)
-            self.submit(dict(kind='segment', target=step['target'], image=b64(encode(image))),
-                        lambda result: self.selected(doc, result))
+            body = dict(kind='segment', target=step['target'], image=b64(encode(image)))
+            if step.get('boxes'):
+                # Found when the plan was made (percent of the picture): only outlined now.
+                body['boxes'] = step['boxes']
+            self.submit(body, lambda result: self.selected(doc, result))
+            return True
+        if op == 'select_color':
+            image = fit(ops.projection(doc), SEGMENT_LONGEST)
+            mode = step.get('mode', 'replace')
+            self.submit(dict(kind='segment', target='colours', color_range=step['spec'], image=b64(encode(image))),
+                        lambda result: self.selected(doc, result, mode))
             return True
         if op == 'remove_background':
             image = fit(ops.projection(doc), SEGMENT_LONGEST)
@@ -213,7 +222,10 @@ class Run:
             return True
         if op == 'grade':
             body = dict(kind='grade', layers=step['layers'], image=b64(encode(ops.projection(doc))))
-            self.submit(body, lambda result: self.add_grade(doc, label, result))
+            # A pipeline's local adjustment: the grade shows only inside the selection it made.
+            where = ops.current_selection(doc) if step.get('within_selection') else None
+            where = where.duplicate() if where is not None else None
+            self.submit(body, lambda result: self.add_grade(doc, label, result, where))
             return True
         if op in ('enhance', 'fix_faces'):
             body = dict(kind='enhance' if op == 'enhance' else 'faces', scale=step.get('scale', 1.0),
@@ -222,8 +234,8 @@ class Run:
             return True
         raise ops.StepError(f'Unknown step {op}.')
 
-    def selected(self, doc, result):
-        doc.setSelection(ops.mask_selection(doc, image_from(result['mask'])))
+    def selected(self, doc, result, mode='replace'):
+        ops.combine(doc, ops.mask_selection(doc, image_from(result['mask'])), mode)
         ops.settle(doc)
         return result.get('message')
 
@@ -243,10 +255,10 @@ class Run:
         ops.settle(area['doc'])
         return result.get('message')
 
-    def add_grade(self, doc, label, result):
+    def add_grade(self, doc, label, result, selection=None):
         layers = [(item['name'], image_from(item['image']), image_from(item['mask']) if item.get('mask') else None,
                    item.get('opacity', 100)) for item in result.get('layers') or []]
-        ops.add_grade(doc, label, layers)
+        ops.add_grade(doc, label, layers, selection)
         ops.settle(doc)
         return result.get('message')
 

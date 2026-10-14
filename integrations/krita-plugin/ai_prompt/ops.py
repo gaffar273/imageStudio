@@ -9,8 +9,8 @@ operations that Ctrl+Z undoes."""
 import math
 from xml.sax.saxutils import escape
 from krita import Krita, Selection
-from .qt import (ARGB32, GRAY8, QByteArray, QColor, QImage, QPainter, QPointF, QRadialGradient, raw_bytes,
-                 scaled_exact)
+from .qt import (ARGB32, GRAY8, QByteArray, QColor, QImage, QPainter, QPointF, QRadialGradient, Qt, raw_bytes,
+                 scaled_exact, scoped)
 
 RGB8 = ('RGBA', 'U8', 'sRGB-elle-V2-srgbtrc.icc')
 
@@ -56,16 +56,32 @@ def scale_px(doc, value):
     return max(1, round(value * max(doc.width(), doc.height()) / 1500))
 
 
+_active = {}  # the layer each document's steps last made active (Krita has none without a window)
+
+
+def activate(doc, node):
+    doc.setActiveNode(node)
+    _active[id(doc)] = node
+
+
+def active_node(doc):
+    """The active layer; in a headless Krita, the one the last step made active."""
+    node = doc.activeNode()
+    if node is None:
+        node = _active.get(id(doc))
+    return node
+
+
 def insert(doc, node, above=None):
     """Add `node` above the active layer (or `above`) and make it active."""
-    reference = above or doc.activeNode()
+    reference = above or active_node(doc)
     if reference is None or reference.parentNode() is None:
         root = doc.rootNode()
         children = root.childNodes()
         root.addChildNode(node, children[-1] if children else None)
     else:
         reference.parentNode().addChildNode(node, reference)
-    doc.setActiveNode(node)
+    activate(doc, node)
     return node
 
 
@@ -155,7 +171,7 @@ def color_of(name, default='white'):
 def find_layer(doc, name):
     """The layer named `name` (exact, then partial, ignoring case), or the active one."""
     if not name or str(name).lower() in ('active', 'this', 'current', 'this layer', 'the active layer'):
-        return doc.activeNode()
+        return active_node(doc)
     wanted = str(name).lower().strip().strip('"')
     nodes = list(walk(doc.rootNode()))
     for node, _ in nodes:
@@ -176,7 +192,7 @@ def walk(node, depth=0):
 
 def bottom_paint_layer(doc):
     """The layer to cut out: the active paint layer, else the lowest paint layer."""
-    active = doc.activeNode()
+    active = active_node(doc)
     if active is not None and active.type() == 'paintlayer':
         return active
     paint = [node for node, depth in walk(doc.rootNode()) if node.type() == 'paintlayer' and depth == 0]
@@ -209,16 +225,52 @@ def new_canvas(width=1024, height=1024, **_):
     window = app().activeWindow()
     if window is not None:
         window.addView(doc)
-    doc.setActiveNode(background)
+    activate(doc, background)
     settle(doc)
     return f'New {width} × {height} canvas.'
 
 
-def select_box(doc, x, y, w, h, **_):
-    selection = Selection()
-    selection.select(round(doc.width() * x / 100), round(doc.height() * y / 100),
-                     max(1, round(doc.width() * w / 100)), max(1, round(doc.height() * h / 100)), 255)
+def combine(doc, selection, mode='replace'):
+    """Make `selection` the document's selection, or add it to, take it from or intersect it with
+    the current one."""
+    current = current_selection(doc)
+    if mode in ('add', 'subtract', 'intersect') and current is not None:
+        getattr(current, mode)(selection)
+        selection = current
+    elif mode in ('subtract', 'intersect'):
+        selection = Selection()  # taken from, or overlapping, nothing
     doc.setSelection(selection)
+
+
+def require_selection(doc, what, **_):
+    """Stop when a selection a pipeline needs came out empty: in Krita an empty selection means
+    the whole picture, so the next filter would change everything."""
+    if current_selection(doc) is None:
+        raise StepError(f'Could not find {what} in the picture.')
+
+
+def select_box(doc, x, y, w, h, ellipse=False, mode='replace', feather=0, **_):
+    """A rectangle (or the ellipse inside it) in percent of the picture, kept inside the canvas."""
+    left, top = round(doc.width() * x / 100), round(doc.height() * y / 100)
+    width, height = max(1, round(doc.width() * w / 100)), max(1, round(doc.height() * h / 100))
+    if ellipse:
+        mask = QImage(doc.width(), doc.height(), GRAY8)
+        mask.fill(QColor(0, 0, 0))
+        painter = QPainter(mask)
+        painter.setRenderHint(scoped(QPainter, 'RenderHint', 'Antialiasing'))
+        painter.setPen(scoped(Qt, 'PenStyle', 'NoPen'))
+        painter.setBrush(QColor(255, 255, 255))
+        painter.drawEllipse(left, top, width, height)
+        painter.end()
+        selection = mask_selection(doc, mask)
+    else:
+        selection = Selection()
+        x0, y0 = max(0, left), max(0, top)
+        x1, y1 = min(doc.width(), left + width), min(doc.height(), top + height)
+        selection.select(x0, y0, max(1, x1 - x0), max(1, y1 - y0), 255)
+    if feather:
+        selection.feather(scale_px(doc, feather))
+    combine(doc, selection, mode)
 
 
 def select_all(doc):
@@ -348,10 +400,11 @@ def recolor_selection(doc, color, label, **_):
     return f'{target.name()}, lightness {shift:+d}'
 
 
-def add_grade(doc, label, layers):
+def add_grade(doc, label, layers, selection=None):
     """A grade from Image Studio as a group on top of the picture: one layer per grade layer
     (the picture as graded up to that point), each with its mask and opacity, so any part
-    can be hidden, faded or repainted. `layers`: [(name, QImage, QImage mask or None, 0..100)]."""
+    can be hidden, faded or repainted. `layers`: [(name, QImage, QImage mask or None, 0..100)].
+    With a `selection`, the whole group shows only there."""
     group = doc.createGroupLayer(label)
     root = doc.rootNode()
     children = root.childNodes()
@@ -368,7 +421,11 @@ def add_grade(doc, label, layers):
             layer.addChildNode(transparency, None)
             transparency.setSelection(mask_selection(doc, mask))
         below = layer
-    doc.setActiveNode(group)
+    if selection is not None:
+        where = doc.createTransparencyMask('Selection')
+        group.addChildNode(where, None)
+        where.setSelection(selection)
+    activate(doc, group)
     return group
 
 
@@ -551,6 +608,25 @@ def crop(doc, aspect, **_):
     return f'{new_w} × {new_h}'
 
 
+def crop_rect(doc, x, y, w, h, **_):
+    """Crop to a rectangle in pixels (a pipeline's exact frame)."""
+    x, y = max(0, int(x)), max(0, int(y))
+    w, h = min(int(w), doc.width() - x), min(int(h), doc.height() - y)
+    if w < 1 or h < 1:
+        raise StepError('The crop is outside the picture.')
+    doc.crop(x, y, w, h)
+    settle(doc)
+    return f'{w} × {h}'
+
+
+def canvas_size(doc, x, y, w, h, **_):
+    """A larger (or smaller) canvas; x and y place the old picture's corner, so negative values
+    add room on the left and top. New room is transparent."""
+    doc.resizeImage(int(x), int(y), int(w), int(h))
+    settle(doc)
+    return f'{int(w)} × {int(h)}'
+
+
 def crop_to_selection(doc, **_):
     selection = current_selection(doc)
     if selection is None:
@@ -596,7 +672,7 @@ def new_layer(doc, name, **_):
 
 
 def duplicate_layer(doc, **_):
-    node = doc.activeNode()
+    node = active_node(doc)
     if node is None:
         raise StepError('There is no layer to copy.')
     copy = node.duplicate()
@@ -621,11 +697,11 @@ def rename_layer(doc, name, **_):
 
 
 def select_layer(doc, layer, **_):
-    doc.setActiveNode(find_layer(doc, layer))
+    activate(doc, find_layer(doc, layer))
 
 
 def need_node(doc):
-    node = doc.activeNode()
+    node = active_node(doc)
     if node is None:
         raise StepError('Select a layer first.')
     return node
@@ -658,6 +734,79 @@ def move_layer(doc, dx, dy, **_):
     node.move(position.x() + round(doc.width() * dx / 100), position.y() + round(doc.height() * dy / 100))
 
 
+def send_to_back(doc, **_):
+    """Move the active layer under everything else in its group."""
+    node = need_node(doc)
+    parent = node.parentNode()
+    if parent is None:
+        return
+    # childNodes() lists bottom first; addChildNode(node, None) would put it on top.
+    others = [child for child in parent.childNodes() if child != node]
+    parent.setChildNodes([node] + others)
+    activate(doc, node)
+
+
+def filter_layer(doc, filter, props, label, **_):
+    """A Krita filter layer with the settings a pipeline computed (hue/saturation, colour balance)."""
+    adjustment(doc, label, filter, **props)
+
+
+def paint_fill(doc, color, label, **_):
+    """A new paint layer with the colour painted where the selection is (soft edges kept as
+    transparency), so later steps can blur or mask the paint itself, as PhotoCraft's fill does."""
+    image = QImage(doc.width(), doc.height(), ARGB32)
+    image.fill(color_of(color))
+    selection = current_selection(doc)
+    if selection is not None:
+        alpha = QImage(doc.width(), doc.height(), GRAY8)
+        alpha.fill(QColor(0, 0, 0))
+        data = bytes(selection.pixelData(selection.x(), selection.y(), selection.width(), selection.height()))
+        part = QImage(data, selection.width(), selection.height(), selection.width(), GRAY8)
+        painter = QPainter(alpha)
+        painter.drawImage(selection.x(), selection.y(), part)
+        painter.end()
+        image.setAlphaChannel(alpha)
+    pixel_layer(doc, label, image)
+
+
+def apply_filter(doc, filter, props, label, **_):
+    """A Krita filter applied to the active layer's own pixels (a layer a pipeline painted, such as
+    a shadow), inside the selection if there is one."""
+    node = need_node(doc)
+    if node.type() != 'paintlayer':
+        raise StepError(f'{label} needs a paint layer.')
+    found = app().filter(filter)
+    if found is None:
+        raise StepError(f'This Krita has no {filter} filter.')
+    config = found.configuration()
+    for key, value in props.items():
+        config.setProperty(key, value)
+    found.setConfiguration(config)
+    selection = current_selection(doc)
+    if selection is not None:
+        found.apply(node, selection.x(), selection.y(), selection.width(), selection.height())
+    else:
+        found.apply(node, 0, 0, doc.width(), doc.height())
+
+
+def mask_from_selection(doc, invert, label, **_):
+    """Hide the active layer outside the selection (or inside it, with `invert`) with a mask,
+    as a cut-out does; the paint layer under the active filter layers is used when the active
+    layer is not one."""
+    selection = current_selection(doc)
+    if selection is None:
+        raise StepError('Nothing is selected to mask with.')
+    node = active_node(doc)
+    if node is None or node.type() != 'paintlayer':
+        node = bottom_paint_layer(doc)
+    where = selection.duplicate()
+    if invert:
+        where.invert()
+    mask = doc.createTransparencyMask(label)
+    node.addChildNode(mask, None)
+    mask.setSelection(where)
+
+
 def merge_down(doc, **_):
     need_node(doc).mergeDown()
 
@@ -681,7 +830,8 @@ LOCAL = {name: function for name, function in globals().items() if callable(func
     'oil_paint', 'emboss', 'edges', 'vignette', 'round_corners', 'crop', 'crop_to_selection', 'resize', 'rotate',
     'flip', 'new_layer', 'duplicate_layer', 'delete_layer', 'rename_layer', 'select_layer', 'layer_opacity',
     'blend_mode', 'hide_layer', 'show_layer', 'move_layer', 'merge_down', 'flatten', 'fill', 'add_text', 'undo',
-    'redo', 'recolor_selection'}}
+    'redo', 'recolor_selection', 'crop_rect', 'canvas_size', 'send_to_back', 'filter_layer', 'mask_from_selection',
+    'require_selection', 'paint_fill', 'apply_filter'}}
 
 
 def run_local(doc, step, label):

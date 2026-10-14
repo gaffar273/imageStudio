@@ -342,13 +342,15 @@ def cached_adapters(folder):
         kind.complete = complete
 
 
-def connect_planner(text):
+def connect_planner(text, structured=''):
     """--planner preset[:model]: the planner and checker use it; the grounder too when the model is
-    known to give boxes on the grid, else it stays on the bundled model (as the app does)."""
+    known to give boxes on the grid, else it stays on the bundled model (as the app does).
+    `structured` overrides what the preset says the server enforces (--structured none for a server
+    with no JSON mode, so the schema is spelled out in the instructions)."""
     from image_studio.pipelines import models
 
     preset, _, model = text.partition(':')
-    spec = {'preset': preset, **({'model': model} if model else {})}
+    spec = {'preset': preset, **({'model': model} if model else {}), **({'structured': structured} if structured else {})}
     models.connect('planner', **spec)
     models.connect('checker', **spec)
     if models.can_ground(spec):
@@ -453,6 +455,8 @@ def main():
     parser.add_argument('--planner', default='',
                         help='preset[:model] for the planner and checker, e.g. anthropic:claude-opus-5-5, '
                              'ollama:qwen3-vl:8b, openai:<model> (default: the bundled model)')
+    parser.add_argument('--structured', default='', choices=['', 'json_schema', 'json_object', 'none'],
+                        help='what the --planner server enforces, when its preset says otherwise')
     parser.add_argument('--menu', default='', choices=['', 'full', 'categories'],
                         help='the planner menu: every pipeline at once, or categories first')
     parser.add_argument('--photos', default='', help='a folder with the bench photos as <name>.png/.jpg '
@@ -476,7 +480,7 @@ def main():
         brain.chat = cached_chat(cache)
         cached_adapters(cache)
     if args.planner:
-        print('Models:', json.dumps(connect_planner(args.planner), ensure_ascii=False))
+        print('Models:', json.dumps(connect_planner(args.planner, args.structured), ensure_ascii=False))
     pool = [case for name, cases in SETS.items() if args.set in (name, 'all') for case in cases]
     cases = [case for case in pool if args.only.lower() in (case[0] + ' ' + case[2]).lower()]
     sources = dict(PHOTOS)
