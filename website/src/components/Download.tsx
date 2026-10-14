@@ -11,7 +11,7 @@ const needs = [
   { icon: Monitor, k: 'System', v: 'Windows 10 or 11, 64-bit' },
   { icon: Cpu, k: 'Graphics', v: 'NVIDIA, 8 GB of video memory', note: 'or cloud mode with a key' },
   { icon: MemoryStick, k: 'Memory', v: '16 GB of RAM' },
-  { icon: HardDrive, k: 'Disk', v: `${facts.engine} engine + 7–17 GB per model` },
+  { icon: HardDrive, k: 'Disk', v: `${facts.engine} engine + 7 to 17 GB per model` },
   { icon: Wifi, k: 'Internet', v: 'Only to download, or for cloud' },
 ]
 
