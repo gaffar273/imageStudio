@@ -1,4 +1,4 @@
-"""The app icon (the sidebar's lime aperture on a dark tile) as image-studio.ico and image-studio.png.
+"""The app icon (a white aperture on the accent-blue tile, as on the website) as image-studio.ico and image-studio.png.
 
 Run by build.py with the bundled Python, which has Qt: python make_icon.py OUTPUT_FOLDER
 """
@@ -24,9 +24,9 @@ def tile(size):
     painter = QPainter(image)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing)
     painter.setPen(Qt.PenStyle.NoPen)
-    painter.setBrush(QColor(theme.RAISED))
+    painter.setBrush(QColor(theme.ACCENT))
     painter.drawRoundedRect(QRectF(0, 0, size, size), size * 0.22, size * 0.22)
-    svg = (theme.ICONS / 'aperture.svg').read_text(encoding='utf-8').replace('currentColor', theme.LIME)
+    svg = (theme.ICONS / 'aperture.svg').read_text(encoding='utf-8').replace('currentColor', theme.ON_ACCENT)
     if size <= 32:  # thin strokes vanish at small sizes
         svg = svg.replace('stroke-width="2"', 'stroke-width="2.6"')
     margin = size * (0.12 if size <= 32 else 0.18)
