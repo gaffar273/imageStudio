@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { AnimatePresence, motion, useInView } from 'motion/react'
 import { ReactCompareSlider, ReactCompareSliderHandle, ReactCompareSliderImage } from 'react-compare-slider'
-import { Brush, Check, Crop, Eye, Image as ImageIcon, Layers, MessageSquareText, RotateCcw, SunMedium, Type, Wand2 } from 'lucide-react'
+import { Brush, MessageSquareText, RotateCcw, SunMedium, Wand2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AppIcon, Em, Intro } from './ui'
 
@@ -43,31 +43,6 @@ const demos: Demo[] = [
     chips: ['PhotoCraft', 'On this PC', '1.8 s'],
     ratio: '1400 / 933',
   },
-  {
-    id: 'plan',
-    tab: 'Plan a retouch',
-    icon: Layers,
-    request:
-      "Make the sunset sky more dramatic, brighten the friends a little, crop to 16:9 and add 'Summer 2026' at the top in a bold white serif with a shadow. Keep their faces natural.",
-    reply: 'I understood 4 changes. Nothing runs until you press Apply.',
-    chips: ['PhotoCraft studio', 'Plan from a real session'],
-  },
-]
-
-const plan = [
-  { icon: SunMedium, quote: 'Make the sunset sky more dramatic', does: 'Develop: contrast +35, clarity +40, dehaze +16, highlights −40', layer: 'Sky · Develop' },
-  { icon: ImageIcon, quote: 'brighten the friends a little', does: 'Find the friends, then brightness on a masked layer', layer: 'The friends · Brightness' },
-  { icon: Crop, quote: 'crop to 16:9', does: 'Crop to 1344 × 756', layer: 'Crop 16:9' },
-  { icon: Type, quote: "add 'Summer 2026' at the top", does: 'Text · 56.7 pt Georgia, white, top, drop shadow', layer: 'Summer 2026 · Type' },
-]
-
-// Where the assistant found each person, as a share of the picture.
-const boxes = [
-  [9, 13, 17, 87],
-  [26, 13, 16, 87],
-  [42, 15, 17, 85],
-  [59, 13, 16, 87],
-  [75, 11, 20, 89],
 ]
 
 export function EditDemo() {
@@ -129,7 +104,7 @@ export function EditDemo() {
                 transition={{ duration: 0.3 }}
                 className="flex h-full items-center justify-center"
               >
-                {demo.id === 'plan' ? <PlanStage key={run} start={inView} /> : <Compare demo={demo} />}
+                <Compare demo={demo} />
               </motion.div>
             </AnimatePresence>
           </div>
@@ -141,13 +116,11 @@ export function EditDemo() {
 }
 
 function Chat({ demo, start, onReplay }: { demo: Demo; start: boolean; onReplay: () => void }) {
-  const [stage, setStage] = useState(0) // 0 nothing, 1 request, 2 thinking, 3 reply, 4+ plan steps
+  const [stage, setStage] = useState(0) // 0 nothing, 1 request, 2 thinking, 3 reply
   useEffect(() => {
     if (!start) return
     const at = [150, 650, 1500]
-    const extra = demo.id === 'plan' ? plan.length + 1 : 0
     const timers = at.map((t, i) => window.setTimeout(() => setStage(i + 1), t))
-    for (let i = 0; i < extra; i++) timers.push(window.setTimeout(() => setStage(4 + i), 1900 + i * 520))
     return () => timers.forEach(window.clearTimeout)
   }, [start, demo.id])
 
@@ -171,6 +144,7 @@ function Chat({ demo, start, onReplay }: { demo: Demo; start: boolean; onReplay:
         <AnimatePresence>
           {stage >= 1 && (
             <motion.div
+              key="request"
               initial={{ opacity: 0, y: 10, scale: 0.98 }}
               animate={{ opacity: 1, y: 0, scale: 1 }}
               className="ml-auto max-w-[88%] rounded-[20px] rounded-br-md bg-ink px-4 py-3 text-[14.5px] leading-relaxed text-white"
@@ -179,7 +153,7 @@ function Chat({ demo, start, onReplay }: { demo: Demo; start: boolean; onReplay:
             </motion.div>
           )}
           {stage === 2 && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-fit gap-1 rounded-[18px] rounded-bl-md bg-tint px-4 py-3.5">
+            <motion.div key="thinking" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="flex w-fit gap-1 rounded-[18px] rounded-bl-md bg-tint px-4 py-3.5">
               {[0, 1, 2].map((i) => (
                 <motion.span
                   key={i}
@@ -192,6 +166,7 @@ function Chat({ demo, start, onReplay }: { demo: Demo; start: boolean; onReplay:
           )}
           {stage >= 3 && (
             <motion.div
+              key="reply"
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
               className="max-w-[92%] rounded-[20px] rounded-bl-md bg-tint px-4 py-3 text-[14.5px] leading-relaxed text-ink"
@@ -204,31 +179,6 @@ function Chat({ demo, start, onReplay }: { demo: Demo; start: boolean; onReplay:
                   </span>
                 ))}
               </div>
-            </motion.div>
-          )}
-          {demo.id === 'plan' &&
-            plan.map(
-              (s, i) =>
-                stage >= 4 + i && (
-                  <motion.div
-                    key={s.quote}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
-                    className="flex max-w-[92%] gap-3 rounded-2xl border border-line bg-card px-3.5 py-3"
-                  >
-                    <span className="grid size-7 shrink-0 place-items-center rounded-full bg-accent-soft text-accent">
-                      <s.icon className="size-3.5" />
-                    </span>
-                    <span className="min-w-0">
-                      <span className="block text-[13.5px] font-medium">“{s.quote}”</span>
-                      <span className="mt-0.5 block text-[12.5px] leading-snug text-muted">{s.does}</span>
-                    </span>
-                  </motion.div>
-                ),
-            )}
-          {demo.id === 'plan' && stage >= 4 + plan.length && (
-            <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="flex items-center gap-2 pl-1 text-[13px] text-body">
-              <Check className="size-4 text-ok" /> Kept: their faces natural
             </motion.div>
           )}
         </AnimatePresence>
@@ -258,68 +208,5 @@ function Compare({ demo }: { demo: Demo }) {
         After
       </span>
     </div>
-  )
-}
-
-function PlanStage({ start }: { start: boolean }) {
-  const [step, setStep] = useState(0)
-  useEffect(() => {
-    if (!start) return
-    const timers = [1, 2, 3, 4, 5].map((s) => window.setTimeout(() => setStep(s), 1400 + s * 520))
-    return () => timers.forEach(window.clearTimeout)
-  }, [start])
-
-  return (
-    <div className="relative w-full max-w-[760px]">
-      <div className="relative overflow-hidden rounded-[20px] shadow-card" style={{ aspectRatio: '1344 / 768' }}>
-        <img src="media/demo-plan.webp" alt="Five friends waving on a beach at sunset" className="h-full w-full object-cover" />
-        {step >= 2 &&
-          boxes.map(([x, y, w, h], i) => (
-            <motion.span
-              key={i}
-              className="absolute rounded-md border-[1.5px] border-dashed border-[#a3e635]"
-              style={{ left: `${x}%`, top: `${y}%`, width: `${w}%`, height: `${h}%` }}
-              initial={{ opacity: 0, scale: 1.05 }}
-              animate={{ opacity: 1, scale: 1 }}
-              transition={{ delay: i * 0.07 }}
-            />
-          ))}
-        {step >= 2 && (
-          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} className="absolute top-[5%] left-[9%] rounded bg-[#a3e635] px-1.5 py-0.5 text-[11.5px] font-semibold text-[#1a2e05]">
-            the friends
-          </motion.span>
-        )}
-      </div>
-      {/* The layers the plan will add, one per change */}
-      <div className="relative -mt-14 ml-auto mr-3 w-[250px] rounded-2xl border border-line bg-card/95 p-2 shadow-float backdrop-blur sm:-mt-24 sm:mr-[-12px]">
-        <div className="flex items-center gap-2 px-2 py-1.5 text-[12.5px] font-semibold">
-          <Layers className="size-3.5" /> Layers <span className="ml-auto font-normal text-muted">planned</span>
-        </div>
-        <div className="flex flex-col-reverse">
-          <LayerRow name="Background" kind="Pixel" />
-          {plan.map((s, i) => (
-            <AnimatePresence key={s.layer}>{step >= i + 1 && <LayerRow name={s.layer} kind="New layer" fresh />}</AnimatePresence>
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function LayerRow({ name, kind, fresh }: { name: string; kind: string; fresh?: boolean }) {
-  return (
-    <motion.div
-      initial={fresh ? { opacity: 0, height: 0 } : false}
-      animate={{ opacity: 1, height: 'auto' }}
-      className="overflow-hidden"
-    >
-      <div className={cn('flex items-center gap-2.5 rounded-xl px-2 py-1.5', fresh && 'bg-accent-soft/60')}>
-        <Eye className="size-3.5 text-muted" />
-        <span className="min-w-0">
-          <span className="block truncate text-[12.5px] font-medium">{name}</span>
-          <span className="block text-[11px] text-muted">{kind}</span>
-        </span>
-      </div>
-    </motion.div>
   )
 }

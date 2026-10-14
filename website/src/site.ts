@@ -8,6 +8,7 @@ export const REPO = `https://github.com/${OWNER}/${NAME}`
 export const links = {
   repo: REPO,
   releases: `${REPO}/releases`,
+  latest: `${REPO}/releases/latest`,
   watch: `${REPO}/subscription`,
   issues: `${REPO}/issues/new`,
   question: `${REPO}/issues/new?labels=question&title=${encodeURIComponent('Question: ')}`,
@@ -26,10 +27,10 @@ export const facts = {
 export const clone = `git clone ${REPO}.git`
 
 export const nav = [
+  { id: 'systematic', label: 'How it edits' },
   { id: 'demos', label: 'Demos' },
-  { id: 'tour', label: 'Tour' },
   { id: 'features', label: 'Features' },
-  { id: 'guide', label: 'How to use' },
+  { id: 'guide', label: 'Guide' },
   { id: 'download', label: 'Download' },
   { id: 'help', label: 'Help' },
 ] as const

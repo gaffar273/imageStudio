@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
-import { NAME, OWNER } from '@/site'
+import { NAME, OWNER, links } from '@/site'
 
 export type Asset = { url: string; name: string; size: string }
 
 export type Release =
   | { state: 'loading' }
-  | { state: 'none' } // nothing published yet, or GitHub could not be reached
+  | { state: 'none' } // nothing published yet
+  | { state: 'unknown' } // GitHub could not be asked (offline, or its hourly limit for this network)
   | { state: 'ready'; version: string; date: string; page: string; windows?: Asset; linux?: Asset }
 
 const KEY = 'image-studio-release'
@@ -55,13 +56,17 @@ function load(): Promise<Release> {
   pending ??= fetch(`https://api.github.com/repos/${OWNER}/${NAME}/releases?per_page=10`, {
     headers: { Accept: 'application/vnd.github+json' },
   })
-    .then((r) => (r.ok ? (r.json() as Promise<GitHubRelease[]>) : []))
+    .then((r) => {
+      if (!r.ok) throw new Error(`GitHub answered ${r.status}`)
+      return r.json() as Promise<GitHubRelease[]>
+    })
     .then((list) => {
       const latest = list.find((x) => !x.draft && !x.prerelease)
       return latest ? parse(latest) : ({ state: 'none' } as Release)
     })
-    .catch(() => ({ state: 'none' }) as Release)
+    .catch(() => ({ state: 'unknown' }) as Release)
     .then((release) => {
+      if (release.state === 'unknown') return release // ask again on the next page load
       try {
         sessionStorage.setItem(KEY, JSON.stringify({ at: Date.now(), release }))
       } catch {
@@ -84,4 +89,11 @@ export function useRelease(): Release {
     }
   }, [release.state])
   return release
+}
+
+/** The Windows installer to link to. When GitHub could not be asked, the latest release page stands in for it. */
+export function windowsDownload(release: Release): Asset | undefined {
+  if (release.state === 'ready') return release.windows
+  if (release.state === 'unknown') return { url: links.latest, name: '', size: '' }
+  return undefined
 }

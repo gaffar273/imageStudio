@@ -14,9 +14,9 @@ import { cn } from '@/lib/utils'
 import { Button, Em, GitHubIcon } from './ui'
 import { byId, type Picture } from '@/content'
 import { links } from '@/site'
-import { useRelease } from '@/hooks/useRelease'
+import { useRelease, windowsDownload } from '@/hooks/useRelease'
 
-const reel = ['seaside', 'umbrella', 'market', 'baking', 'neon'].map(byId)
+const reel = ['seaside', 'umbrella', 'shelter', 'baking', 'sign'].map(byId)
 const steps: Record<string, number> = { 'RealVisXL 5.0': 30, 'Z-Image Turbo': 9, 'SDXL Turbo': 4 }
 
 const prints: { id: string; className: string; rotate: number; depth: number }[] = [
@@ -29,6 +29,7 @@ const prints: { id: string; className: string; rotate: number; depth: number }[]
 
 export function Hero() {
   const release = useRelease()
+  const windows = windowsDownload(release)
   const ref = useRef<HTMLDivElement>(null)
   const mx = useSpring(useMotionValue(0), { stiffness: 60, damping: 18 })
   const my = useSpring(useMotionValue(0), { stiffness: 60, damping: 18 })
@@ -60,12 +61,12 @@ export function Hero() {
             Write it. <Em>Watch it develop.</Em>
           </h1>
           <p className="mx-auto mt-6 max-w-[56ch] text-[17px] leading-relaxed text-body sm:text-[19px]">
-            Image Studio makes pictures from a sentence and edits photos when you describe the change. It runs the
-            models on your own graphics card and keeps every file on your PC.
+            Image Studio makes pictures from a sentence and edits photos like a retoucher: your request becomes
+            a plan of exact edits on real layers. It runs on your own graphics card and keeps every file on your PC.
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
-            {release.state === 'ready' && release.windows ? (
-              <Button variant="primary" size="lg" href={release.windows.url}>
+            {windows ? (
+              <Button variant="primary" size="lg" href={windows.url}>
                 <ArrowDownToLine className="size-[18px]" /> Download for Windows
               </Button>
             ) : (
@@ -73,13 +74,15 @@ export function Hero() {
                 <Eye className="size-[18px]" /> Watch for the release
               </Button>
             )}
-            <Button size="lg" href="#demos">
-              See it work <ArrowRight className="size-[18px] transition-transform group-hover/btn:translate-x-0.5" />
+            <Button size="lg" href="#systematic">
+              See how it edits <ArrowRight className="size-[18px] transition-transform group-hover/btn:translate-x-0.5" />
             </Button>
           </div>
           <p className="mt-4 text-[13.5px] text-muted">
             {release.state === 'ready' && release.windows
               ? `Version ${release.version} · ${release.windows.size} · Windows 10 and 11, 64-bit`
+              : release.state === 'unknown'
+                ? 'Windows 10 and 11, 64-bit · from GitHub Releases'
               : release.state === 'none'
                 ? 'The Windows installer is on its way. Until then, it runs from the source on GitHub.'
                 : 'Free for Windows 10 and 11, 64-bit'}

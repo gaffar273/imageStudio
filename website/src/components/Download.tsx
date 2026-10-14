@@ -4,7 +4,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { BorderBeam } from '@/components/ui/border-beam'
 import { AppIcon, Button, Em, GitHubIcon, Intro, WindowsIcon } from './ui'
-import { useRelease } from '@/hooks/useRelease'
+import { useRelease, windowsDownload } from '@/hooks/useRelease'
 import { clone, facts, links } from '@/site'
 
 const needs = [
@@ -44,9 +44,9 @@ function CopyLine({ text }: { text: string }) {
 export function Download() {
   const release = useRelease()
   const ready = release.state === 'ready'
-  const windows = ready ? release.windows : undefined
+  const windows = windowsDownload(release)
   const linux = ready ? release.linux : undefined
-  const page = ready ? release.page : links.releases
+  const page = ready ? release.page : release.state === 'unknown' ? links.latest : links.releases
 
   return (
     <section id="download" className="scroll-mt-24 px-4 py-24 sm:px-5 sm:py-32">
@@ -78,6 +78,7 @@ export function Download() {
               <div className="mt-1 text-[14px] text-muted">
                 {release.state === 'loading' && 'Checking GitHub for the latest release…'}
                 {release.state === 'none' && 'Installer coming soon'}
+                {release.state === 'unknown' && 'The latest version, from GitHub Releases'}
                 {ready && windows && `Version ${release.version} · ${windows.size} · ${release.date}`}
                 {ready && !windows && `Version ${release.version} has no Windows installer attached`}
               </div>
@@ -102,14 +103,25 @@ export function Download() {
                   Release notes <ArrowUpRight className="size-4" />
                 </Button>
               </div>
-              <p className="relative mt-3 font-mono text-[12px] text-muted">{windows.name}</p>
+              {windows.name && <p className="relative mt-3 font-mono text-[12px] text-muted">{windows.name}</p>}
               <div className="relative mt-7 flex gap-3 rounded-2xl bg-amber-50/80 px-4 py-3.5 text-[13.5px] leading-relaxed text-body">
                 <ShieldAlert className="mt-0.5 size-4 shrink-0 text-amber-600" />
-                <p>
-                  The installer is not code-signed yet, so Windows SmartScreen asks once. Choose{' '}
-                  <strong className="font-semibold text-ink">More info</strong>, then{' '}
-                  <strong className="font-semibold text-ink">Run anyway</strong>.
-                </p>
+                <div>
+                  <p>The installer is new and not code-signed yet, so Windows checks with you twice:</p>
+                  <ol className="mt-1.5 list-decimal space-y-1 pl-4">
+                    <li>
+                      If Edge says it <span className="text-ink">isn’t commonly downloaded</span>: open the{' '}
+                      <strong className="font-semibold text-ink">⋯</strong> menu next to the file, choose{' '}
+                      <strong className="font-semibold text-ink">Keep</strong>, then{' '}
+                      <strong className="font-semibold text-ink">Show more</strong> and{' '}
+                      <strong className="font-semibold text-ink">Keep anyway</strong>.
+                    </li>
+                    <li>
+                      When you run it: <strong className="font-semibold text-ink">More info</strong>, then{' '}
+                      <strong className="font-semibold text-ink">Run anyway</strong>.
+                    </li>
+                  </ol>
+                </div>
               </div>
             </>
           ) : (

@@ -1,14 +1,14 @@
 import { ArrowDownToLine, Eye } from 'lucide-react'
 import { Button, Em, GitHubIcon, Logo } from './ui'
-import { useRelease } from '@/hooks/useRelease'
+import { useRelease, windowsDownload } from '@/hooks/useRelease'
 import { links, nav, ORG } from '@/site'
 import { byId } from '@/content'
 
-const strip = ['seaside', 'fox', 'umbrella', 'chef', 'lake', 'market', 'lighthouse'].map(byId)
+const strip = ['seaside', 'fox', 'umbrella', 'chef', 'lake', 'shelter', 'lighthouse'].map(byId)
 
 export function Footer() {
   const release = useRelease()
-  const windows = release.state === 'ready' ? release.windows : undefined
+  const windows = windowsDownload(release)
   return (
     <footer className="px-3 pb-3 sm:px-4 sm:pb-4">
       <div className="relative overflow-hidden rounded-[34px] bg-ink text-white">

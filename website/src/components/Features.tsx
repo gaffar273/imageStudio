@@ -188,10 +188,10 @@ function PipelinesVisual() {
 
 function LayersVisual() {
   const layers = [
-    { name: 'Summer 2026', kind: 'Type', tone: 'bg-white' },
-    { name: 'Vignette', kind: 'Adjustment · mask', tone: 'bg-white' },
-    { name: 'Warm the sky', kind: 'Adjustment · mask', tone: 'bg-white' },
-    { name: 'Background', kind: 'Original pixels', tone: 'bg-white' },
+    { name: 'Best friends', kind: 'Type', tone: 'bg-white' },
+    { name: 'Brighter dog', kind: 'Adjustment · mask', tone: 'bg-white' },
+    { name: 'Cooler room', kind: 'Camera Raw · mask', tone: 'bg-white' },
+    { name: 'Photo', kind: 'Original pixels', tone: 'bg-white' },
   ]
   return (
     <div className="absolute inset-0 flex items-center justify-center pt-16 [perspective:900px]">
@@ -207,7 +207,7 @@ function LayersVisual() {
             )}
           >
             {i === layers.length - 1 && (
-              <img src="media/demo-plan.webp" alt="" className="absolute inset-0 h-full w-full rounded-xl object-cover opacity-90" />
+              <img src="media/demo-plan-after.webp" alt="" className="absolute inset-0 h-full w-full rounded-xl object-cover opacity-90" />
             )}
             <span className="relative flex items-center gap-1.5 rounded-md bg-white/90 px-2 py-1 text-[11px] font-medium shadow-sm">
               <Eye className="size-3 text-muted" /> {l.name}
@@ -273,7 +273,8 @@ function ChecksVisual() {
   const ref = useRef<HTMLDivElement>(null)
   const inView = useInView(ref, { amount: 0.5 })
   const [done, setDone] = useState(0)
-  const checks = ['Aspect ratio is 16:9', 'Text reads “Summer 2026”', 'Text sits at the top', 'The sky has more contrast', 'The friends got brighter']
+  // The measured checks from the real PhotoCraft run in Systematic.tsx, and its kept cat.
+  const checks = ['Aspect ratio is 16:9 (1216 × 684)', 'Text reads exactly “Best friends”', 'Text sits at the top and fits', 'The cat was kept unchanged']
   useEffect(() => {
     if (!inView) return
     setDone(0)

@@ -10,20 +10,31 @@ const Path = ({ children }: { children: ReactNode }) => (
 
 const faq: { q: string; a: ReactNode }[] = [
   {
-    q: 'When can I download it?',
+    q: 'How do I get new versions?',
     a: (
       <>
-        The first Windows installer is being prepared for GitHub Releases, and this page switches to the download by
-        itself once it is published. Watch the repository to get an email, or run it from source today.
+        Every version is published on{' '}
+        <a href={links.releases} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
+          GitHub Releases
+        </a>
+        , and the download buttons on this page always point to the newest one. To get an email when one comes out,
+        watch the repository: <strong>Watch</strong>, then <strong>Custom</strong>, then <strong>Releases</strong>.
       </>
     ),
   },
   {
-    q: 'Windows says “Windows protected your PC”. Is that expected?',
+    q: 'Edge says the installer “isn’t commonly downloaded”. Is that expected?',
     a: (
       <>
-        Yes. The installer is not code-signed yet, so SmartScreen asks once. Choose <strong>More info</strong>, then{' '}
-        <strong>Run anyway</strong>. It installs for your user only.
+        Yes. Microsoft SmartScreen warns about any installer that is new and not code-signed yet, until enough people
+        have downloaded it. In Edge, open the <strong>⋯</strong> menu next to the download, choose <strong>Keep</strong>,
+        then <strong>Show more</strong> and <strong>Keep anyway</strong>. When you run it and Windows says “Windows
+        protected your PC”, choose <strong>More info</strong>, then <strong>Run anyway</strong>. It installs for your
+        user only. You can check the file against the SHA-256 in the{' '}
+        <a href={links.latest} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
+          release notes
+        </a>
+        .
       </>
     ),
   },

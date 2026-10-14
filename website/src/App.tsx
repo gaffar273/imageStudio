@@ -5,6 +5,7 @@ import { Toaster } from 'sonner'
 import { Nav } from './components/Nav'
 import { Hero } from './components/Hero'
 import { WorksWith } from './components/WorksWith'
+import { Systematic } from './components/Systematic'
 import { EditDemo } from './components/EditDemo'
 import { Tour } from './components/Tour'
 import { Features } from './components/Features'
@@ -37,7 +38,7 @@ export default function App() {
   return (
     <ReactLenis root options={{ lerp: 0.12, anchors: { offset: -80 } }}>
       <a
-        href="#demos"
+        href="#systematic"
         className="sr-only focus:not-sr-only focus:fixed focus:top-3 focus:left-3 focus:z-[60] focus:rounded-full focus:bg-ink focus:px-4 focus:py-2 focus:text-white"
       >
         Skip to content
@@ -47,6 +48,7 @@ export default function App() {
       <main>
         <Hero />
         <WorksWith />
+        <Systematic />
         <EditDemo />
         <Tour />
         <Features />
