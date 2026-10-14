@@ -14,8 +14,22 @@ npm run build     # static site in dist/
 npm run preview   # serve dist/ on http://127.0.0.1:4173
 ```
 
-`dist/` is a plain static site: upload it to any static host (Cloudflare Pages, Netlify, Vercel,
-GitHub Pages) and point agslabs.tech at it.
+`dist/` is a plain static site with relative URLs, so it works at a domain root and at a sub-path.
+
+## Hosting
+
+`.github/workflows/website.yml` builds the site and publishes it with GitHub Pages on every push to
+`main` that changes `website/`. Once, in the repository's **Settings → Pages**, set **Source** to
+**GitHub Actions**; the site is then at https://gaffar273.github.io/imageStudio/.
+
+For agslabs.tech, add these DNS records at the domain's registrar, then enter `agslabs.tech` under
+**Settings → Pages → Custom domain** and tick **Enforce HTTPS** once the certificate is issued:
+
+| Type  | Name | Value |
+| ----- | ---- | ----- |
+| A     | @    | 185.199.108.153, 185.199.109.153, 185.199.110.153, 185.199.111.153 (one record each) |
+| AAAA  | @    | 2606:50c0:8000::153, 2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153 |
+| CNAME | www  | gaffar273.github.io |
 
 ## Downloads follow the GitHub release
 
