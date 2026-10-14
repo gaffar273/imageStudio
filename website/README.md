@@ -18,18 +18,10 @@ npm run preview   # serve dist/ on http://127.0.0.1:4173
 
 ## Hosting
 
-`.github/workflows/website.yml` builds the site and publishes it with GitHub Pages on every push to
-`main` that changes `website/`. Once, in the repository's **Settings → Pages**, set **Source** to
-**GitHub Actions**; the site is then at https://gaffar273.github.io/imageStudio/.
-
-For agslabs.tech, add these DNS records at the domain's registrar, then enter `agslabs.tech` under
-**Settings → Pages → Custom domain** and tick **Enforce HTTPS** once the certificate is issued:
-
-| Type  | Name | Value |
-| ----- | ---- | ----- |
-| A     | @    | 185.199.108.153, 185.199.109.153, 185.199.110.153, 185.199.111.153 (one record each) |
-| AAAA  | @    | 2606:50c0:8000::153, 2606:50c0:8001::153, 2606:50c0:8002::153, 2606:50c0:8003::153 |
-| CNAME | www  | gaffar273.github.io |
+Hosted on Vercel: import the `gaffar273/imageStudio` repository and set **Root Directory** to
+`website`. Vercel detects Vite (build `npm run build`, output `dist`) and redeploys on every push to
+`main`. Add `agslabs.tech` under the project's **Domains** and enter the DNS records Vercel shows at
+the domain's registrar.
 
 ## Downloads follow the GitHub release
 

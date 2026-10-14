@@ -152,8 +152,14 @@ export function Download() {
               )}
             </div>
             <p className="mt-4 text-[14px] leading-relaxed text-body">
-              Unpack it and run <code className="rounded bg-tint px-1.5 py-0.5 font-mono text-[12.5px]">./install.sh</code>. It
-              has seen little testing so far, so reports are welcome.
+              {linux ? (
+                <>
+                  Unpack it and run <code className="rounded bg-tint px-1.5 py-0.5 font-mono text-[12.5px]">./install.sh</code>.
+                  It has seen little testing so far, so reports are welcome.
+                </>
+              ) : (
+                'A Linux build is not in this release yet. Until then, run it from source.'
+              )}
             </p>
           </div>
           <div className="rounded-[30px] border border-line bg-card p-7 shadow-card">
