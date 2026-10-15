@@ -221,7 +221,11 @@ refused key or a server that is not running is not.
 `IMAGE_STUDIO_PLANNER_MENU`), the planner first names the kinds of edit the request needs, then
 chooses from those categories' pipelines only: the menu it reads drops from 18,600 characters to
 about 8,000 for a two-category request, however many pipelines the studio grows. The default stays
-`"full"` until the benchmark says otherwise (see Evaluation).
+`"full"`: on the bundled model the two-step menu failed 11 of the first 89 bench requests, against
+1 of 233 with the full menu (2026-10-15). The first step names the wrong kinds of edit (“brighten
+her eyes” as light, not portrait; “remove the wrinkles” as repair), and the second cannot recover.
+Nor is it faster: the full menu sits in the model's prompt cache, so after the first request it
+costs nothing to read.
 
 **Each pipeline's own choices.** A pipeline with a `choice` slot declares its options (the seasons,
 the looks, the artistic filters). A choice in other spelling is mapped to the option; a choice that
