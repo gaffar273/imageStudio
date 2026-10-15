@@ -1068,6 +1068,10 @@ class PhotoCraftPage(QWidget):
                 self.area = False
             if old is None or document is None or old['id'] != document['id']:
                 self.zoom.setCurrentIndex(0)
+                if document is not None and self.ready:
+                    # The planner model loads while the photo is looked at (it took 37 s, paid by
+                    # the first request otherwise); the engine skips it when the GPU is in use.
+                    self.client.post('/api/photocraft/warm', {}, None, lambda error: None, timeout=10000)
         if document is None:
             self.canvas.current = self.canvas.original = None
             self.canvas.set_document(None)

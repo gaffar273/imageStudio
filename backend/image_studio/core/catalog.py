@@ -103,14 +103,19 @@ REALISM_LORA = WORK / 'realism-lora' / 'final'
 REALISM_DEFAULT = 0.6
 
 # Select by description in the editor: the prompt assistant (Qwen3-VL) finds each box,
-# SAM 2.1 large (Meta, Apache 2.0; Ultralytics' packaging) outlines what is inside it.
+# SAM 2.1 tiny (Meta, Apache 2.0; Ultralytics' packaging) outlines what is inside it. Tiny took
+# 0.09 s an outline on the GPU beside the editing brain (569 MB at most) where large took 7.3 s
+# on the processor, and agreed with large at a median IoU of 0.98 on 15 faces, people and
+# objects; where they differed (small faces in a group) large was the one that missed, taking
+# hair for a face (measured 2026-10-15). A large file already installed is still used.
 SEGMENT = {
     'repo': 'ultralytics/assets',
-    'url': 'https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_l.pt',
-    'file': 'sam2.1_l.pt',
-    'size': 449239354,
+    'url': 'https://github.com/ultralytics/assets/releases/download/v8.3.0/sam2.1_t.pt',
+    'file': 'sam2.1_t.pt',
+    'size': 78105722,
     'folder': WORK / 'segment-model',
 }
+SEGMENT_EARLIER = {'file': 'sam2.1_l.pt', 'size': 449239354}
 
 # The editing brain: Qwen3.5-9B (Apache 2.0), a vision-language model that looks at the photo,
 # plans professional edits and checks its own grades (brain.py). 4-bit GGUF served by a pinned

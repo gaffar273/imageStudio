@@ -83,7 +83,7 @@ PARTS = [
          'Looks at the photo and plans typed edits in Krita and PhotoCraft.', 7.3, 'about 7.3 GB',
          HUB + BRAIN['repo'], flag('brain'), windows_only=True, steps=[download('brain')]),
     Part('segment', 'Outlines (SAM 2.1)', 'Traces the exact outline of a person or thing you select.', 0.45,
-         'about 450 MB', 'https://docs.ultralytics.com/models/sam-2/', flag('segment'), steps=[download('segment')]),
+         'about 80 MB', 'https://docs.ultralytics.com/models/sam-2/', flag('segment'), steps=[download('segment')]),
     Part('repair', 'Face and hand repair', 'Finds faces and hands in a new picture so they can be redrawn.', 0.1,
          'about 100 MB', HUB + REPAIR['repo'], flag('repair'), steps=[download('repair')]),
     Part('search', 'Visual search (EmbeddingGemma 2)',

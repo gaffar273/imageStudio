@@ -1,6 +1,6 @@
 # Pipeline catalog
 
-Generated from the registry by `scripts/pipeline_catalog.py`: 115 pipelines, 24 professional workflows and 91 procedures. See `docs/pipeline-engine.md` for how they are chosen, built and checked.
+Generated from the registry by `scripts/pipeline_catalog.py`: 123 pipelines, 24 professional workflows and 99 procedures. See `docs/pipeline-engine.md` for how they are chosen, built and checked.
 
 A **procedure** builds PhotoCraft commands itself. A **workflow** is a professional job made of procedures; it expands into them, they are ordered by stage with everything else in the request, and each one is checked on its own. The planner (any connected model) only chooses the pipeline id and fills slots from closed menus; every setting below is computed by the pipeline.
 
@@ -117,14 +117,14 @@ A fine-art black and white print: a high-contrast mix, an S-curve, fine grain an
 Procedures: `black_and_white` → `tone_curve` → `grain` → `vignette`
 Answers: “make it a dramatic fine art black and white”
 
-### `photo_correction` — General photo correction
+### `photo_correction` — Professional photo develop
 
 *workflow*
 
-A vague request to fix or improve a photo (“fix this photo”, “make it look better”, “enhance it”): measured exposure, neutral color, a little life and crispness.
+Develop or fix a photo the way a retoucher does a camera file (“fix this photo”, “make it look better”, “enhance it”, “develop this raw”, “edit my DSLR photo professionally”, “refine this shot”): white balance, black and white points, midtones, contrast, colour, noise, sharpening, sky, horizon and a subtle vignette, each measured from the photo and skipped when it is not needed.
 
-Procedures: `exposure_fix` → `auto_fix` → `vibrance` → `clarity` → `sharpen`
-Answers: “fix this photo”; “make this picture look better”
+Procedures: `develop_white_balance` → `develop_tone` → `develop_color` → `develop_noise` → `develop_sharpen` → `develop_sky` → `develop_level` → `develop_vignette`
+Answers: “fix this photo”; “make this picture look better”; “develop this raw photo like a pro”; “edit this DSLR shot professionally”
 
 ### `scan_restore` — Scanned photo restoration
 

@@ -90,6 +90,23 @@ def require_selection(engine, folder, params, context):
     return {'coverage': coverage}
 
 
+def compose_curves(first, then):
+    """One point curve that does `first` and then `then` (each [[in, out], …] on 0..255)."""
+    if not first:
+        return then
+
+    def apply(points, value):
+        points = sorted(points)
+        if value <= points[0][0]:
+            return points[0][1]
+        for (x0, y0), (x1, y1) in zip(points, points[1:]):
+            if value <= x1:
+                return y0 + (y1 - y0) * (value - x0) / max(x1 - x0, 1e-6)
+        return points[-1][1]
+
+    return [[x, round(apply(then, apply(first, x)))] for x in range(0, 256, 16)] + [[255, round(apply(then, apply(first, 255)))]]
+
+
 def develop(engine, folder, params, context):
     """Camera Raw settings on the photo as one editable smart filter; repeated requests
     add to the existing settings instead of stacking another filter."""
@@ -102,6 +119,10 @@ def develop(engine, folder, params, context):
         if item.get('command') == 'filter.cameraRaw':
             merged = dict(item.get('params') or {})
             for key, value in wanted.items():
+                if isinstance(value, list):
+                    # A curve measured on the developed photo follows the curve already there.
+                    merged[key] = compose_curves(merged.get(key), value)
+                    continue
                 low, high = (-5, 5) if key == 'exposure' else (0, 150) if key == 'sharpenAmount' else \
                     (0, 100) if key in ('noiseLuminance', 'noiseColor', 'grainAmount', 'grainSize') else (-100, 100)
                 merged[key] = max(low, min(high, round(merged.get(key, 0) + value, 2)))
@@ -241,19 +262,26 @@ def select_outline(engine, folder, params, context):
     boxes = [box for box in params['boxes'] if box[2] > 1 and box[3] > 1]
     mode = params.get('mode', 'replace')
     if segment.available() and boxes:
-        if context.get('progress'):
-            context['progress'](desc=f'Outlining {params.get("what", "the subject")}…')
-        probe = folder / '_outline.png'
-        engine.call('doc.render', {'path': str(probe), 'maxSide': min(1536, max(width, height))})
-        with Image.open(probe) as picture:
-            image = picture.convert('RGB')
-        probe.unlink(missing_ok=True)
-        scale = image.width / width
-        missing = []
-        mask = segment.tidy(segment.outline(image, [
-            (round(x * scale), round(y * scale), round((x + w) * scale), round((y + h) * scale))
-            for x, y, w, h in boxes], missing))
-        rings = outline_rings(np.asarray(mask) > 127, 1 / scale)
+        # Several jobs on the same face (blemishes, then smoothing) trace the same outline: it is
+        # traced once per plan. Each trace was a SAM run of 6 to 22 s on the CPU (measured 2026-10-15).
+        key = (width, height, tuple(tuple(box) for box in boxes))
+        traced = context.setdefault('outlines', {}).get(key)
+        if traced is None:
+            if context.get('progress'):
+                context['progress'](desc=f'Outlining {params.get("what", "the subject")}…')
+            probe = folder / '_outline.png'
+            engine.call('doc.render', {'path': str(probe), 'maxSide': min(1536, max(width, height))})
+            with Image.open(probe) as picture:
+                image = picture.convert('RGB')
+            probe.unlink(missing_ok=True)
+            scale = image.width / width
+            missing = []
+            mask = segment.tidy(segment.outline(image, [
+                (round(x * scale), round(y * scale), round((x + w) * scale), round((y + h) * scale))
+                for x, y, w, h in boxes], missing))
+            traced = context['outlines'][key] = (outline_rings(np.asarray(mask) > 127, 1 / scale), missing,
+                                                 float((np.asarray(mask) > 127).mean()))
+        rings, missing, coverage = traced
         if rings:
             for number, (points, cut) in enumerate(rings):
                 ex(engine, 'select.lasso', {'points': points, 'antiAlias': True,
@@ -261,7 +289,7 @@ def select_outline(engine, folder, params, context):
             # A box SAM found nothing in falls back to PhotoCraft's own selection, not a rectangle.
             for index in missing:
                 ex(engine, 'select.object', {'rect': boxes[index], 'mode': 'add', 'sampleAllLayers': True})
-            return {'coverage': float((np.asarray(mask) > 127).mean()), 'outlined': True}
+            return {'coverage': coverage, 'outlined': True}
     for number, box in enumerate(boxes):
         ex(engine, 'select.object', {'rect': box, 'mode': mode if number == 0 else 'add', 'sampleAllLayers': True})
     return {}

@@ -252,12 +252,12 @@ def download_kontext():
 
 
 def download_segment():
-    """SAM 2.1 large from Ultralytics' release assets, resuming a partial file."""
+    """SAM 2.1 tiny from Ultralytics' release assets, resuming a partial file."""
     import urllib.request
 
     SEGMENT['folder'].mkdir(parents=True, exist_ok=True)
     target = SEGMENT['folder'] / SEGMENT['file']
-    print('Downloading SAM 2.1 large (about 450 MB). Interrupted downloads can be resumed.', flush=True)
+    print('Downloading SAM 2.1 tiny (about 80 MB). Interrupted downloads can be resumed.', flush=True)
     while not target.exists() or target.stat().st_size < SEGMENT['size']:
         done = target.stat().st_size if target.exists() else 0
         request = urllib.request.Request(SEGMENT['url'], headers={'Range': f'bytes={done}-'})

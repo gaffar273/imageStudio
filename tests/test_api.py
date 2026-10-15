@@ -178,6 +178,40 @@ class JobTests(unittest.TestCase):
         next_job = store.submit(lambda progress, update: update(message='Saved'))
         self.assertEqual(self.wait_for(store, next_job['id'])['state'], 'done')
 
+    def test_the_planner_warms_up_only_on_an_idle_gpu(self):
+        from image_studio.api import photocraft as api
+        from image_studio.pipelines import models
+        from image_studio.services import assistant, brain
+
+        started = threading.Event()
+
+        class Loading:
+            def __init__(self, *args, **kwargs):
+                started.set()
+
+            def __enter__(self):
+                return {}
+
+            def __exit__(self, *exc):
+                return False
+
+        self.client = TestClient(app)
+        local = {'planner': {'kind': 'local'}}
+        with patch.object(brain, 'available', return_value=True), \
+                patch.object(models, 'settings', return_value=local), \
+                patch.object(assistant, 'Resident', Loading), \
+                patch.object(assistant, 'kept_kind', return_value=None), \
+                patch.object(workflows.engine, 'model_key', None), \
+                patch.object(api.store, 'active', None):
+            self.assertTrue(self.client.post('/api/photocraft/warm').json()['warming'])
+            self.assertTrue(started.wait(5))
+            with patch.object(api.store, 'active', 'a-job'):  # never pushes out something in use
+                self.assertFalse(self.client.post('/api/photocraft/warm').json()['warming'])
+            with patch.object(workflows.engine, 'model_key', 'realistic'):
+                self.assertFalse(self.client.post('/api/photocraft/warm').json()['warming'])
+            with patch.object(models, 'settings', return_value={'planner': {'kind': 'anthropic'}}):
+                self.assertFalse(self.client.post('/api/photocraft/warm').json()['warming'])
+
 
 if __name__ == '__main__':
     unittest.main()

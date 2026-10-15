@@ -473,24 +473,195 @@ def duotone(index, edit, before, after, boxes, pairs, geometry):
                     top_two > 0.7)]
 
 
+def retouch_portrait(index, edit, before, after, boxes, pairs, geometry, spots=()):
+    """Healed spots: each spot's difference from the skin around it must mostly go."""
+    if not spots or not _same_frame(before, after, geometry):
+        return []
+    old, new = _luma(before), _luma(after)
+    height, width = old.shape
+    faded = []
+    for x, y, w, h in spots:
+        cx, cy, radius = (x + w / 2) * width, (y + h / 2) * height, w * width / 4
+        x0, y0 = max(0, int(cx - 4 * radius)), max(0, int(cy - 4 * radius))
+        x1, y1 = min(width, int(cx + 4 * radius) + 1), min(height, int(cy + 4 * radius) + 1)
+        yy, xx = np.mgrid[y0:y1, x0:x1]
+        distance = np.hypot(xx - cx, yy - cy)
+        core, ring = distance <= max(radius, 1), (distance >= 2 * radius) & (distance <= 3.5 * radius)
+        if not core.any() or not ring.any():
+            continue
+        contrast = [abs(float(image[y0:y1, x0:x1][core].mean() - image[y0:y1, x0:x1][ring].mean()))
+                    for image in (old, new)]
+        if contrast[0] > 0.01:
+            faded.append(contrast[1] / contrast[0])
+    if not faded:
+        return []
+    healed = sum(1 for share in faded if share < 0.5)
+    return [_record(index, f'{healed} of {len(faded)} spots lost at least half their difference from the skin '
+                           f'around them', healed >= 0.7 * len(faded))]
+
+
+# ---- A camera develop: each step is checked on what it promised, and only when it changed anything.
+# These read whole-picture statistics, so a horizon straightened in the same develop does not stop them.
+
+
+def _planned(before, step):
+    from image_studio.pipelines.library.camera_develop import read
+
+    return read(before)[step][0]
+
+
+def _yardstick(before, after, steps):
+    """`before` with only the named develop steps, at the size of `after`."""
+    from image_studio.pipelines.library.camera_develop import preview
+
+    return preview(before, steps).resize(after.size)
+
+
+def _small(image, side=512):
+    picture = image.convert('RGB')
+    picture.thumbnail((side, side))
+    return np.asarray(picture, dtype=np.float32) / 255
+
+
+def _reduced(image, side):
+    picture = image.convert('RGB')
+    picture.thumbnail((side, side))
+    return picture
+
+
+def _tonal_range(image):
+    luma = _luma(_reduced(image, 512))
+    low, high = np.percentile(luma, [0.5, 99.5])
+    return float(low), float(high)
+
+
+def develop_white_balance(index, edit, before, after, boxes, pairs, geometry):
+    from image_studio.pipelines.library import camera_develop as cd
+
+    if not _planned(before, 'white_balance'):
+        return []
+
+    def off_neutral(image):
+        readings = [cd._unit(r) for r in cd.light_colour(_small(image))]
+        return cd._angle(np.exp(np.mean(np.log(readings), axis=0)), np.ones(3)) if readings else None
+
+    # Against the photo with only the develop's curve: on a dark night shot the curve alone moved
+    # the reading by 4° (measured on a neon sign), which is not the white balance's doing.
+    old, new = off_neutral(_yardstick(before, after, {'tone'})), off_neutral(after)
+    if old is None or new is None:
+        return []
+    return [_record(index, f'the light read {old:.1f}° from neutral → {new:.1f}°', new < old or new < 1.5)]
+
+
+def develop_tone(index, edit, before, after, boxes, pairs, geometry):
+    planned = _planned(before, 'tone')
+    if not planned:
+        return []
+    records = []
+    if 'pointCurve' in planned:
+        (a0, a1), (b0, b1) = _tonal_range(before), _tonal_range(after)
+        records.append(_record(index, f'tonal range {a0:.0%}–{a1:.0%} → {b0:.0%}–{b1:.0%}', b1 - b0 > a1 - a0 + 0.03))
+    if 'highlights' in planned:
+        old, new = float((_luma(before) >= 0.98).mean()), float((_luma(after) >= 0.98).mean())
+        records.append(_record(index, f'clipped white {old:.1%} → {new:.1%}', new < old))
+    if 'contrast' in planned and 'pointCurve' not in planned:
+        old, new = float(_luma(before).std()), float(_luma(after).std())
+        records.append(_record(index, f'tonal spread {old:.3f} → {new:.3f}', new > old))
+    return records
+
+
+def develop_color(index, edit, before, after, boxes, pairs, geometry):
+    if not _planned(before, 'colour'):
+        return []
+
+    def colour(image):
+        a = _small(image, 256)
+        high = a.max(axis=-1)
+        sat = (high - a.min(axis=-1)) / np.maximum(high, 1e-3)
+        luma = 0.2126 * a[..., 0] + 0.7152 * a[..., 1] + 0.0722 * a[..., 2]
+        coloured = (luma > 0.1) & (luma < 0.95) & (sat > 0.1)
+        return float(sat[coloured].mean()) if coloured.any() else 0.0
+
+    old, new = colour(before), colour(after)
+    return [_record(index, f'saturation of the coloured parts {old:.0%} → {new:.0%}', new > old)]
+
+
+def _per_range(image, value):
+    low, high = _tonal_range(image)
+    return value / max(high - low, 0.05)
+
+
+def develop_noise(index, edit, before, after, boxes, pairs, geometry):
+    """Grain against the photo's tonal range: stretching the tones stretches the grain with them."""
+    from image_studio.pipelines.measure import noise
+
+    old, new = noise(before, None, None, []), noise(after, None, None, [])
+    if old is None or new is None or old < 1.8:
+        return []
+    a, b = _per_range(before, old), _per_range(after, new)
+    return [_record(index, f'grain for the tonal range {a:.1f} → {b:.1f}', b < a)]
+
+
+def develop_sharpen(index, edit, before, after, boxes, pairs, geometry):
+    """The strongest 5% of edges, against the tonal range (the curve steepens every edge too)."""
+    def edges(image):
+        luma = _luma(_reduced(image, 1024))
+        gy, gx = np.gradient(luma)
+        strength = np.hypot(gx, gy)
+        return float(strength[strength >= np.percentile(strength, 95)].mean())
+
+    a, b = _per_range(before, edges(before)), _per_range(after, edges(after))
+    return [_record(index, f'edge crispness for the tonal range {a:.4f} → {b:.4f} ({b / max(a, 1e-6) - 1:+.0%})',
+                    b > a * 1.02)]
+
+
+def develop_vignette(index, edit, before, after, boxes, pairs, geometry):
+    from image_studio.pipelines.library.camera_develop import read
+
+    border = read(before)['border']
+    if border['spread'] < 0.15 or border['white'] > 0.3:
+        return []
+
+    def corners_to_middle(image):
+        luma = _luma(_reduced(image, 256))
+        height, width = luma.shape
+        yy, xx = np.mgrid[0:height, 0:width]
+        r = np.hypot((xx - width / 2) / (width / 2), (yy - height / 2) / (height / 2)) / np.sqrt(2)
+        return float(luma[r > 0.8].mean() / max(luma[r < 0.4].mean(), 1e-3))
+
+    old, new = corners_to_middle(_yardstick(before, after, {'white_balance', 'tone'})), corners_to_middle(after)
+    return [_record(index, f'corners against the middle {old:.2f} → {new:.2f}', new < old - 0.01)]
+
+
+def develop_sky(index, edit, before, after, boxes, pairs, geometry):
+    from image_studio.pipelines.library.camera_develop import read
+
+    sky, border = read(before)['sky'], read(before)['border']
+    if sky['top'] - sky['rest'] < 0.15 or sky['top'] < 0.6 or border['spread'] < 0.15:
+        return []
+    return graduated_filter(index, {**edit, 'position': 'top'}, _yardstick(before, after, {'white_balance', 'tone'}),
+                            after, boxes, pairs, False)
+
+
 CHECKS = {check.__name__: check for check in (
     exposure_fix, tone_curve, graduated_filter, window_pull, keep_one_color, split_tone, season, light_leak, letterbox,
     polaroid, high_pass_sharpen, backlit_fix, product_frame, compose, sharpen, texture, noise_reduction, grain, blur,
     motion_blur, radial_blur, tilt_shift, vignette, tint, hue_shift, posterize, threshold, invert, flip,
-    color_filter, color_overlay, duotone)}
+    color_filter, color_overlay, duotone, retouch_portrait, develop_white_balance, develop_tone, develop_color,
+    develop_noise, develop_sharpen, develop_vignette, develop_sky)}
 
 
-def run(index, edit, before, after, boxes, pairs, geometry, others=()):
+def run(index, edit, before, after, boxes, pairs, geometry, others=(), spots=()):
     """The checks for one requirement. `others` are the other pipelines in the plan, for checks
-    that a second edit moving the same quantity would confound."""
+    that a second edit moving the same quantity would confound; `spots` the boxes of healed spots."""
     import inspect
 
     check = CHECKS.get(edit['action'])
     if check is None:
         return []
     try:
-        if 'others' in inspect.signature(check).parameters:
-            return check(index, edit, before, after, boxes or [], pairs or [], geometry, others=others)
-        return check(index, edit, before, after, boxes or [], pairs or [], geometry)
+        wanted = inspect.signature(check).parameters
+        extra = {name: value for name, value in (('others', others), ('spots', spots)) if name in wanted}
+        return check(index, edit, before, after, boxes or [], pairs or [], geometry, **extra)
     except (ValueError, IndexError, ZeroDivisionError):
         return []

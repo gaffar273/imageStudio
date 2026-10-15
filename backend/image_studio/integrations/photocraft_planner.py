@@ -66,6 +66,11 @@ def _example_text():
 
 
 ALWAYS = ('ai',)  # generate and other stay on every menu: the way out when nothing else fits
+# The size the planner reads the photo at. Reading the photo is most of a model call's fixed cost
+# (2.8 s at 1024 px, 1.4 s at 768, 0.7 s at 512 on the bundled model), but at 768 px the bench lost
+# three requests it passes at 1024 (“make his beard darker”, “warm, soft and bright with a little
+# skin smoothing”, “crop it using the rule of thirds around the cat”; 2026-10-15), so it stays 1024.
+PLANNER_SIDE = 1024
 
 
 def menu_mode():
@@ -190,7 +195,7 @@ def describe(state):
 
 def understand(prompt, preview, state, area=None):
     """(normalized edits, preserve notes, questions, normalization notes)."""
-    content = [models.image_part(preview)]
+    content = [models.image_part(preview, PLANNER_SIDE)]
     if area:
         from PIL import Image
 
@@ -198,7 +203,7 @@ def understand(prompt, preview, state, area=None):
         mask = mask_for(area, preview.width, preview.height)
         overlay = Image.new('RGB', preview.size, '#c4f477')
         marked = Image.composite(overlay, preview.convert('RGB'), mask.point(lambda value: round(value * .4)))
-        content += [models.image_part(marked), {'type': 'text', 'text':
+        content += [models.image_part(marked, PLANNER_SIDE), {'type': 'text', 'text':
             'The second image shows the exact user-marked area in green. The green is a selection overlay, '
             'not part of the photograph. Apply every requested edit only inside it. “Here”, “these spots”, '
             'or “this area” mean that selection; do not ask where it is or guess a wider target. '

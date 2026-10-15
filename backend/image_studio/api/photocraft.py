@@ -169,6 +169,40 @@ def library_document(request: LibraryDocument):
     return submit(run)
 
 
+@router.post('/warm')
+def warm():
+    """Start loading the bundled planner model while the person looks at the photo and types:
+    loading it took 37 s, paid by the first request otherwise (measured 2026-10-15). Only when the
+    GPU is idle: no job running, no image model loaded and no other model kept, so a warm-up never
+    pushes out something in use. A request that arrives meanwhile waits for the same load."""
+    import threading
+
+    from image_studio.pipelines import models
+    from image_studio.services import assistant, brain
+    from image_studio.services.runtime import render_session
+
+    spec = models.settings().get('planner', {})
+    if spec.get('kind', 'local') != 'local' or not brain.available():
+        return {'warming': False, 'reason': 'the planner is not the bundled model'}
+    if assistant.kept_kind() == 'brain':
+        return {'warming': False, 'reason': 'already loaded'}
+    if store.active or workflows.engine.model_key is not None or assistant.kept_kind() is not None:
+        return {'warming': False, 'reason': 'the GPU is in use'}
+    if not render_session.acquire(blocking=False):
+        return {'warming': False, 'reason': 'the GPU is in use'}
+    render_session.release()
+
+    def load():
+        try:
+            with assistant.Resident('brain', brain._start, keep=True):
+                pass
+        except (RuntimeError, OSError):
+            pass  # the first request starts it again and reports what went wrong
+
+    threading.Thread(target=load, daemon=True).start()
+    return {'warming': True}
+
+
 @router.get('/workspaces/{workspace_id}')
 def get_workspace(workspace_id: str):
     return guarded(lambda: workspace.public(workspace.load(workspace_id)))

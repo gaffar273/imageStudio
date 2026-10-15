@@ -191,7 +191,8 @@ def dust_cleanup(b, index, edit):
            'portrait retouching of faces: choice = smooth skin, blemishes (pimples, acne, spots), wrinkles, even skin '
            'tone, dark circles, shine, whiten teeth, brighten eyes, red eye, sculpt (dodge and burn)',
            options=tuple(job for job, _ in lang.RETOUCH_JOBS), many=True, whole_picture=True,
-           finds=lambda edit: lang.retouch_queries(edit), measures=('skin_colors', 'teeth', 'teeth_colors'),
+           finds=lambda edit: lang.retouch_queries(edit),
+           measures=('skin_colors', 'teeth', 'teeth_colors', 'blemishes'),
            examples=('smooth her skin a little', 'whiten their teeth', 'remove the dark circles under her eyes'))
 def retouch_portrait(b, index, edit):
     """A retoucher's jobs on faces, each done the way it is done by hand and each on its own layer."""
@@ -260,8 +261,39 @@ FACE_LABELS = {'smooth': 'Smoother skin', 'shine': 'Less shine', 'sculpt': 'Scul
                'wrinkles': 'Softer lines', 'blemishes': 'Softer skin'}
 
 
+def heal_spots(b, index, edit):
+    """A retoucher's blemish removal: one Spot Healing dab on each measured spot, on a new empty
+    layer that samples the photo, so the original pixels stay as they were. The spots come from
+    measure.blemishes, which leaves freckles and marks against the eyes, brows, lips and beard.
+
+    This replaced FLUX Kontext as the default: the AI layer took 374 s on a portrait (measured
+    2026-10-15) and can change a face; Dust & Scratches, the earlier fallback, removed no spot at
+    all and softened the glasses frames and the beard's edge instead."""
+    spots = b.analysis.get('blemishes')
+    if spots is None:
+        b.blocking.append('Could not look for blemishes on the face.')
+        return
+    if not spots:
+        b.notes.append('Blemishes: no spots stood out on the skin, so nothing was healed (freckles and marks against '
+                       'the eyes, brows and lips are left as they are).')
+        return
+    b.add(index, 'studio.select_insert', {}, 'Choose where the layer goes')
+    b.add(index, 'layer.new.layer', {'name': 'Spot healing'}, 'A new empty layer for the healing')
+    for x, y, radius in spots:
+        b.add(index, 'paint.spotHealing', {'points': [[x, y]], 'size': max(6, round(radius * 3.6)), 'hardness': 40,
+                                           'type': 'contentAware', 'sampleAllLayers': True},
+              f'Heal the spot at {x}, {y}')
+    b.regions.append({'requirement': index, 'label': 'spots', 'boxes': b.normalized(
+        [[x - 2 * r, y - 2 * r, 4 * r, 4 * r] for x, y, r in spots])})
+    b.notes.append(f'Blemishes: healed {len(spots)} spot{"s" if len(spots) != 1 else ""} with the Spot Healing brush, '
+                   'each on the “Spot healing” layer.')
+
+
 def face_job(b, index, edit, job, faces, scale):
     face = {**edit, 'target': 'object', 'object': lang.FACES}
+    if job == 'blemishes' and not (b.ai and re.search(r'\bai\b|generative|kontext', edit['quote'], re.IGNORECASE)):
+        heal_spots(b, index, edit)
+        return
     if job in FACE_PROMPTS and b.ai:
         b.add(index, 'studio.ai_layer', {'instruction': FACE_PROMPTS[job] + ' Change nothing else.',
                                          'boxes': faces, 'label': f'Retouch: {job}'},

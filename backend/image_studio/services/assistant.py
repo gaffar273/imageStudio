@@ -127,8 +127,11 @@ before_load = []
 
 
 def release():
-    """Free the kept model's GPU memory (no-op when none is kept)."""
+    """Free the kept model's GPU memory (no-op when none is kept), and the outline model's."""
     global _kept
+    from image_studio.services import segment
+
+    segment.release()
     with _kept_lock:
         if _kept is None:
             return

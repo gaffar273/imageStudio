@@ -30,7 +30,33 @@ ANALYSIS = {
     'noise': 3.0, 'tilt': 2.5,
     'verticals': [[[100, 100], [110, 800]], [[1100, 100], [1092, 800]]],
     'skin_colors': ['#c08a70', '#d8a088'], 'teeth': True, 'teeth_colors': ['#e8e0d0'],
+    'blemishes': [[580, 250, 3.0], [640, 330, 2.5]],
 }
+
+
+def camera_file(seed=3):
+    """A photo as it comes off the card: a bright sky over a darker scene of colours, flat, cool,
+    washed out and grainy."""
+    import numpy as np
+
+    rng = np.random.default_rng(seed)
+    height, width = 300, 450
+    rows = np.linspace(0, 1, height)[:, None, None]
+    scene = np.empty((height, width, 3), dtype=np.float32)
+    scene[:] = [0.75, 0.82, 0.92]  # sky
+    ground = rows[:, 0, 0] > 0.3
+    patches = rng.uniform(0.15, 0.75, (6, 9, 3)).astype(np.float32)
+    scene[ground] = np.kron(patches, np.ones((50, 50, 1), dtype=np.float32))[ground]
+    scene[200:240, 50:400] = [0.55, 0.55, 0.55]  # a grey wall
+    flat = 0.12 + scene * 0.6
+    cool = flat * np.array([0.93, 1.0, 1.07], dtype=np.float32)
+    luma = cool.mean(axis=-1, keepdims=True)
+    washed = luma + 0.6 * (cool - luma)
+    noisy = washed * 255 + rng.normal(0, 5, (height, width, 1))
+    return Image.fromarray(np.clip(noisy, 0, 255).astype('uint8'))
+
+
+ANALYSIS['develop'] = measure.develop(camera_file(), STATE, {}, [])
 # What a planner would fill in for each pipeline, so every one is built with sensible slots.
 SLOTS = {
     'layer_opacity': dict(object='Title', value=50), 'layer_visibility': dict(object='Title'),
@@ -480,6 +506,164 @@ class ModelTests(unittest.TestCase):
         blocks = adapter._blocks([models.image_part(Image.new('RGB', (8, 8))), {'type': 'text', 'text': 'hi'}])
         self.assertEqual(blocks[0]['source']['media_type'], 'image/jpeg')
         self.assertEqual(blocks[1], {'type': 'text', 'text': 'hi'})
+
+
+def scene(gains=(1.0, 1.0, 1.0), low=0.0, high=1.0, backdrop=False):
+    """Neutral greys and colour patches (or a subject on a plain backdrop), under a light of `gains`,
+    with the tones squeezed into low..high."""
+    import numpy as np
+
+    rng = np.random.default_rng(1)
+    if backdrop:
+        a = np.full((240, 320, 3), 0.8, dtype=np.float32)
+        a[60:200, 110:210] = [0.7, 0.45, 0.2]
+    else:
+        patches = rng.uniform(0.1, 0.9, (6, 8, 3)).astype(np.float32)
+        patches[::2, ::2] = rng.uniform(0.2, 0.9, (3, 4, 1))  # greys
+        a = np.kron(patches, np.ones((40, 40, 1), dtype=np.float32))
+        a[:, :20], a[:, -20:] = 0.03, 0.97
+    a = low + a * (high - low)
+    a = np.clip(a * np.array(gains, dtype=np.float32), 0, 1)
+    return Image.fromarray((a * 255).astype('uint8'))
+
+
+class DevelopTests(unittest.TestCase):
+    def setUp(self):
+        from image_studio.pipelines.library import camera_develop
+
+        self.develop = camera_develop
+
+    def gains(self, image):
+        import numpy as np
+
+        small = np.asarray(image, dtype=np.float32) / 255
+        return self.develop.white_balance(small)[0]
+
+    def test_a_cool_cast_is_read_and_undone(self):
+        red, green, blue = self.gains(scene((0.93, 1.0, 1.07)))
+        self.assertAlmostEqual(red, 1 / 0.93, delta=0.02)
+        self.assertAlmostEqual(blue, 1 / 1.07, delta=0.02)
+
+    def test_some_of_a_warm_cast_is_kept(self):
+        red, _, blue = self.gains(scene((1.07, 1.0, 0.93)))
+        self.assertLess(red, 1.0)
+        self.assertGreater(red, 1 / 1.07 + 0.015)  # not all the way: lamp light is the picture's mood
+        self.assertLess(blue, 1 / 0.93 - 0.015)
+
+    def test_a_green_cast_is_removed_in_full(self):
+        # A green cast once read as warm and kept 40% of itself.
+        red, green, blue = self.gains(scene((1.0, 1.06, 1.0)))
+        self.assertAlmostEqual(red, 1.06, delta=0.02)
+        self.assertAlmostEqual(blue, 1.06, delta=0.02)
+
+    def test_a_neutral_photo_is_left_as_shot(self):
+        settings, note = self.develop.read(scene())['white_balance']
+        self.assertEqual(settings, {})
+        self.assertIn('neutral', note)
+
+    def test_the_curve_puts_the_black_and_white_points_at_the_ends(self):
+        plan = self.develop.read(scene(low=0.12, high=0.7))
+        (black, zero), *_, (white, top) = plan['tone'][0]['pointCurve']
+        self.assertAlmostEqual(black / 255, 0.12 + 0.03 * 0.58, delta=0.03)
+        self.assertAlmostEqual(white / 255, 0.12 + 0.97 * 0.58, delta=0.03)
+        self.assertEqual((zero, top), (0, 255))
+
+    def test_a_well_exposed_photo_keeps_its_tones(self):
+        self.assertEqual(self.develop.read(scene())['tone'][0], {})
+
+    def test_a_night_photo_is_not_lifted_to_a_grey_middle(self):
+        import numpy as np
+
+        night = np.full((200, 300, 3), 0.02, dtype=np.float32)
+        night[80:120, 60:240] = [0.9, 0.3, 0.8]  # a neon sign
+        points = self.develop.read(Image.fromarray((night * 255).astype('uint8')))['tone'][0].get('pointCurve', [])
+        self.assertEqual(len(points), 2 if points else 0)  # black and white points only, no midtone lift
+
+    def test_no_vignette_on_a_plain_backdrop(self):
+        plan = self.develop.read(scene((0.95, 1.0, 1.05), low=0.1, high=0.75, backdrop=True))
+        self.assertLess(plan['border']['spread'], 0.15)
+        (steps, notes, blocking, *_), _ = built('develop_vignette', analysis={**ANALYSIS, 'develop': plan})
+        self.assertFalse(any('vignetteAmount' in step['params'].get('params', {}) for step in steps))
+        self.assertTrue(any('plain backdrop' in note for note in notes))
+
+    def test_the_develop_is_one_camera_raw_filter(self):
+        (steps, notes, blocking, *_), _ = built('photo_correction')
+        develops = [step for step in steps if step['command'] == 'studio.develop']
+        self.assertEqual(len(develops), 1)
+        settings = develops[0]['params']['params']
+        self.assertIn('pointCurve', settings)
+        self.assertGreaterEqual(settings['sharpenMasking'], 40)  # never sharpen the grain
+        self.assertNotIn('exposure', settings)  # the curve sets the tones; a median aim darkened white backdrops
+
+    def test_strength_dials_the_measured_develop_back_or_up(self):
+        def develop(strength):
+            (steps, *_), _ = built('develop_tone', strength=strength)
+            return next(step for step in steps if step['command'] == 'studio.develop')['params']['params']
+
+        moderate, subtle, strong = develop('moderate'), develop('subtle'), develop('strong')
+        full = moderate['pointCurve']
+        self.assertEqual(full, ANALYSIS['develop']['tone'][0]['pointCurve'])  # moderate is the measured develop
+        # Subtle goes 60% of the way from no change: blacks lifted less, whites pulled in less.
+        self.assertEqual(subtle['pointCurve'][0], [full[0][0], round(full[0][0] + 0.6 * (full[0][1] - full[0][0]))])
+        self.assertEqual(subtle['pointCurve'][-1], [full[-1][0], round(full[-1][0] + 0.6 * (full[-1][1] - full[-1][0]))])
+        self.assertLess(strong['pointCurve'][0][1], subtle['pointCurve'][0][1])
+
+    def test_a_curve_on_a_developed_photo_follows_the_curve_already_there(self):
+        from image_studio.integrations.photocraft_macros import compose_curves
+
+        both = compose_curves([[20, 0], [200, 255]], [[0, 0], [255, 128]])
+        lookup = dict(map(tuple, both))
+        self.assertEqual(lookup[0], 0)
+        self.assertAlmostEqual(lookup[112], 65, delta=1)  # (112 - 20) / 180 * 255 = 130, then halved
+        self.assertEqual(lookup[255], 128)
+
+    def test_blemishes_are_healed_spot_by_spot_without_the_ai_model(self):
+        # The AI layer took 374 s on a portrait; Spot Healing on measured spots takes seconds.
+        (steps, notes, blocking, regions, *_), _ = built('retouch_portrait', choice='blemishes', ai=True)
+        commands = [step['command'] for step in steps]
+        self.assertNotIn('studio.ai_layer', commands)
+        self.assertEqual(commands.count('paint.spotHealing'), 2)
+        self.assertIn('layer.new.layer', commands)
+        heal = next(step for step in steps if step['command'] == 'paint.spotHealing')
+        self.assertEqual(heal['params']['points'], [[580, 250]])  # one dab per spot, never a stroke between them
+        self.assertTrue(heal['params']['sampleAllLayers'])
+        self.assertTrue(any(region['label'] == 'spots' for region in regions))
+
+    def test_asking_for_ai_still_uses_the_ai_layer(self):
+        (steps, *_), _ = built('retouch_portrait', choice='blemishes', quote='remove the acne with AI', ai=True)
+        self.assertIn('studio.ai_layer', [step['command'] for step in steps])
+
+    def test_spots_are_found_on_skin_and_freckles_are_kept(self):
+        import numpy as np
+
+        def face(spots, freckles=0):
+            rng = np.random.default_rng(2)
+            a = np.zeros((400, 400, 3), dtype=np.float32)
+            a[:] = [0.78, 0.6, 0.48]  # even skin
+            a += rng.normal(0, 0.006, a.shape)
+            yy, xx = np.mgrid[0:400, 0:400]
+            for x, y in spots:
+                a[np.hypot(xx - x, yy - y) <= 3.5] = [0.72, 0.38, 0.33]  # red, darker: a pimple
+            for _ in range(freckles):
+                x, y = rng.integers(60, 340, 2)
+                a[np.hypot(xx - x, yy - y) <= 2.2] -= 0.12  # small, brown, all alike
+            return Image.fromarray((np.clip(a, 0, 1) * 255).astype('uint8'))
+
+        state = {'width': 400, 'height': 400}
+        found = measure.find_spots(face([(120, 150), (260, 220), (200, 300)]), [[20, 20, 360, 360]], state)
+        self.assertEqual(sorted((x, y) for x, y, _ in found), [(120, 150), (200, 300), (260, 220)])
+        freckled = measure.find_spots(face([(120, 150)], freckles=30), [[20, 20, 360, 360]], state)
+        self.assertEqual([(x, y) for x, y, _ in freckled], [(120, 150)])  # the pimple, not the freckles
+        self.assertEqual(measure.find_spots(face([]), [[20, 20, 360, 360]], state), [])
+
+    def test_the_tone_check_passes_on_a_stretch_and_fails_without_one(self):
+        from image_studio.pipelines import checks
+
+        flat = scene(low=0.12, high=0.7)
+        stretched = scene()
+        edit = lang.blank('develop_tone')
+        self.assertTrue(all(r['passed'] for r in checks.run(0, edit, flat, stretched, [], [], False)))
+        self.assertFalse(any(r['passed'] for r in checks.run(0, edit, flat, flat.copy(), [], [], False)))
 
 
 if __name__ == '__main__':

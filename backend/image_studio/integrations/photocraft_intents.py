@@ -1346,9 +1346,11 @@ class Compiler:
         for index, params in self.raw.items():
             indices.add(index)
             for key, value in params.items():
-                merged[key] = round(merged.get(key, 0) + value, 2)
+                # Point curves are a shape, not an amount: the later one replaces.
+                merged[key] = value if isinstance(value, list) else round(merged.get(key, 0) + value, 2)
         self.steps.append({'command': 'studio.develop', 'params': {'params': merged},
-                           'label': 'Develop: ' + ', '.join(f'{k} {v:+g}' for k, v in merged.items()),
+                           'label': 'Develop: ' + ', '.join(f'{k} {v:+g}' if not isinstance(v, list) else f'{k} curve'
+                                                            for k, v in merged.items()),
                            'requirements': sorted(indices)})
         self.raw = {}
 
@@ -1800,7 +1802,12 @@ def measure(edits, regions, before, after, geometry_changed):
     checks = []
     by_requirement = {}
     originals = {}
+    spots = {}
     for region in regions:
+        if region.get('label') == 'spots':
+            # Healed spots are checked one by one, not as the area an edit worked on.
+            spots.setdefault(region['requirement'], []).extend(region.get('final', region['boxes']))
+            continue
         by_requirement.setdefault(region['requirement'], []).extend(region.get('final', region['boxes']))
         pairs = region.get('pairs')
         if pairs is None:
@@ -1939,7 +1946,8 @@ def measure(edits, regions, before, after, geometry_changed):
             continue
         # Checks the pipelines themselves declare (image_studio.pipelines.checks).
         checks += pipeline_checks.run(index, edit, before, after, boxes, originals.get(index), geometry_changed,
-                                      others=[other['action'] for number, other in enumerate(edits) if number != index])
+                                      others=[other['action'] for number, other in enumerate(edits) if number != index],
+                                      spots=spots.get(index, []))
     for check in checks:
         check['passed'] = bool(check['passed'])  # numpy booleans are not JSON
     return checks

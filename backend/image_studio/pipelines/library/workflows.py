@@ -221,19 +221,29 @@ def fine_art_bw(edit, prompt):
             part(w, 'vignette', 'gentle vignette', direction='decrease', strength='subtle')]
 
 
-@workflow('photo_correction', 'General photo correction', 'workflow',
-          'a vague request to fix or improve a photo (“fix this photo”, “make it look better”, “enhance it”): '
-          'measured exposure, neutral color, a little life and crispness',
-          steps=('exposure_fix', 'auto_fix', 'vibrance', 'clarity', 'sharpen'),
-          examples=('fix this photo', 'make this picture look better'),
-           requires=r'fix|correct|improve|better|enhance|clean ?up|looks? (off|bad|dull)|edit (this|my|the) photo')
+@workflow('photo_correction', 'Professional photo develop', 'workflow',
+          'develop or fix a photo the way a retoucher does a camera file (“fix this photo”, “make it look better”, '
+          '“enhance it”, “develop this raw”, “edit my DSLR photo professionally”, “refine this shot”): white '
+          'balance, black and white points, midtones, contrast, colour, noise, sharpening, sky, horizon and a subtle '
+          'vignette, each measured from the photo and skipped when it is not needed',
+          steps=('develop_white_balance', 'develop_tone', 'develop_color', 'develop_noise', 'develop_sharpen',
+                 'develop_sky', 'develop_level', 'develop_vignette'),
+          examples=('fix this photo', 'make this picture look better', 'develop this raw photo like a pro',
+                    'edit this DSLR shot professionally'),
+           requires=r'fix|correct|improve|better|enhance|clean ?up|looks? (off|bad|dull)|edit (this|my|the) (photo|shot'
+                    r'|picture|image)|develop|\braw\b|dslr|refine|professional|polish|out of (the )?camera')
 def photo_correction(edit, prompt):
+    """A retoucher's develop. Each part reads the photo's measurements and does nothing when they say
+    it is not needed (see camera_develop); the Camera Raw parts join one editable filter."""
     w = 'photo_correction'
-    return [part(w, 'exposure_fix', 'balanced exposure', optional=True),
-            part(w, 'auto_fix', 'neutral color', choice='color'),
-            part(w, 'vibrance', 'a little more color', direction='increase', strength='subtle'),
-            part(w, 'clarity', 'a little definition', direction='increase', strength='subtle'),
-            part(w, 'sharpen', 'crisper', strength='subtle')]
+    return [part(w, 'develop_white_balance', 'neutral white balance', optional=True),
+            part(w, 'develop_tone', 'black and white points, midtones, contrast', optional=True),
+            part(w, 'develop_color', 'natural colour', optional=True),
+            part(w, 'develop_noise', 'clean shadows', optional=True),
+            part(w, 'develop_sharpen', 'crisp edges', optional=True),
+            part(w, 'develop_sky', 'balanced sky', optional=True),
+            part(w, 'develop_level', 'level horizon', optional=True),
+            part(w, 'develop_vignette', 'subtle vignette', optional=True)]
 
 
 @workflow('scan_restore', 'Scanned photo restoration', 'workflow',

@@ -373,7 +373,7 @@ inside, so the selection follows the real edge (hair, raised hands). "background
 everything except the main subjects. Measured: 5–9 seconds with the assistant loaded,
 about 35 seconds including loading it; a dog, the background around a cat and a dog, a
 sky between raised arms and a shirt were all outlined correctly.
-**Download selection model.bat** downloads SAM 2.1 (450 MB). Without it, selections are
+**Download selection model.bat** downloads SAM 2.1 tiny (78 MB). Without it, selections are
 rectangles.
 
 ### How it is connected

@@ -24,6 +24,7 @@ from image_studio.pipelines import models
 from image_studio.core.paths import CACHE
 from image_studio.integrations import (
     photocraft,
+    photocraft_followup,
     photocraft_intents,
     photocraft_macros,
     photocraft_planner,
@@ -422,13 +423,14 @@ def _run_steps(folder, expected, steps, label, progress, cancelled, area, before
     return revision, outcomes, skip_notes
 
 
-def _measured_checks(plan, folder, expected, before, revision, outcomes):
+def _measured_checks(plan, folder, expected, before, revision, outcomes, geometry=None):
     canvas = photocraft_intents.Canvas(*(plan.get('result_size') or (0, 0)))
     checks = photocraft_intents.verify(plan['edits'], before, revision['state'], canvas, outcomes)
     if plan.get('area'):
         checks.append({'requirement': 0, 'measured': True, 'passed': True,
                        'check': 'Pixels outside your marked area are unchanged (full resolution)'})
-    geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
+    if geometry is None:  # a stage before any crop or turn says so; the whole request asks its edits
+        geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
     with Image.open(folder / f'{expected}.png') as old, Image.open(folder / f'{revision["id"]}.png') as new:
         checks += photocraft_intents.measure(plan['edits'], plan.get('regions', []), old.copy(), new.copy(), geometry)
     return checks
@@ -440,8 +442,8 @@ def too_faint(plan, checks):
     person wrote, not already strong, no AI layer (a second Kontext run takes minutes)."""
     from image_studio.pipelines import get
 
-    if plan.get('planner') in ('manual', 'preset') or plan.get('area'):
-        return []  # a strength chosen on a panel is the person's choice
+    if plan.get('planner') in ('manual', 'preset') or plan.get('area') or plan.get('base'):
+        return []  # a strength chosen on a panel, or by a “too much” / “more”, is the person's choice
     if any((get(edit['action']) and get(edit['action']).ai) for edit in plan['edits']) or any(
             step['command'] == 'studio.ai_layer' for step in plan.get('steps', [])):
         return []
@@ -472,79 +474,197 @@ def stronger_plan(data, plan, indices, preview):
                         [], preview, plan.get('planner', ''), plan.get('boxes'), plan.get('area'))
 
 
+# A long request runs stage by stage, each stage its own revision checked against the one before,
+# the way a retoucher saves along the way: a failed stage keeps the finished ones, and any stage
+# can be undone on its own. Short requests (fewer than three edits, or one stage) run in one go.
+STAGE_STEPS = [
+    ('Clean-up', ('layer', 'retouch')),
+    ('Develop', ('develop',)),
+    ('AI content', ('ai',)),
+    ('Adjustments', ('adjust',)),
+    ('Effects and cut-outs', ('effect', 'cutout')),
+    ('Framing, text and output', ('geometry', 'graphics', 'output', 'expert')),
+]
+
+
+def stage_groups(plan, steps):
+    """[(stage name, step indices, requirement indices)] in order, for a request long enough to run
+    stage by stage; [] when it runs in one go."""
+    from image_studio.pipelines import get
+
+    if not plan or not plan.get('edits') or plan.get('area') or len(plan['edits']) < 3:
+        return []
+
+    def stage_of(step):
+        requirements = step.get('requirements') or [0]
+        pipeline = get(step.get('pipeline') or plan['edits'][requirements[0]]['action'])
+        stage = pipeline.stage if pipeline else 'expert'
+        return next((number for number, (_, stages) in enumerate(STAGE_STEPS) if stage in stages),
+                    len(STAGE_STEPS) - 1)
+
+    groups = []
+    for index, step in enumerate(steps):
+        number = stage_of(step)
+        if groups and groups[-1][0] == number:
+            groups[-1][1].append(index)
+            groups[-1][2].update(step.get('requirements', []))
+        else:
+            groups.append((number, [index], set(step.get('requirements', []))))
+    if len(groups) < 2 or len({number for number, _, _ in groups}) != len(groups):
+        return []
+    return [(STAGE_STEPS[number][0], indices, requirements) for number, indices, requirements in groups]
+
+
+def _part_plan(plan, requirements, before):
+    """The plan as one stage sees it: before any crop or turn the boxes are where they started."""
+    from image_studio.pipelines import get
+
+    if requirements is None:
+        return plan, None
+    geometry = any(get(plan['edits'][index]['action']) and get(plan['edits'][index]['action']).stage == 'geometry'
+                   for index in requirements)
+    if geometry:
+        return plan, True
+    regions = [dict(region, final=region['boxes'], pairs=[(box, box) for box in region['boxes']])
+               for region in plan.get('regions', [])]
+    return {**plan, 'regions': regions, 'result_size': [before['width'], before['height']]}, False
+
+
+def _run_part(folder, origin, steps, label, progress, cancelled, plan, before, requirements, on_start, start,
+              name=None):
+    """One stage (or the whole request) from the revision `origin`: (revision, checks, notes, steps)."""
+    area = plan.get('area') if plan else None
+    revision, outcomes, notes = _run_steps(folder, origin, steps, label, progress, cancelled, area, before)
+    check_cancel(cancelled)
+    if not (plan and plan.get('edits')):
+        return revision, [], notes, steps
+    seen, geometry = _part_plan(plan, requirements, before)
+    mine = (lambda check: True) if requirements is None else (lambda check: check['requirement'] in requirements)
+    checks = [check for check in _measured_checks(seen, folder, origin, before, revision, outcomes, geometry)
+              if mine(check)]
+    faint = [index for index in too_faint(plan, checks) if requirements is None or index in requirements]
+    if faint:
+        names = ', '.join(f'“{plan["edits"][index]["quote"]}”' for index in faint)
+        progress(0.7, desc='Too faint: running it again a step stronger…')
+        try:
+            with Image.open(folder / f'{start}.png') as image:
+                preview = image.convert('RGB')
+            stronger = stronger_plan(on_start, plan, faint, preview)
+            redo = stronger['steps']
+            if requirements is not None:
+                redo = next(([stronger['steps'][index] for index in indices]
+                             for other, indices, _ in stage_groups({**plan, **stronger}, stronger['steps'])
+                             if other == name), [])
+            if redo and not stronger['unresolved']:
+                validate_steps(redo, folder)
+                second, second_outcomes, second_notes = _run_steps(folder, origin, redo, label, progress, cancelled,
+                                                                   area, before)
+                seen, geometry = _part_plan({**plan, **stronger}, requirements, before)
+                second_checks = [check for check in _measured_checks(seen, folder, origin, before, second,
+                                                                     second_outcomes, geometry) if mine(check)]
+                if _failed(second_checks) < _failed(checks):
+                    _discard(folder, revision)
+                    revision, outcomes, checks, notes, steps = second, second_outcomes, second_checks, second_notes, redo
+                    notes = notes + [f'{names} came out too faint, so it was run again one strength step higher.']
+                else:
+                    _discard(folder, second)
+                    notes = notes + [f'{names} came out faint; a stronger run measured no better, so the first '
+                                     'result was kept.']
+        except (ValueError, RuntimeError, OSError, StopIteration) as exc:
+            notes = notes + [f'{names} came out faint; running it stronger failed ({str(exc)[:120]}).']
+        check_cancel(cancelled)
+    notes = [f'Text color chosen for readability ({value["color"]})'
+             + (' with a soft shadow' if value.get('auto_shadow') else '')
+             for key, value in outcomes.items()
+             if key[0] == 'text' and plan['edits'][key[1]]['color'] in ('', 'auto')] + notes
+    return revision, checks, notes, steps
+
+
 def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
-    """Run every step in one engine session; history only advances when all succeed. With a
-    plan, the result is measured against each requirement and reviewed by the brain. An edit whose
-    measurement says it went the asked way but too faintly is run once more, one strength step
-    up, and the better of the two results is kept."""
+    """Run a plan's steps on the photo; the history advances only with what succeeded. With a plan,
+    each result is measured against its requirements and the whole is reviewed by the brain once.
+    An edit whose measurement says it went the asked way but too faintly is run once more, one
+    strength step up, and the better result is kept.
+
+    A long request runs stage by stage (stage_groups), each stage its own revision; when a stage
+    fails, the stages before it are kept. A follow-up plan (photocraft_followup) carries a `base`:
+    the revision before the request on screen. It runs there and replaces that request's
+    revisions, so a revised edit is not stacked on itself."""
     with LOCK:
         data = load(workspace_id)
         require_revision(data, expected)
         folder = folder_for(workspace_id)
         validate_steps(steps, folder)
-        before = current(data)['state']
-        area = plan.get('area') if plan else None
-        revision, outcomes, skip_notes = _run_steps(folder, expected, steps, label, progress, cancelled, area, before)
-        check_cancel(cancelled)
+        keep, start = data['cursor'] + 1, expected  # revisions kept below the new ones; where they start
+        if plan and plan.get('base'):
+            index = photocraft_followup.base_index(data, plan['base'], plan.get('revises'))
+            if index is None:
+                raise ValueError('The document changed. Review a fresh plan before applying it.')
+            keep, start = index + 1, plan['base']
+        on_start = {**data, 'cursor': keep - 1}  # the document as it is where the steps start
+        groups = stage_groups(plan, steps) or [(None, list(range(len(steps))), None)]
+        made, checks, notes, ran = [], [], [], []
+        for number, (name, indices, requirements) in enumerate(groups, 1):
+            origin = made[-1]['id'] if made else start
+            before = made[-1]['state'] if made else current(on_start)['state']
+            part_label = label if name is None else f'{label[:150]} · step {number}/{len(groups)}: {name}'
+            try:
+                revision, part_checks, part_notes, part_steps = _run_part(
+                    folder, origin, [steps[index] for index in indices], part_label, progress, cancelled, plan,
+                    before, requirements, on_start, start, name)
+            except Cancelled:
+                for revision in made:
+                    _discard(folder, revision)
+                raise
+            except (ValueError, RuntimeError) as exc:
+                if not made:
+                    raise
+                message = (f'Step {number} of {len(groups)} ({name}) failed: {str(exc)[:300]} The '
+                           f'{len(made)} step{"s" if len(made) > 1 else ""} before it are kept.')
+                made[-1]['notes'] = made[-1].get('notes', []) + [message]
+                _commit(data, keep, made, plan)
+                raise ValueError(message) from exc
+            if name is not None:
+                revision['stage'] = name
+            revision['checks'], revision['notes'] = part_checks, part_notes
+            if plan and plan.get('edits'):
+                revision['requirements'] = plan['requirements']
+            made.append(revision)
+            checks += part_checks
+            notes += part_notes
+            ran += part_steps
+        final = made[-1]
         if plan and plan.get('edits'):
-            checks = _measured_checks(plan, folder, expected, before, revision, outcomes)
-            retry_notes = []
-            faint = too_faint(plan, checks)
-            if faint:
-                names = ', '.join(f'“{plan["edits"][index]["quote"]}”' for index in faint)
-                progress(0.7, desc='Too faint: running it again a step stronger…')
-                try:
-                    with Image.open(folder / f'{expected}.png') as image:
-                        preview = image.convert('RGB')
-                    stronger = stronger_plan(data, plan, faint, preview)
-                    if stronger['steps'] and not stronger['unresolved']:
-                        validate_steps(stronger['steps'], folder)
-                        second, second_outcomes, second_notes = _run_steps(
-                            folder, expected, stronger['steps'], label, progress, cancelled, area, before)
-                        second_checks = _measured_checks({**plan, **stronger}, folder, expected, before, second,
-                                                         second_outcomes)
-                        if _failed(second_checks) < _failed(checks):
-                            _discard(folder, revision)
-                            revision, outcomes, checks, skip_notes = second, second_outcomes, second_checks, second_notes
-                            steps, plan = stronger['steps'], {**plan, **stronger}
-                            retry_notes.append(f'{names} came out too faint, so it was run again one strength step '
-                                               'higher.')
-                        else:
-                            _discard(folder, second)
-                            retry_notes.append(f'{names} came out faint; a stronger run measured no better, so the '
-                                               'first result was kept.')
-                except (ValueError, RuntimeError, OSError) as exc:
-                    retry_notes.append(f'{names} came out faint; running it stronger failed ({str(exc)[:120]}).')
-                check_cancel(cancelled)
-            revision['checks'] = checks
-            revision['requirements'] = plan['requirements']
-            revision['notes'] = [
-                f'Text color chosen for readability ({value["color"]})'
-                + (' with a soft shadow' if value.get('auto_shadow') else '')
-                for key, value in outcomes.items()
-                if key[0] == 'text' and plan['edits'][key[1]]['color'] in ('', 'auto')
-            ] + skip_notes + retry_notes
+            # The last stage shows every check and note of the request, and the one review.
+            final['checks'], final['notes'] = checks, notes
             if plan.get('planner') not in ('manual', 'preset', 'rules') and models.available('checker'):
                 progress(0.8, desc='Checking the result against each requirement…')
                 try:
-                    with Image.open(folder / f'{expected}.png') as old, \
-                            Image.open(folder / f'{revision["id"]}.png') as new:
-                        applied = sorted({i for step in steps for i in step.get('requirements', [])})
+                    with Image.open(folder / f'{start}.png') as old, \
+                            Image.open(folder / f'{final["id"]}.png') as new:
+                        applied = sorted({i for step in ran for i in step.get('requirements', [])})
                         verdicts = photocraft_planner.review(
                             [plan['requirements'][i] for i in applied], plan.get('preserve', []),
                             old.copy(), new.copy())
                         for verdict in verdicts:
                             if verdict['requirement'] is not None:
                                 verdict['requirement'] = applied[verdict['requirement']]
-                        revision['review'] = trust_measurements(verdicts, revision['checks'])
+                        final['review'] = trust_measurements(verdicts, final['checks'])
                 except (RuntimeError, ValueError, OSError) as exc:
-                    revision['review_error'] = str(exc)[:300]
+                    final['review_error'] = str(exc)[:300]
         check_cancel(cancelled)
-        data['history'] = data['history'][: data['cursor'] + 1] + [revision]
-        data['cursor'] += 1
-        data['updated'] = time.time()
-        save(data)
-        return public(data)
+        return _commit(data, keep, made, plan)
+
+
+def _commit(data, keep, made, plan):
+    if plan and plan.get('id'):
+        for revision in made:
+            revision['plan'] = plan['id']  # what a follow-up revises (photocraft_followup.last_request)
+    data['history'] = data['history'][:keep] + made
+    data['cursor'] = keep + len(made) - 1
+    data['updated'] = time.time()
+    save(data)
+    return public(data)
 
 
 def move_history(workspace_id, expected, direction):
@@ -803,6 +923,20 @@ def rule_edits(prompt):
     return edits
 
 
+def follow_up(data, folder, last, edits, notes, prompt, preserve=(), questions=()):
+    """The last request rebuilt with a follow-up's changes, on the revision before it (see
+    photocraft_followup). The boxes it found are reused, so nothing is asked of a model again."""
+    plan, base = last
+    with Image.open(folder / f'{base}.png') as image:
+        preview = image.copy()
+    on_base = {**data, 'cursor': photocraft_followup.base_index(data, base, plan['id'])}
+    result = compile_plan(on_base, f'{plan.get("prompt", "")} · {prompt}', edits,
+                          list(dict.fromkeys([*plan.get('preserve', []), *preserve])), list(questions), list(notes),
+                          preview, plan.get('planner', 'rules'), boxes=plan.get('boxes'))
+    result.update(base=base, revises=plan['id'], follows=plan.get('prompt', ''))
+    return result
+
+
 def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
     data = load(workspace_id)
     require_revision(data, expected)
@@ -811,12 +945,27 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
     with Image.open(folder / f'{expected}.png') as image:
         preview = image.copy()
     state = current(data)['state']
+    # A follow-up (“too much”, “without the vignette”, “less warm” after “warmer”) revises the
+    # request that made the photo on screen instead of stacking a new edit on it.
+    last = None if area else photocraft_followup.last_request(data, folder)
+    revised = photocraft_followup.revise(prompt, last[0]) if last else None
+    if revised and not revised[2]:
+        raise ValueError(revised[1][0])
     preset = photocraft_intents.presets(prompt)
     instant = rule_edits(prompt)
-    if preset:
+
+    def planned(edits, preserve, questions, notes, planner):
+        merged = photocraft_followup.merge(edits, last[0]) if last else None
+        if merged:
+            return follow_up(data, folder, last, merged[0], [*notes, *merged[1]], prompt, preserve, questions)
+        return compile_plan(data, prompt, edits, preserve, questions, notes, preview, planner, area=area)
+
+    if revised:
+        result = follow_up(data, folder, last, revised[0], revised[1], prompt)
+    elif preset:
         result = compile_plan(data, prompt, preset, [], [], [], preview, 'preset', area=area)
     elif instant:
-        result = compile_plan(data, prompt, instant, [], [], [], preview, 'rules', area=area)
+        result = planned(instant, [], [], [], 'rules')
     elif models.available('planner'):
         progress(0.1, desc='Reading your image and every part of your request…')
         edits, preserve, questions, notes = photocraft_planner.understand(prompt, preview, state, area=area)
@@ -824,7 +973,7 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
         if not edits:
             raise ValueError('I could not find an edit in that request. Describe what should change.')
         progress(0.45, desc='Finding the things you named and measuring the document…')
-        result = compile_plan(data, prompt, edits, preserve, questions, notes, preview, 'Qwen3.5 vision', area=area)
+        result = planned(edits, preserve, questions, notes, 'Qwen3.5 vision')
     else:
         if area:
             raise ValueError('Try “make it brighter and warmer” in the marked area, or install the editing brain '
@@ -843,7 +992,8 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
     elif not result['unresolved']:
         result['unresolved'].append('No executable commands were planned.')
     # The revision and plan are server-owned; applying an old plan cannot edit a newer photo.
-    result.update(id=uuid.uuid4().hex, revision=expected, prompt=prompt, created=time.time())
+    result.update(id=uuid.uuid4().hex, revision=expected, created=time.time(),
+                  prompt=f'{result["follows"]} · {prompt}' if result.get('follows') else prompt)
     require_revision(load(workspace_id), expected)
     (folder / f'plan-{result["id"]}.json').write_text(json.dumps(result), encoding='utf-8')
     return result

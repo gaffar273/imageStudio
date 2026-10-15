@@ -3,15 +3,15 @@
 1. The prompt assistant (Qwen3-VL-2B) finds each matching thing and answers with boxes.
    Measured on saved pictures: a cat, a suitcase, a dog, the sky, "the person on the far
    left" and "her shirt" were all boxed correctly, in about 7 s each.
-2. SAM 2.1 large outlines what is inside each box, so the selection follows the edge of
-   the object instead of being a rectangle.
+2. SAM 2.1 tiny outlines what is inside each box, so the selection follows the edge of
+   the object instead of being a rectangle (on the GPU in about 0.1 s, see catalog.SEGMENT).
 
 "background" is everything except the main subjects; "subject" is the main subjects."""
 
 import json
 import re
 from PIL import Image, ImageChops, ImageFilter
-from image_studio.core.catalog import SEGMENT
+from image_studio.core.catalog import SEGMENT, SEGMENT_EARLIER
 
 WHOLE = {
     'all',
@@ -40,9 +40,55 @@ SUBJECT_QUERY = 'the main subjects (the people, animals or objects the photo is 
 LONGEST = 1536  # pictures are looked at and outlined at most this large
 
 
+def model_path():
+    """The installed outline model: tiny, or the large one an earlier version installed."""
+    for spec in (SEGMENT, SEGMENT_EARLIER):
+        path = SEGMENT['folder'] / spec['file']
+        if path.exists() and path.stat().st_size == spec['size']:
+            return path
+    return None
+
+
 def available():
-    path = SEGMENT['folder'] / SEGMENT['file']
-    return path.exists() and path.stat().st_size == SEGMENT['size']
+    return model_path() is not None
+
+
+_models = {}
+
+
+def _model(device):
+    """The outline model, kept loaded between outlines (loading took 2.4 s each time)."""
+    from ultralytics import SAM
+
+    path = model_path()
+    key = (str(path), device)
+    if key not in _models:
+        _models.clear()
+        _models[key] = SAM(str(path))
+    return _models[key]
+
+
+def release():
+    """Let go of the outline model, before a large model needs the whole GPU."""
+    if _models:
+        _models.clear()
+        import torch
+
+        torch.cuda.empty_cache()
+
+
+def device():
+    """The GPU when it has room beside whatever else is loaded (the editing brain leaves about
+    1 GB of 8), else the processor."""
+    import torch
+
+    if not torch.cuda.is_available():
+        return 'cpu'
+    try:
+        free, _ = torch.cuda.mem_get_info()
+    except RuntimeError:
+        return 'cpu'
+    return 'cuda' if free >= 900 * 2 ** 20 or _models.get((str(model_path()), 'cuda')) else 'cpu'
 
 
 def parse_boxes(answer, width, height):
@@ -151,29 +197,22 @@ def outline(image, boxes, missing=None):
     import os
 
     os.environ.setdefault('YOLO_OFFLINE', '1')
-    from ultralytics import SAM, settings
-    from image_studio.services import assistant
+    from ultralytics import settings
 
     settings.update({'sync': False})
     mask = Image.new('L', image.size, 0)
-    model = SAM(str(SEGMENT['folder'] / SEGMENT['file']))
-    # The editing brain fills most of the GPU while it is kept; SAM then runs on the processor
-    # rather than stopping the brain, which takes about 20 s to start again.
-    device = 'cpu' if assistant.kept_kind() == 'brain' else None
+    # Tiny fits on the GPU beside the editing brain; on a full GPU it runs on the processor
+    # (1.5 s an outline) rather than stopping the brain, which takes about 20 s to start again.
+    where = device()
+    model = _model(where)
     pixels = np.asarray(image.convert('RGB'))
     found = []
-    try:
-        # One box per call: ultralytics' SAM 2 fails an assertion when given several boxes at
-        # once (image_embeddings.shape[0] == tokens.shape[0]).
-        for box in boxes:
-            result = model(pixels, bboxes=[list(box)], verbose=False, device=device)[0]
-            masks = result.masks.data.cpu().numpy() if result.masks is not None else []
-            found.append(masks[0] if len(masks) else np.zeros(pixels.shape[:2], dtype=bool))
-    finally:
-        del model
-        import torch
-
-        torch.cuda.empty_cache()
+    # One box per call: ultralytics' SAM 2 fails an assertion when given several boxes at
+    # once (image_embeddings.shape[0] == tokens.shape[0]).
+    for box in boxes:
+        result = model(pixels, bboxes=[list(box)], verbose=False, device=where)[0]
+        masks = result.masks.data.cpu().numpy() if result.masks is not None else []
+        found.append(masks[0] if len(masks) else np.zeros(pixels.shape[:2], dtype=bool))
     for index, box in enumerate(boxes):
         if index < len(found) and found[index].any():
             piece = Image.fromarray((found[index] > 0.5).astype('uint8') * 255).resize(

@@ -26,7 +26,7 @@ class AreaTests(unittest.TestCase):
         from image_studio.integrations import photocraft_planner as planner
 
         photo = Image.new('RGB', (200, 200), 'gray')
-        with patch.object(planner.brain, 'image_part', side_effect=lambda image: image.copy()), \
+        with patch.object(planner.brain, 'image_part', side_effect=lambda image, longest=1024: image.copy()), \
                 patch.object(planner.brain, 'chat', return_value={'edits': [], 'preserve': [], 'questions': []}) as chat:
             planner.understand('brighten these spots', photo, {'width': 200, 'height': 200}, area=AREA)
         content = chat.call_args.args[1]

@@ -73,7 +73,7 @@ asks for one of a workflow's parts in their own words (“…and much more color
 the workflow's version.
 
 The full list is generated from the registry into [pipelines.md](pipelines.md)
-(`python scripts/pipeline_catalog.py`): 115 pipelines, 24 of them workflows, in 14 categories.
+(`python scripts/pipeline_catalog.py`): 123 pipelines, 24 of them workflows, in 14 categories.
 
 ### How a pipeline is written
 
@@ -109,6 +109,73 @@ versions were wrong in ways no unit test could see, and the fixes are now part o
 | `landscape_enhance` | deepen the sky through a sky selection | an arc drawn across the sea | a graduated filter, no segmentation |
 | `split_tone` | colour offsets at the colour's own strength | teal shadows moved 8 of 100: invisible | offsets normalised to the asked strength |
 | `compose` | — | never asked for the subject to be found | declares its finds; a test now checks this for every framing pipeline |
+| `photo_correction` | fixed amounts: exposure to a 45% middle tone, Auto Color levels, vibrance, clarity, sharpen | on nine photos given camera faults it moved them *further* from the originals (colour difference 15.4 → 17.1) and turned a neon sign green | the measured camera develop below (15.4 → 7.9) |
+
+### Developing a camera photo
+
+“Develop this raw”, “I shot this on my DSLR, refine it”, “fix this photo” and “enhance it” all reach
+the `photo_correction` workflow, which develops the photo the way a retoucher develops a camera file
+(`pipelines/library/camera_develop.py`). It reads the photo once (`camera_develop.read`) and each
+step either sets its part of one editable Camera Raw filter or leaves a note saying what it
+measured and why it did nothing:
+
+| Step | Reads | Sets |
+|---|---|---|
+| White balance | the light's colour three ways: the greyest midtones, the brightest near-neutrals, the white patch | per-channel point curves (exact gains, as a white-balance dropper); less when the readings disagree; 40% of a warm cast kept as the light's mood, a green or magenta cast removed in full |
+| Tones | the 0.5th and 99.5th percentiles and the middle tone, after the white balance | a point curve putting the black and white points at the ends (never stretching more than 1.8×) and lifting dark midtones to about 40% (a night shot stays dark); highlight recovery when over 2% clips; contrast if still flat |
+| Colour | the coloured parts' saturation, after the white balance and curve, on a 256 px copy | vibrance |
+| Noise | the grain in the flat areas | luminance and colour noise reduction in proportion |
+| Sharpening | the grain | capture sharpening 40, masked 40 to 80 so the grain is not sharpened |
+| Sky | the top quarter against the rest | a soft graduated filter |
+| Horizon | the strongest family of near-horizontal lines | straightened when 0.5° to 4° off |
+| Vignette | the frame's edge after the curve | corners 10 darker; none on a plain backdrop |
+
+What the measurements showed (PhotoCraft, 2026-10-15), and what each changed:
+
+- **The Whites slider barely reaches a flat photo**: +40 moved the group photo's brightest tones
+  from 0.694 to 0.697. Camera Raw's point curve is exact ([[40, 0], [175, 255]] put the 98th
+  percentile at the 0.96 computed) and runs after exposure, so the tones are set with it.
+- **A middle-tone aim darkens white backdrops**: aiming every photo at 45% pulled the puppy on
+  white down 0.8 EV. Midtones are now only ever lifted.
+- **The light's colour**: of six ways to read it, each single one misread some originals' own
+  colours (warm skin, beach sand) as a cast by up to 16°. The three combined, correcting less
+  when they disagree, left 1.65° of cast on average against 2.49° for the greyest midtones alone,
+  and misread no original by more than 2.3°. Splitting the correction into temperature and tint
+  stopped a green cast being read as warm and only 60% corrected.
+- **Grain looks like colour**: chroma noise made washed-out photos read as saturated, so colour
+  is judged on a 256 px copy. The grain measure itself moved only in steps of 1.48 (a median of
+  whole levels); it is now a trimmed mean deviation, continuous.
+- **Sharpening raises grain unless masked**: amount 80 took a noisy photo's grain from 2.97 to
+  4.45; with masking 50 the edges gained as much and the grain did not rise.
+- **Camera Raw's vignette is strong**: −25 darkened the corners by 29% and the ring halfway out
+  by 23%; the develop uses −10 at midpoint 25 (corners about 13% darker, the middle untouched).
+  On the puppy and the mugs it showed as a spotlight on the backdrop, so a plain border (tones
+  spread under 0.15 after the curve; real scenes measured 0.24 and up) gets none.
+
+Each step has a measured check against the photo with only the develop's other steps applied
+(`camera_develop.preview`), so a vignette is judged on the corners it darkened, not on the
+brightening the curve gave the whole picture. Results on the nine bench photos, each given a
+camera file's faults of known size (0.6 EV under, flattened to 7–88%, a warm, cool or green cast,
+30% less colour, a 0.8 px blur, grain):
+
+| Photo | Faults | Colour difference from the original (CIELAB ΔE) | | |
+|---|---|---|---|---|
+| | | faulty | old workflow | **develop** |
+| man | warm | 17.4 | 18.8 | **9.3** |
+| woman | cool | 14.2 | 11.8 | **7.8** |
+| group | green | 16.8 | 18.0 | **10.3** |
+| mugs | warm | 16.0 | 7.5 | **6.2** |
+| puppy | cool | 20.9 | 19.1 | **9.1** |
+| town | green | 14.0 | 21.1 | **7.6** |
+| room | warm | 17.2 | 11.4 | **10.1** |
+| neon | cool | 10.0 | 34.1 | **4.7** |
+| street | green | 12.1 | 11.7 | **6.0** |
+| mean | | 15.4 | 17.1 | **7.9** |
+
+46 of the 47 checks that applied pass. The one that does not is the grainiest photo (the puppy):
+its noise reduction and masked sharpening nearly cancel, and its edges end only 1% crisper. A
+develop takes 1.1 to 1.7 s in PhotoCraft, its checks included. The faults are synthetic so that
+the original is known; real camera files have not been benchmarked this way.
 
 ## Talking to any model
 
@@ -216,6 +283,57 @@ strength step up (the boxes found the first time are reused, so no model is aske
 on the same starting revision, and keeps whichever result fails fewer checks, with a note saying so.
 Measured in PhotoCraft (2026-10-13): a subtle brightening re-run at moderate went 0.588 → 0.642
 mean brightness, against 0.620 the first time; the discarded attempt's files are deleted.
+
+## A session of requests
+
+Editing is a conversation of several requests, and the engine keeps it tidy the way a retoucher
+keeps a layer stack tidy.
+
+**A follow-up revises the last request instead of stacking on it**
+(`integrations/photocraft_followup.py`). The plan that made the photo on screen is kept with its
+revisions; a follow-up rebuilds it with the change, from the photo as it was before it, with the
+boxes it found the first time (no model is asked to find them again), and replaces its result:
+
+| After “make it warmer and add a vignette” | What happens |
+|---|---|
+| “too much”, “tone it down”, “subtler” | every part one strength step down (a measured develop applies 60% of its correction) |
+| “more”, “not enough”, “push it” | one step up |
+| “without the vignette”, “drop the grain” | rebuilt without that part; taking out every part says that Undo does it |
+| “less warm” | the warming turned down a step instead of a cooling layer above it; on a subtle edit, removed |
+| “less warm and add a title” | the warming turned down, the title added, one result |
+
+A written number is the person's exact amount and is never stepped; another target is another
+edit. Measured in PhotoCraft on the coastal town (2026-10-15): red−blue warmth 32.7 → 42.5 for
+“make it warmer”, 38.7 after “too much”, 42.5 after “more”, 38.7 after “less warm”, the history at
+two revisions throughout.
+
+**A long request runs stage by stage.** Three or more edits over two or more stages run as one
+revision per stage (clean-up, develop, AI content, adjustments, effects and cut-outs, then framing,
+text and output), each checked against the stage before it, so a check before a crop compares the
+same frame. When a stage fails, the stages before it are kept and the message says which one
+failed. The model's review runs once on the whole result, and the last stage carries every check.
+“Develop this photo, crop it to 4:5 and add SUMMER at the top” ran as three steps in 4.8 s, all 9
+checks passing; a “too much” afterwards replaced all three.
+
+## Speed
+
+Measured end to end on the bundled model and PhotoCraft (RTX 4060 laptop, 8 GB, 2026-10-15). The
+engine's own Python (planning, building, measuring, checking) is 1 to 3 s of a request; the time
+goes to the models.
+
+| | Before | Now | What changed |
+|---|---|---|---|
+| “retouch this portrait” | 421 s | 26 s | blemishes healed with Spot Healing on measured spots instead of FLUX Kontext (374 s) |
+| Outlining a face or object | 7 to 22 s on the CPU | 0.1 s on the GPU | SAM 2.1 tiny beside the editing brain (569 MB at most) instead of large on the CPU; kept loaded; one trace per plan |
+| First request of a session | +37 s loading the brain | loaded while the photo is open | `POST /api/photocraft/warm`, only on an idle GPU |
+| A full camera develop | — | 1.1 to 1.7 s | eight measured steps in one Camera Raw filter |
+
+What a call to the bundled model costs: reading the photo 2.8 s at 1024 px (1.4 s at 768, 0.7 s
+at 512), text at about 1,600 tokens a second, answers at about 39 tokens a second; the planner's
+4,800-token menu is cached between requests. Reading the photo at 768 px for planning lost three
+bench requests (228/233 against 232/233), so the planner stays at 1024 px. SAM tiny agreed with
+large at a median IoU of 0.98 on 15 faces, people and objects; where they differed, on small faces
+in a group, large was the one that missed.
 
 ## Scope
 
