@@ -239,6 +239,8 @@ class Engine(QObject):
         return int(paths.load_settings().get('port') or DEFAULT_PORT)
 
     def start(self):
+        if paths.INSTALLED:
+            engine_env.repoint()
         if engine_env.needs_setup():
             missing = engine_env.status() == 'missing'
             self.set_state('setup', 'Set up the engine in Studio settings to start creating.' if missing else

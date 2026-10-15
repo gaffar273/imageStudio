@@ -31,6 +31,8 @@ python packaging\build.py
 
 This works with any Python 3.10 or newer. It downloads a standalone Python (checked against its published SHA-256) and installs the window's pinned libraries (`packaging/requirements-app.txt`). It copies the studio, removes unused parts of Qt, builds the launcher with the C# compiler that ships with Windows, and checks that the whole window opens. The app folder lands in `build\windows\Image Studio`. **Inno Setup 6** (`winget install JRSoftware.InnoSetup`) then turns it into `dist\ImageStudio-<version>-Setup.exe`. Use `--no-installer` to stop after the app folder.
 
+`--msix` builds the Microsoft Store package instead (`dist\ImageStudio-<version>.msix`), which the Store signs, so it shows no SmartScreen warning. `--msix-test` builds the same package to try on your own PC first. [packaging/windows/STORE.md](packaging/windows/STORE.md) covers the Partner Center account, the submission, and how the package differs from the installer.
+
 On Linux, `python3 packaging/build.py` makes `dist/image-studio-<version>-linux-x86_64.tar.gz`. Unpack it anywhere and run `./install.sh` to add a menu entry, or `./image-studio` to start it. Qt needs `libxcb-cursor0` on X11. The Linux build has not been tested yet.
 
 In an installed copy the engine runs on its own environment in `%LOCALAPPDATA%\Image Studio\engine` (Linux: `~/.local/share/image-studio/engine`, or `IMAGE_STUDIO_ENGINE_ENV`). `python -m image_studio.cli.setup_engine` sets it up or refreshes it from the command line. When an update pins different libraries, Settings → Models asks to finish the engine update, and only what changed downloads.
@@ -80,7 +82,7 @@ text-to-image/
 │   ├── public/             # Static assets
 │   └── dist/               # Built assets served by Python (generated)
 ├── integrations/krita-plugin/
-├── packaging/              # Installer build: Python runtime, launcher, Inno Setup, Linux files
+├── packaging/              # Installer build: Python runtime, launcher, Inno Setup, Store package, Linux files
 ├── training/lora/           # Data preparation, captions, training, evaluation
 ├── scripts/windows/        # Model download and face-pool shortcuts
 ├── tests/                  # Backend integration and job-lifecycle tests

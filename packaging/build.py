@@ -1,6 +1,8 @@
 """Build Image Studio for people who do not run it from source.
 
     python packaging/build.py      on Windows: the app folder, then the installer (Inno Setup 6)
+    python packaging/build.py --msix        the Microsoft Store package instead (packaging/windows/STORE.md)
+    python packaging/build.py --msix-test   the same with a test identity, to install on this PC first
     python3 packaging/build.py     on Linux: a .tar.gz with the app folder and install.sh
 
 What goes in: a standalone Python (python-build-standalone, checked against its SHA-256),
@@ -23,6 +25,7 @@ import sys
 import tarfile
 import time
 import urllib.request
+import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -88,6 +91,21 @@ TRIM_QT = [
     'qmltooling',
     'sqldrivers',
 ]
+# Microsoft's packaging tools (makeappx, makepri) without the whole Windows SDK, from NuGet.
+BUILD_TOOLS = (
+    'https://api.nuget.org/v3-flatcontainer/microsoft.windows.sdk.buildtools/10.0.26100.4654/'
+    'microsoft.windows.sdk.buildtools.10.0.26100.4654.nupkg',
+    '5f5783658a200f83ea2addfd406e2303a901b27ad7c49b0347c34aefcc21883d',
+    'bin/10.0.26100.0/x64/',
+)
+# A local test package is signed with a certificate made on this PC (Windows installs no
+# unsigned package that starts an .exe); the Store package gets its identity from store.json
+# and the Store signs it.
+TEST_IDENTITY = dict(
+    name='ImageStudio.Test',
+    publisher='CN=Image Studio test',
+    publisher_display_name='Image Studio contributors',
+)
 CSC = (
     Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Microsoft.NET' / 'Framework64' / 'v4.0.30319' / 'csc.exe'
 )
@@ -102,15 +120,15 @@ def version():
     return re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE).group(1)
 
 
-def fetch(name, digest):
-    """The runtime archive, downloaded once into build/cache and checked."""
+def fetch(name, digest, url=None):
+    """A download (the runtime archive by default), fetched once into build/cache and checked."""
     target = BUILD / 'cache' / name
     if not target.exists():
         target.parent.mkdir(parents=True, exist_ok=True)
         print(f'Downloading {name}')
         partial = target.with_suffix('.part')
         with (
-            urllib.request.urlopen(RELEASE + name.replace('+', '%2B'), timeout=60) as response,
+            urllib.request.urlopen(url or RELEASE + name.replace('+', '%2B'), timeout=60) as response,
             partial.open('wb') as out,
         ):
             shutil.copyfileobj(response, out, 1 << 20)
@@ -257,11 +275,109 @@ def inno_compiler():
     return next((Path(path) for path in candidates if path and Path(path).is_file()), None)
 
 
+def build_tools():
+    """makeappx.exe and makepri.exe, unpacked once from Microsoft's NuGet package."""
+    url, digest, inside = BUILD_TOOLS
+    folder = BUILD / 'cache' / 'sdk-build-tools'
+    if not (folder / 'makeappx.exe').is_file():
+        package = fetch(url.rsplit('/', 1)[1], digest, url)
+        with zipfile.ZipFile(package) as archive:
+            for entry in archive.namelist():
+                if entry.startswith(inside) and not entry.endswith('/'):
+                    target = folder / entry[len(inside) :]
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    target.write_bytes(archive.read(entry))
+    return folder / 'makeappx.exe', folder / 'makepri.exe'
+
+
+def test_certificate(exported):
+    """This PC's certificate for test packages (made once, in the user's certificate store),
+    exported to exported; returns its thumbprint for signtool."""
+    subject = TEST_IDENTITY['publisher']
+    script = (
+        f"$c = Get-ChildItem Cert:\\CurrentUser\\My | Where-Object Subject -eq '{subject}' | Select-Object -First 1; "
+        f"if (-not $c) {{ $c = New-SelfSignedCertificate -Type Custom -Subject '{subject}' "
+        "-KeyUsage DigitalSignature -FriendlyName 'Image Studio test package' "
+        "-CertStoreLocation Cert:\\CurrentUser\\My -NotAfter (Get-Date).AddYears(2) "
+        "-TextExtension @('2.5.29.37={text}1.3.6.1.5.5.7.3.3', '2.5.29.19={text}') }; "
+        f"Export-Certificate -Cert $c -FilePath '{exported}' | Out-Null; $c.Thumbprint"
+    )
+    result = subprocess.run(
+        ['powershell', '-NoProfile', '-NonInteractive', '-Command', script],
+        capture_output=True, text=True, check=True,
+    )
+    return result.stdout.strip().splitlines()[-1]
+
+
+def store_identity(test):
+    if test:
+        return TEST_IDENTITY
+    identity = json.loads((PACKAGING / 'windows' / 'store.json').read_text(encoding='utf-8'))
+    missing = [key for key in TEST_IDENTITY if not identity.get(key)]
+    if missing:
+        raise SystemExit(
+            'packaging/windows/store.json has no ' + ', '.join(missing) + ' yet. Partner Center shows '
+            'them under Product management > Product identity once the app name is reserved '
+            '(packaging/windows/STORE.md). To try the package on this PC first: build.py --msix-test'
+        )
+    return identity
+
+
+def msix(app, number, test):
+    """The Microsoft Store package: the app folder with a manifest, logos and their resource index."""
+    makeappx, makepri = build_tools()
+    identity = store_identity(test)
+    layout = BUILD / 'windows' / 'msix'
+    if layout.exists():
+        shutil.rmtree(layout)
+    shutil.copytree(app, layout)
+    # The Store wants four numbers with the last one 0; pyproject's 2.0.0 becomes 2.0.0.0.
+    numeric = '.'.join((re.findall(r'\d+', number) + ['0'] * 3)[:3]) + '.0'
+    manifest = (PACKAGING / 'windows' / 'AppxManifest.xml').read_text(encoding='utf-8')
+    for key, value in dict(identity, version=numeric).items():
+        manifest = manifest.replace('{' + key + '}', value.replace('&', '&amp;').replace('"', '&quot;'))
+    (layout / 'AppxManifest.xml').write_text(manifest, encoding='utf-8')
+
+    # Logos are indexed on their own: makepri would otherwise list every file of the app.
+    logos = BUILD / 'windows' / 'msix-logos'
+    if logos.exists():
+        shutil.rmtree(logos)
+    run([python_in(app, 'windows'), PACKAGING / 'make_icon.py', '--store', logos / 'Assets'])
+    shutil.copytree(logos / 'Assets', layout / 'Assets')
+    config = BUILD / 'windows' / 'priconfig.xml'
+    run([makepri, 'createconfig', '/cf', config, '/dq', 'en-US', '/pv', '10.0.0', '/o'], stdout=subprocess.DEVNULL)
+    run(
+        [makepri, 'new', '/pr', logos, '/cf', config, '/mn', layout / 'AppxManifest.xml',
+         '/of', layout / 'resources.pri', '/o'],
+        stdout=subprocess.DEVNULL,
+    )
+
+    DIST.mkdir(exist_ok=True)
+    target = DIST / f'ImageStudio-{number}{"-test" if test else ""}.msix'
+    run([makeappx, 'pack', '/d', layout, '/p', target, '/o'], stdout=subprocess.DEVNULL)
+    if test:
+        certificate = DIST / 'ImageStudio-test.cer'
+        thumbprint = test_certificate(certificate)
+        run([makeappx.with_name('signtool.exe'), 'sign', '/q', '/fd', 'SHA256', '/sha1', thumbprint, '/s', 'My', target])
+    print(f'Done: {target} ({target.stat().st_size / 1e6:.0f} MB)')
+    if test:
+        print(
+            'Windows installs it once this PC trusts the test certificate. One time, in PowerShell as administrator:\n'
+            f'  Import-Certificate -FilePath "{certificate}" -CertStoreLocation Cert:\\LocalMachine\\TrustedPeople\n'
+            'Then install it, and remove it again, with:\n'
+            f'  Add-AppxPackage "{target}"\n'
+            f'  Get-AppxPackage {identity["name"]} | Remove-AppxPackage'
+        )
+    else:
+        print('Upload it in Partner Center (packaging/windows/STORE.md); the Store signs it.')
+
+
 def folder_size(folder):
     return sum(file.stat().st_size for file in folder.rglob('*') if file.is_file())
 
 
-def build(platform, installer):
+def build(platform, output):
+    """output: 'installer', 'folder', 'msix' or 'msix-test' (the last three on Windows only)."""
     number = version()
     name = 'Image Studio' if platform == 'windows' else 'image-studio'
     app = BUILD / platform / name
@@ -326,8 +442,12 @@ def build(platform, installer):
             tar.add(app, arcname=name)
         print(f'Done: {target} ({target.stat().st_size / 1e6:.0f} MB)')
         return
-    if not installer:
+    if output == 'folder':
         print(f'Done: {app} (run "Image Studio.exe" there)')
+        return
+    if output.startswith('msix'):
+        step('Microsoft Store package')
+        msix(app, number, test=output == 'msix-test')
         return
     step('Installer')
     compiler = inno_compiler()
@@ -353,14 +473,25 @@ def build(platform, installer):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
-    parser.add_argument('--no-installer', action='store_true', help='Windows: stop after the app folder')
+    choice = parser.add_mutually_exclusive_group()
+    choice.add_argument('--no-installer', action='store_true', help='Windows: stop after the app folder')
+    choice.add_argument('--msix', action='store_true', help='Windows: the Microsoft Store package')
+    choice.add_argument('--msix-test', action='store_true',
+                        help='Windows: a Store package with a test identity, to install on this PC')
     args = parser.parse_args()
     platforms = {'win32': 'windows', 'linux': 'linux'}
     if sys.platform not in platforms:
         raise SystemExit(
             'Build on Windows or Linux (each builds its own; Python packages differ per system).'
         )
-    build(platforms[sys.platform], not args.no_installer)
+    output = (
+        'folder' if args.no_installer else 'msix' if args.msix else 'msix-test' if args.msix_test else 'installer'
+    )
+    if output.startswith('msix') and sys.platform != 'win32':
+        raise SystemExit('The Microsoft Store package is built on Windows.')
+    if output == 'msix':
+        store_identity(test=False)  # before a long build, not after it
+    build(platforms[sys.platform], output)
 
 
 if __name__ == '__main__':

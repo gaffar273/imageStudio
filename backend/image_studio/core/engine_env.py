@@ -95,14 +95,92 @@ def base_home(env=None):
     return None
 
 
+def base_runtime():
+    """The Python installation an environment is made from: the one this app runs.
+
+    A Microsoft Store package is the exception. The environment's python.exe sits outside the
+    package and only starts its base Python, and Windows lets nothing outside a package start
+    a program inside it (reading its files is allowed). So a package makes the environment from
+    a copy of its Python in the data folder (sync_runtime), and the engine runs outside the package."""
+    if paths.PACKAGE:
+        return paths.data_dir() / 'runtime'
+    return Path(getattr(sys, '_base_executable', sys.executable)).parent
+
+
+RUNTIME_MARKER = 'image-studio-build.json'
+
+
+def runtime_stamp():
+    """What a copy of the package's Python is made from: this build, at this package folder."""
+    return json.dumps(dict(build=paths.BUILD_FILE.read_text(encoding='utf-8'), root=str(paths.ROOT)), indent=2)
+
+
+def runtime_current():
+    """Package only: whether the copied Python is this version's, from this package folder."""
+    try:
+        return (base_runtime() / RUNTIME_MARKER).read_text(encoding='utf-8') == runtime_stamp()
+    except OSError:
+        return False
+
+
+def sync_runtime():
+    """Package only: copy the package's Python to base_runtime() unless this version's copy is
+    there; True when it is ready. The window's libraries (Qt) stay behind, the engine never
+    loads them, and the studio's code is read from the package (only starting programs there
+    is blocked)."""
+    if runtime_current():
+        return True
+    import shutil
+
+    source = Path(getattr(sys, '_base_executable', sys.executable)).parent
+    target = base_runtime()
+    try:
+        (target / RUNTIME_MARKER).unlink(missing_ok=True)  # an interrupted copy is redone next time
+        if target.exists():
+            shutil.rmtree(target)
+        shutil.copytree(
+            source, target, ignore=shutil.ignore_patterns('PySide6*', 'shiboken6*')
+        )
+        # In the package the studio's code is found relative to this file; from the copy it is not.
+        (target / 'Lib' / 'site-packages' / 'image-studio.pth').write_text(
+            str(paths.ROOT / 'backend') + '\n', encoding='utf-8'
+        )
+        (target / RUNTIME_MARKER).write_text(runtime_stamp(), encoding='utf-8')
+    except OSError:  # most likely an engine of the previous version still running
+        return False
+    return True
+
+
+def make(env, clear=False, upgrade=False, with_pip=True):
+    """Create or refresh the environment from base_runtime()."""
+    import venv
+
+    if not paths.PACKAGE:
+        venv.EnvBuilder(system_site_packages=True, with_pip=with_pip, clear=clear, upgrade=upgrade).create(env)
+        return
+    if not sync_runtime():
+        raise OSError(f'Python could not be copied to {base_runtime()}; close Image Studio and try again')
+    import subprocess
+
+    flags = ['--clear'] * clear + ['--upgrade'] * upgrade + ['--without-pip'] * (not with_pip)
+    result = subprocess.run(
+        [str(base_runtime() / 'python.exe'), '-m', 'venv', '--system-site-packages', *flags, str(env)],
+        capture_output=True, text=True, errors='replace',
+    )
+    if result.returncode:
+        lines = (result.stderr or result.stdout).strip().splitlines()
+        raise OSError(lines[-1] if lines else f'python -m venv exited with {result.returncode}')
+
+
 def same_base(env=None):
-    """Whether the environment still points at the Python this app runs (the app may have moved)."""
+    """Whether the environment still points at the Python it is made from (the app may have moved)."""
     home = base_home(env)
     if not home or not Path(home).is_dir():
         return False
-    base = Path(getattr(sys, '_base_executable', sys.executable)).parent
+    if paths.PACKAGE and not runtime_current():
+        return False
     try:
-        return Path(home).samefile(base)
+        return Path(home).samefile(base_runtime())
     except OSError:
         return False
 
@@ -115,6 +193,25 @@ def status(env=None):
     if {key: record.get(key) for key in ('python', 'requirements')} != wanted(kind(env)) or not same_base(env):
         return 'update'
     return 'ready'
+
+
+def repoint(env=None):
+    """Point a finished environment at this app's Python again when only the app's folder moved.
+
+    A Microsoft Store update installs each version in a new folder (and its Python is copied
+    again), so this happens after every update there; the libraries are unchanged, so it takes
+    seconds rather than a setup run. Returns True when it repointed."""
+    env = Path(env or paths.ENGINE_ENV)
+    record = recorded(env)
+    if not env_python(env).is_file() or not record or same_base(env):
+        return False
+    if {key: record.get(key) for key in ('python', 'requirements')} != wanted(kind(env)):
+        return False  # the libraries changed too: Studio settings finishes the update
+    try:
+        make(env, upgrade=True, with_pip=False)
+    except OSError:
+        return False
+    return same_base(env)
 
 
 def needs_setup():

@@ -130,6 +130,101 @@ class EngineEnvironmentTests(unittest.TestCase):
             self.assertEqual((record['kind'], record['requirements']), ('cloud', engine_env.wanted('cloud')['requirements']))
 
 
+class StorePackageTests(unittest.TestCase):
+    """A Microsoft Store package: nothing outside it may start its Python, and each update moves it."""
+
+    def package(self, folder, version='2.0.0'):
+        """A package folder with a Python in it, and paths patched as if the app ran from there."""
+        root = Path(folder) / f'ImageStudio_{version}'
+        runtime = root / 'runtime'
+        (runtime / 'Lib' / 'site-packages' / 'PySide6').mkdir(parents=True)
+        (runtime / 'python.exe').write_bytes(b'')
+        (runtime / 'Lib' / 'site-packages' / 'image-studio.pth').write_text('../../backend\n', encoding='utf-8')
+        (root / 'build.json').write_text(json.dumps(dict(version=version)), encoding='utf-8')
+        return [
+            patch.object(paths, 'PACKAGE', 'ImageStudio_test'),
+            patch.object(paths, 'ROOT', root),
+            patch.object(paths, 'BUILD_FILE', root / 'build.json'),
+            patch.object(paths, 'data_dir', lambda: Path(folder) / 'data'),
+            patch.object(sys, '_base_executable', str(runtime / 'python.exe'), create=True),
+        ]
+
+    def run_in(self, patches, check):
+        for one in patches:
+            one.start()
+        try:
+            check()
+        finally:
+            for one in reversed(patches):
+                one.stop()
+
+    def test_the_engine_is_made_from_a_copy_of_the_packages_python(self):
+        with tempfile.TemporaryDirectory() as folder:
+            def check():
+                copy = engine_env.base_runtime()
+                self.assertEqual(copy, Path(folder) / 'data' / 'runtime')
+                self.assertFalse(engine_env.runtime_current())
+                self.assertTrue(engine_env.sync_runtime())
+                self.assertTrue((copy / 'python.exe').is_file())
+                self.assertFalse((copy / 'Lib' / 'site-packages' / 'PySide6').exists())  # the window's only
+                pth = (copy / 'Lib' / 'site-packages' / 'image-studio.pth').read_text(encoding='utf-8').strip()
+                self.assertEqual(Path(pth), paths.ROOT / 'backend')  # the code stays in the package
+                self.assertTrue(engine_env.runtime_current())
+
+            self.run_in(self.package(folder), check)
+
+    def test_an_update_copies_python_again_and_the_engine_follows(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = fake_env(folder)
+
+            def set_up():  # as setup_engine leaves it in the first version
+                engine_env.sync_runtime()
+                (env / 'pyvenv.cfg').write_text(f'home = {engine_env.base_runtime()}\n', encoding='utf-8')
+                self.assertEqual(engine_env.status(env), 'ready')
+
+            def after_update():
+                self.assertEqual(engine_env.status(env), 'update')  # the copy is the old version's
+                with patch.object(engine_env, 'make', side_effect=lambda *args, **kw: engine_env.sync_runtime()):
+                    self.assertTrue(engine_env.repoint(env))
+                self.assertEqual(engine_env.status(env), 'ready')
+                pth = engine_env.base_runtime() / 'Lib' / 'site-packages' / 'image-studio.pth'
+                self.assertIn('ImageStudio_2.0.1', pth.read_text(encoding='utf-8'))
+
+            self.run_in(self.package(folder), set_up)
+            self.run_in(self.package(folder, '2.0.1'), after_update)
+
+    def test_new_libraries_still_go_through_studio_settings(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = fake_env(folder, requirements='older')
+            with patch.object(engine_env, 'make') as make:
+                self.assertFalse(engine_env.repoint(env))
+                make.assert_not_called()
+
+    def test_the_manifest_keeps_appdata_real(self):
+        import xml.etree.ElementTree as tree
+
+        text = (ROOT / 'packaging' / 'windows' / 'AppxManifest.xml').read_text(encoding='utf-8')
+        for key in ('name', 'publisher', 'publisher_display_name', 'version'):
+            self.assertIn('{' + key + '}', text)
+            text = text.replace('{' + key + '}', 'x')
+        root = tree.fromstring(text)  # also fails on "--" inside a comment, which makeappx rejects
+        found = {element.tag.rsplit('}', 1)[1]: element for element in root.iter()}
+        self.assertEqual(found['FileSystemWriteVirtualization'].text, 'disabled')
+        self.assertEqual(found['RegistryWriteVirtualization'].text, 'disabled')
+        capabilities = {element.get('Name') for element in root.iter() if element.tag.endswith('}Capability')}
+        self.assertEqual(capabilities, {'runFullTrust', 'unvirtualizedResources'})
+        application = found['Application']
+        self.assertTrue((ROOT / 'packaging' / 'windows' / 'launcher.cs').is_file())
+        self.assertEqual(application.get('Executable'), 'Image Studio.exe')  # build.windows_launcher's
+
+    def test_a_store_build_needs_the_partner_center_identity(self):
+        build = load_build()
+        self.assertEqual(build.store_identity(test=True)['publisher'], 'CN=Image Studio test')
+        with patch.object(Path, 'read_text', return_value=json.dumps(dict(name='', publisher='', publisher_display_name=''))):
+            with self.assertRaises(SystemExit):
+                build.store_identity(test=False)
+
+
 class SetupOutputTests(unittest.TestCase):
     def test_pip_output_becomes_installer_progress(self):
         translate = setup_engine.Translator()

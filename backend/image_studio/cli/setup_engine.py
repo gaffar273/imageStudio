@@ -19,7 +19,6 @@ import re
 import subprocess
 import sys
 import time
-import venv
 from pathlib import Path
 
 from image_studio.core import engine_env, paths
@@ -89,12 +88,7 @@ def prepare(env):
         return
     print('Making the engine environment.', flush=True)
     # Shares the app's own packages (the studio, fastapi); a newer Python means new libraries.
-    venv.EnvBuilder(
-        system_site_packages=True,
-        with_pip=True,
-        clear=other_python,
-        upgrade=python.is_file() and not other_python,
-    ).create(env)
+    engine_env.make(env, clear=other_python, upgrade=python.is_file() and not other_python)
 
 
 def pip_install(python, requirements):

@@ -18,6 +18,27 @@ BUILD_FILE = ROOT / 'build.json'
 INSTALLED = BUILD_FILE.is_file()
 
 
+def package_family():
+    """The Microsoft Store package this process runs in (its family name), or None outside one.
+
+    Processes the app starts (the engine, its tools) run in the same package. The package
+    folder is read-only and moves with every update; the manifest turns off the AppData
+    redirection (packaging/windows/AppxManifest.xml), so the folders below are the real ones."""
+    if sys.platform != 'win32':
+        return None
+    import ctypes
+
+    length = ctypes.c_uint32(0)
+    get = ctypes.windll.kernel32.GetCurrentPackageFamilyName
+    if get(ctypes.byref(length), None) != 122:  # ERROR_INSUFFICIENT_BUFFER; 15700 means no package
+        return None
+    name = ctypes.create_unicode_buffer(length.value)
+    return name.value if get(ctypes.byref(length), name) == 0 else None
+
+
+PACKAGE = package_family()
+
+
 def config_dir():
     """Per-user settings: %APPDATA%\\Image Studio or ~/.config/image-studio."""
     if sys.platform == 'win32':

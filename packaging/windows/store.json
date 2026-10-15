@@ -1,0 +1,6 @@
+{
+  "_about": "The package identity Partner Center gives the app (Product identity page, after reserving the name). Until then build.py --msix refuses; --msix-test builds a local test package instead.",
+  "name": "",
+  "publisher": "",
+  "publisher_display_name": ""
+}

@@ -373,7 +373,7 @@ def palette():
 
 def build():
     """The application and its window, styled; the engine is not started yet."""
-    if sys.platform == 'win32':
+    if sys.platform == 'win32' and not paths.PACKAGE:  # a Store package has its own, from the manifest
         import ctypes
 
         # Its own taskbar entry and icon, rather than Python's.
