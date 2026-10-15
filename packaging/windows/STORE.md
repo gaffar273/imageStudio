@@ -12,17 +12,20 @@ government ID and a selfie, then opens Partner Center.
 
 ## 2. Reserve the name and copy the identity
 
-In Partner Center: **Apps and games → New product → MSIX or PWA app**, and reserve
-**Image Studio** (or the closest free name). Then open **Product management → Product identity**
-and copy three values into `packaging/windows/store.json`:
+In Partner Center: **Apps and games → New product → MSIX or PWA app**, and reserve a name.
+"Image Studio" alone is taken; "AGS Labs Image Studio" matches the website. Then open
+**Product management → Product identity** and fill in `packaging/windows/store.json`:
 
-| Partner Center shows        | store.json key           |
-| --------------------------- | ------------------------ |
-| Package/Identity/Name       | `name`                   |
-| Package/Identity/Publisher  | `publisher` (`CN=...`)   |
+| Partner Center shows                    | store.json key           |
+| --------------------------------------- | ------------------------ |
+| the name you reserved, exactly          | `display_name`           |
+| Package/Identity/Name                   | `name`                   |
+| Package/Identity/Publisher              | `publisher` (`CN=...`)   |
 | Package/Properties/PublisherDisplayName | `publisher_display_name` |
 
-`build.py --msix` refuses to run until all three are filled in. These values are not secret.
+The Store checks that the package carries the reserved name, so it is also the name in the Start
+menu; the app's own window still says Image Studio. `build.py --msix` refuses to run until all four
+are filled in. These values are not secret.
 
 ## 3. Build
 
@@ -50,11 +53,37 @@ honestly (the result is usually a teen or 12+ rating).
 
 **Packages**: upload the `.msix`.
 
-**Store listing**: a description, at least one screenshot (1366×768 or larger), and a privacy
-policy URL. A policy is needed because people store API keys and pictures in the app. The
-website can host it, for example at agslabs.tech/privacy. In short, the policy says: everything
-stays on the PC, nothing is collected, and prompts go to a cloud provider only when the person
-connects one.
+**Store listing**: the description below, at least one screenshot (1366×768 or larger; the
+website's `public/media/` has real ones), and the privacy policy URL
+<https://agslabs.tech/privacy/> (`website/public/privacy/index.html`).
+
+**Generative AI** (policy 11.16): answer yes where Partner Center asks whether the product uses
+live generative AI. The description says so too, and the app has "Report this picture" in Library
+and "Report a problem" in Settings → This PC; both open a GitHub issue, so watch the repository's
+issues and act on reports.
+
+A description that covers what the policies ask (11.16 generative AI, 10.2.2 what gets
+downloaded, 10.2.7 removing everything):
+
+> Make and edit pictures on your own PC by describing them. Image Studio uses generative AI
+> models: write a picture in Create, or drop in a photo and say what to change in Edit.
+> PhotoCraft turns a described retouch into real, editable layers, and the same assistant works
+> inside Krita.
+>
+> The models run on your NVIDIA graphics card, so your pictures stay on your PC. No NVIDIA card?
+> Connect a cloud provider (OpenAI, Google Gemini, fal.ai, Replicate, OpenRouter and others) with
+> your own key instead.
+>
+> The app itself is small. On first start it installs its engine (PyTorch and the model libraries,
+> about 3.5 GB, or about 60 MB in cloud mode) and then the models you choose, each downloaded from
+> its maker. Settings → Models removes the engine again before you uninstall; your models folder
+> is shown in Settings → This PC.
+>
+> To report a picture that should not have been made, open it in Library and choose Report this
+> picture.
+
+**Releases elsewhere**: the website and GitHub release can link to the Store page once it is
+live, alongside the installer.
 
 **Restricted capabilities**: Partner Center asks why the package uses two of them. Text that
 fits:
@@ -86,6 +115,7 @@ version number. People who installed from the Store get the update by themselves
 - AppData is not redirected (see `AppxManifest.xml`), so the engine, models, settings, logs and
   the Krita plugin are in the same folders as with the installer. Both versions can share an
   engine that is already set up.
-- Uninstalling from the Store removes only the app. The engine (several GB) and the Python copy
-  stay in `%LOCALAPPDATA%\Image Studio` until the person deletes that folder. The installer's
-  uninstaller removes the engine. A Store package cannot run code when it is uninstalled.
+- Uninstalling from the Store removes only the app: a Store package cannot run code when it is
+  uninstalled. So Settings → Models has **Remove the engine**, which deletes the engine and the
+  Python copy (`engine_env.remove`), and the listing says so (policy 10.2.7). The installer's
+  uninstaller removes the engine by itself.

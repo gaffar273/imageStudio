@@ -1,0 +1,97 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy · Image Studio</title>
+<meta name="description" content="What Image Studio does with your pictures, prompts and API keys.">
+<link rel="icon" href="../favicon.svg" type="image/svg+xml">
+<style>
+  :root {
+    --bg: #f7f6f2; --card: #ffffff; --ink: #111113; --body: #45454b; --muted: #75757c;
+    --line: #e6e4dd; --accent: #2563eb; --accent-ink: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--body);
+    font: 16px/1.65 'Geist', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', sans-serif;
+  }
+  main { max-width: 720px; margin: 0 auto; padding: 48px 16px 72px; }
+  .back { font-size: 14px; color: var(--muted); text-decoration: none; }
+  .back:hover { color: var(--ink); }
+  h1 { color: var(--ink); font-size: 40px; line-height: 1.1; letter-spacing: -0.03em; margin: 28px 0 8px; }
+  .updated { color: var(--muted); font-size: 14px; margin: 0 0 32px; }
+  .summary {
+    background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 20px 24px;
+    color: var(--ink); margin-bottom: 36px;
+  }
+  .summary p { margin: 0; }
+  h2 { color: var(--ink); font-size: 20px; letter-spacing: -0.01em; margin: 36px 0 8px; }
+  ul { padding-left: 20px; }
+  li { margin: 6px 0; }
+  a { color: var(--accent); }
+  a:hover { color: var(--accent-ink); }
+  code { font-size: 14px; background: #f1efe9; border-radius: 6px; padding: 1px 6px; }
+</style>
+</head>
+<body>
+<main>
+  <a class="back" href="../">← Image Studio</a>
+  <h1>Privacy</h1>
+  <p class="updated">Image Studio by AGS Labs · Updated 15 October 2026</p>
+
+  <div class="summary">
+    <p>Image Studio runs on your PC. We do not collect anything: no account, no analytics, no tracking.
+    Your prompts and pictures go somewhere else only when you connect a cloud provider and use it.</p>
+  </div>
+
+  <h2>What stays on your PC</h2>
+  <ul>
+    <li><strong>Pictures and prompts.</strong> Every picture is saved in your library folder (by default
+      <code>Pictures\Image Studio</code>) with the prompt and settings that made it.</li>
+    <li><strong>Settings and what the app learns from you.</strong> Kept in your user folders
+      (<code>%APPDATA%\Image Studio</code> and <code>%LOCALAPPDATA%\Image Studio</code>).</li>
+    <li><strong>API keys.</strong> Keys you enter for cloud providers are stored on your PC only, encrypted
+      by Windows for your user account, so they cannot be read on another account or computer.</li>
+    <li><strong>Models.</strong> Models you install run on your own graphics card. Pictures made with them
+      never leave your PC.</li>
+  </ul>
+
+  <h2>When something leaves your PC</h2>
+  <ul>
+    <li><strong>Cloud providers you connect.</strong> If you add a key for a provider such as OpenAI,
+      Google Gemini, Anthropic, fal.ai, Replicate or OpenRouter and choose it, the prompt and any picture
+      you are editing are sent to that provider to make the result. Their privacy policy covers what they
+      do with it. Local servers such as Ollama or LM Studio stay on your PC or network.</li>
+    <li><strong>Downloads.</strong> Installing the engine or a model downloads it from its source
+      (PyTorch, the Python Package Index, Hugging Face). Those sites see your IP address, as with any
+      download. A Hugging Face token, if a model needs one, is used for that download and not stored.
+      The app turns off Hugging Face's usage statistics.</li>
+    <li><strong>Reports.</strong> "Report a problem" and "Report this picture" open a GitHub issue in your
+      browser, filled in with the app's version and, for a picture, its prompt and model. Nothing is sent
+      until you submit it there, and you can change or remove anything first. GitHub issues are public.</li>
+  </ul>
+
+  <h2>This website</h2>
+  <p>agslabs.tech is hosted on Vercel, which keeps standard server logs (such as IP addresses) to run
+    the site. The page asks GitHub for the newest release so the download buttons point to it, and your
+    browser keeps that answer until you close the tab. We use no cookies and no analytics.</p>
+
+  <h2>Your control</h2>
+  <ul>
+    <li>Delete any picture, or the whole library folder, at any time.</li>
+    <li>Remove a provider key in Settings → Providers.</li>
+    <li>Remove the engine in Settings → Models. To remove everything, uninstall the app and delete the
+      folders above and your models folder (shown in Settings → This PC).</li>
+  </ul>
+
+  <h2>Children</h2>
+  <p>Image Studio is not directed at children and collects no information from anyone.</p>
+
+  <h2>Contact</h2>
+  <p>Questions about privacy: open an issue at
+    <a href="https://github.com/gaffar273/imageStudio/issues">github.com/gaffar273/imageStudio</a>.
+    If this policy changes, the date at the top changes with it.</p>
+</main>
+</body>
+</html>

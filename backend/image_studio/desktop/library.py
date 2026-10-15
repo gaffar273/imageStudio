@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from image_studio.desktop import theme
+from image_studio.desktop import feedback, theme
 from image_studio.desktop.controls import PageHeader, cover
 from image_studio.desktop.theme import label
 
@@ -350,6 +350,11 @@ class ImageDetails(QDialog):
         self.heart.clicked.connect(self.toggle_favorite)
         column.addWidget(self.heart)
         column.addStretch()
+        report = QPushButton(theme.icon('flag', theme.MUTED), 'Report this picture')
+        report.setProperty('kind', 'flat')
+        report.setToolTip('Something inappropriate in it? ' + feedback.PUBLIC)
+        report.clicked.connect(self.report)
+        column.addWidget(report)
         column.addWidget(label('Use ← and → to move through the library', 'small'))
         layout.addWidget(side)
 
@@ -443,6 +448,10 @@ class ImageDetails(QDialog):
         name = self.item['name']
         self.close()
         self.page.find_similar(name)
+
+    def report(self):
+        meta = self.item.get('metadata') or {}
+        feedback.open_report(feedback.picture_report(prompt_of(self.item), meta.get('model')))
 
     def show_in_folder(self):
         folder = self.page.library_dir

@@ -204,7 +204,7 @@ class StorePackageTests(unittest.TestCase):
         import xml.etree.ElementTree as tree
 
         text = (ROOT / 'packaging' / 'windows' / 'AppxManifest.xml').read_text(encoding='utf-8')
-        for key in ('name', 'publisher', 'publisher_display_name', 'version'):
+        for key in ('display_name', 'name', 'publisher', 'publisher_display_name', 'version'):
             self.assertIn('{' + key + '}', text)
             text = text.replace('{' + key + '}', 'x')
         root = tree.fromstring(text)  # also fails on "--" inside a comment, which makeappx rejects
@@ -217,10 +217,30 @@ class StorePackageTests(unittest.TestCase):
         self.assertTrue((ROOT / 'packaging' / 'windows' / 'launcher.cs').is_file())
         self.assertEqual(application.get('Executable'), 'Image Studio.exe')  # build.windows_launcher's
 
+    def test_removing_the_engine_deletes_only_engine_folders(self):
+        with tempfile.TemporaryDirectory() as folder:
+            def check():
+                env = fake_env(folder)
+                (env / 'Lib').mkdir()
+                (env / 'Lib' / 'torch.dll').write_bytes(b'x' * 1000)
+                engine_env.sync_runtime()
+                elsewhere = Path(folder) / 'models'
+                elsewhere.mkdir()
+                with patch.object(paths, 'ENGINE_ENV', env):
+                    self.assertEqual(engine_env.removable(), [env, engine_env.base_runtime()])
+                    self.assertGreaterEqual(engine_env.remove(), 1000)
+                    self.assertEqual(engine_env.removable(), [])
+                self.assertFalse(env.exists() or engine_env.base_runtime().exists())
+                self.assertTrue(elsewhere.exists())
+                with patch.object(paths, 'ENGINE_ENV', elsewhere):  # set to a folder that is no engine
+                    self.assertEqual(engine_env.removable(), [])
+
+            self.run_in(self.package(folder), check)
+
     def test_a_store_build_needs_the_partner_center_identity(self):
         build = load_build()
         self.assertEqual(build.store_identity(test=True)['publisher'], 'CN=Image Studio test')
-        with patch.object(Path, 'read_text', return_value=json.dumps(dict(name='', publisher='', publisher_display_name=''))):
+        with patch.object(Path, 'read_text', return_value=json.dumps(dict(display_name='', name='', publisher='', publisher_display_name=''))):
             with self.assertRaises(SystemExit):
                 build.store_identity(test=False)
 

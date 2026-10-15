@@ -103,6 +103,7 @@ BUILD_TOOLS = (
 # and the Store signs it.
 TEST_IDENTITY = dict(
     name='ImageStudio.Test',
+    display_name='Image Studio (test)',
     publisher='CN=Image Studio test',
     publisher_display_name='Image Studio contributors',
 )

@@ -77,6 +77,7 @@ export function Footer() {
                 ['Source code', links.repo],
                 ['Releases', links.releases],
                 ['Report a problem', links.issues],
+                ['Privacy', links.privacy],
                 [ORG.name, ORG.url],
               ].map(([label, href]) => (
                 <li key={label}>

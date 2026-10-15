@@ -110,7 +110,7 @@ ENGINE = Part('engine', 'Engine (PyTorch with CUDA)',
               'What every model runs on: PyTorch for NVIDIA graphics cards and the model libraries.', 6,
               'about 3.5 GB to download, 5 GB on disk', 'https://pytorch.org/',
               lambda config: engine_env.status() == 'ready',
-              note='It goes in your user folder, apart from the models; uninstalling the app removes it.',
+              note='It goes in your user folder, apart from the models. Remove the engine, below, takes it off again.',
               steps=[Step('Setting up the engine', ['-m', 'image_studio.cli.setup_engine'], python='app')])
 # The engine without PyTorch, for a PC with no NVIDIA card: it creates and edits through cloud providers.
 # Same key as ENGINE: one engine either way, and installing ENGINE later adds to this one.

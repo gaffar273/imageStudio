@@ -395,6 +395,26 @@ class SettingsPage(QWidget):
         self.cloud_row.install.clicked.connect(lambda: self.install_engine('cloud'))
         self.cloud_row.cancel.clicked.connect(self.installer.cancel)
         box.addWidget(self.cloud_row)
+        self.remove_rule = rule()
+        box.addWidget(self.remove_rule)
+        self.remove_row = QWidget()
+        column = QVBoxLayout(self.remove_row)
+        column.setContentsMargins(0, 10, 0, 4)
+        column.setSpacing(4)
+        top = QHBoxLayout()
+        top.addWidget(label('Remove the engine', 'value'))
+        top.addStretch()
+        self.remove_button = QPushButton(theme.icon('trash-2'), 'Remove')
+        self.remove_button.setProperty('kind', 'danger')
+        self.remove_button.clicked.connect(self.remove_engine)
+        top.addWidget(self.remove_button)
+        column.addLayout(top)
+        column.addWidget(label(
+            'Deletes its libraries (several GB) from this PC, for example before you uninstall Image Studio: '
+            'uninstalling does not always remove them. Models, pictures and settings stay, and you can install '
+            'the engine again here.', 'small', wrap=True))
+        box.addWidget(self.remove_row)
+        self.removing = False
         if paths.INSTALLED:
             in_background(hardware.nvidia, self.found_cards)
         return self.engine_frame
@@ -665,6 +685,36 @@ class SettingsPage(QWidget):
             if blocked not in ('', BUSY) and not running and not text and not (mine and status == 'ready'):
                 text = blocked
             row.show_state(mine and status == 'ready', running, text, percent, blocked)
+        removable = status != 'missing' or self.removing
+        self.remove_rule.setVisible(removable)
+        self.remove_row.setVisible(removable)
+        self.remove_button.setEnabled(not self.installer.running and not self.removing)
+        self.remove_button.setText('Removing…' if self.removing else 'Remove')
+
+    def remove_engine(self):
+        models = self.models_dir or str(paths.WORK)
+        answer = QMessageBox.question(
+            self, 'Remove the engine',
+            'Delete the engine\'s libraries from this PC? Image Studio cannot create or edit until you install '
+            f'the engine again.\n\nYour models stay in {models}. Delete that folder yourself to remove them too.')
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self.removing = True
+        self.show_parts()
+        if self.stop_engine is not None:
+            self.stop_engine('Stopped: the engine is being removed.')
+        in_background(engine_env.remove, self.engine_removed)
+
+    def engine_removed(self, freed, error):
+        self.removing = False
+        if error:
+            self.notify(f'The engine could not be removed completely: {error}', error=True)
+        else:
+            self.notify(f'The engine is removed. {freed / 1e9:.1f} GB freed.')
+        self.read_engine()
+        self.show_parts()
+        if self.start_engine is not None:
+            self.start_engine()  # says the engine needs setting up, or runs what is left
 
     def room_for(self, part, folder, drive):
         """Whether to go ahead: true, or the person says so when the drive is nearly full."""
@@ -689,7 +739,7 @@ class SettingsPage(QWidget):
 
     def install_engine(self, kind='full'):
         part = installs.ENGINE_CLOUD if kind == 'cloud' else installs.ENGINE
-        if self.installer.running or not self.room_for(part, paths.ENGINE_ENV, 'drive it goes on'):
+        if self.installer.running or self.removing or not self.room_for(part, paths.ENGINE_ENV, 'drive it goes on'):
             return
         if self.engine_status == 'ready' and self.stop_engine is not None:
             # Libraries go into the environment the engine runs from: it starts again once the install ends.

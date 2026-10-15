@@ -214,6 +214,39 @@ def repoint(env=None):
     return same_base(env)
 
 
+def removable():
+    """What remove() deletes: the environment, and a package's copy of Python. Only folders that
+    are what they should be, so an engine folder set to somewhere else never loses other files."""
+    found = []
+    env = Path(paths.ENGINE_ENV)
+    if (env / 'pyvenv.cfg').is_file():
+        found.append(env)
+    if paths.PACKAGE and (base_runtime() / 'python.exe').is_file():
+        found.append(base_runtime())
+    return found
+
+
+def remove():
+    """Delete the engine's libraries (several GB), e.g. before the app is uninstalled: neither
+    the installer's nor the Store's uninstall removes them for every case. Models, pictures and
+    settings stay. Returns the bytes freed. Stop the engine first."""
+    import shutil
+    import time
+
+    freed = 0
+    for folder in removable():
+        freed += sum(file.stat().st_size for file in folder.rglob('*') if file.is_file())
+        for attempt in range(5):  # the engine's files can stay locked a moment after it exits
+            try:
+                shutil.rmtree(folder)
+                break
+            except OSError:
+                if attempt == 4:
+                    raise
+                time.sleep(1)
+    return freed
+
+
 def needs_setup():
     """True when this copy cannot start the engine until the environment is set up or refreshed."""
     return paths.INSTALLED and not os.environ.get('IMAGE_STUDIO_ENGINE_PYTHON') and status() != 'ready'

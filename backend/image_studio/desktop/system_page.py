@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from image_studio.core import hardware, paths
-from image_studio.desktop import theme
+from image_studio.desktop import feedback, theme
 from image_studio.desktop.controls import scroll_page
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.theme import label
@@ -126,6 +126,24 @@ class SystemPage(QWidget):
             box.addLayout(row)
             text = note + (f' Set by {variable}, which takes priority.' if os.environ.get(variable) else '')
             box.addWidget(label(text, 'small', wrap=True))
+        layout.addWidget(frame)
+
+        frame, box = card()
+        top = QHBoxLayout()
+        top.addWidget(label('Help and feedback', 'heading'))
+        top.addStretch()
+        top.addWidget(label(f'Version {feedback.version()}', 'small'))
+        box.addLayout(top)
+        box.addWidget(label(
+            'Something not working, or a picture that should not have been made? Tell us. To report one '
+            'picture, open it in Library and choose Report this picture.', 'small', wrap=True))
+        buttons = QHBoxLayout()
+        report = QPushButton(theme.icon('flag'), 'Report a problem')
+        report.setToolTip(feedback.PUBLIC)
+        report.clicked.connect(lambda: feedback.open_report(feedback.problem_report()))
+        buttons.addWidget(report)
+        buttons.addStretch()
+        box.addLayout(buttons)
         layout.addWidget(frame)
         layout.addStretch()
         self.show_folders()

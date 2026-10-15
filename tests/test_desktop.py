@@ -1005,6 +1005,50 @@ class PhotoCraftScreenTests(unittest.TestCase):
         self.assertTrue(page.inspector.isHidden())
 
 
+@unittest.skipUnless(HAS_QT, 'PySide6 is not installed')
+class StorePolicyTests(unittest.TestCase):
+    """What the Microsoft Store asks of the app: reporting pictures (11.16) and a clean removal (10.2.7)."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.app, cls.window = desktop()
+
+    def test_a_picture_report_carries_what_made_it(self):
+        from urllib.parse import parse_qs, urlsplit
+
+        from image_studio.desktop import feedback
+
+        url = urlsplit(feedback.picture_report('A fox in snow', 'RealVisXL_V5.0'))
+        self.assertEqual(f'{url.scheme}://{url.netloc}{url.path}', feedback.ISSUES)
+        query = parse_qs(url.query)
+        self.assertEqual(query['title'], ['Report a picture'])
+        body = query['body'][0]
+        for text in ('A fox in snow', 'RealVisXL_V5.0', f'Image Studio {feedback.version()}'):
+            self.assertIn(text, body)
+
+    def test_the_engine_can_be_removed_from_settings(self):
+        from PySide6.QtWidgets import QMessageBox
+
+        page = self.window.studio_settings
+        try:
+            page.engine_status = 'missing'
+            page.show_parts()
+            self.assertTrue(page.remove_row.isHidden())
+            page.engine_status = 'ready'
+            page.show_parts()
+            self.assertFalse(page.remove_row.isHidden())
+            self.assertTrue(page.remove_button.isEnabled())
+            with (
+                patch.object(QMessageBox, 'question', return_value=QMessageBox.StandardButton.No),
+                patch('image_studio.core.engine_env.remove') as remove,
+            ):
+                page.remove_engine()
+                remove.assert_not_called()  # nothing goes without a yes
+        finally:
+            page.read_engine()
+            page.show_parts()
+
+
 if __name__ == '__main__':
     unittest.main()
 

@@ -24,7 +24,7 @@
   <Identity Name="{name}" Publisher="{publisher}" Version="{version}" ProcessorArchitecture="x64" />
 
   <Properties>
-    <DisplayName>Image Studio</DisplayName>
+    <DisplayName>{display_name}</DisplayName>
     <PublisherDisplayName>{publisher_display_name}</PublisherDisplayName>
     <Logo>Assets\StoreLogo.png</Logo>
     <desktop6:FileSystemWriteVirtualization>disabled</desktop6:FileSystemWriteVirtualization>
@@ -43,7 +43,7 @@
     <Application Id="ImageStudio" Executable="Image Studio.exe"
                  uap10:RuntimeBehavior="packagedClassicApp" uap10:TrustLevel="mediumIL">
       <uap:VisualElements
-        DisplayName="Image Studio"
+        DisplayName="{display_name}"
         Description="Make and edit pictures on your own PC by describing them."
         BackgroundColor="transparent"
         Square150x150Logo="Assets\Square150x150Logo.png"

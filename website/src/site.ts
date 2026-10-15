@@ -14,6 +14,7 @@ export const links = {
   question: `${REPO}/issues/new?labels=question&title=${encodeURIComponent('Question: ')}`,
   readme: `${REPO}#readme`,
   source: `${REPO}#development`,
+  privacy: 'privacy/',
   doc: (path: string) => `${REPO}/blob/main/${path}`,
 }
 
