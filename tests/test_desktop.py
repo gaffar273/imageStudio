@@ -667,6 +667,14 @@ class PhotoCraftRulesTests(unittest.TestCase):
         self.assertEqual(field_title('blendMode'), 'Blend Mode')
         self.assertEqual(filter_name('filter.blur.gaussianBlur'), 'Gaussian blur')
 
+    def test_measured_notes_lead_with_their_subject_and_show_as_written(self):
+        from image_studio.desktop.photocraft_tools import lead
+
+        self.assertEqual(lead('Noise: grain 2.5 of 255 → reduction 26.'), '<b>Noise</b>&nbsp; grain 2.5 of 255 → reduction 26.')
+        self.assertEqual(lead('Sky: the top <b> & “bright”'), '<b>Sky</b>&nbsp; the top &lt;b&gt; &amp; “bright”')
+        self.assertEqual(lead('Skipped “the sky”: no sky found'), 'Skipped “the sky”: no sky found')  # not a subject
+        self.assertEqual(lead('A plain note'), 'A plain note')
+
     def test_the_engine_accepts_what_the_panels_send(self):
         from image_studio.desktop.photocraft_tools import adjust_edits, crop_edit, text_edit
         from image_studio.integrations import photocraft_workspace as workspace
@@ -757,7 +765,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         self.assertEqual(page.stack.currentIndex(), 1)
         self.assertEqual(page.title.text(), 'portrait.jpg')
         self.assertIn('400 × 200 px', page.subtitle.text())
-        self.assertIn('revision 2 of 2', page.subtitle.text())
+        self.assertIn('RGB 8-bit', page.subtitle.text())
         self.assertTrue(page.undo_button.isEnabled())
         self.assertFalse(page.redo_button.isEnabled())
         self.assertFalse(page.canvas.current.isNull())
@@ -808,7 +816,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         panel.fill()
         self.assertEqual(panel.list.item(0).data(Qt.ItemDataRole.UserRole), 'product_marketplace')
         panel.list.setCurrentRow(0)
-        self.assertIn('remove background', panel.parts.text())
+        self.assertIn('remove background', panel.parts.toolTip())
         self.assertFalse(panel.option_row.isHidden())
         panel.option.setCurrentText('etsy')
         panel.target.setValue('object')
@@ -847,7 +855,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
             page.polled('j1', dict(id='j1', state='done', progress=1, message='Adjust applied.', workspace=newer))
         self.assertFalse(page.busy)
         self.assertEqual(page.document['revision'], 'b' * 32)
-        self.assertIn('revision 3 of 3', page.subtitle.text())
+        self.assertEqual(page.document['cursor'], 2)
         self.assertEqual(fetched[0][0], newer['preview'])
         self.assertEqual(len(fetched), 1)  # the original was fetched already
 
@@ -900,7 +908,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         panel = page.assistant
         self.assertTrue(panel.examples.isHidden())
         texts = [widget.text() for widget in panel.plan_box.findChildren(type(panel.planner))]
-        self.assertIn('I understood 1 change', texts)
+        self.assertIn('1 change', texts)
         apply = [button for button in panel.plan_box.findChildren(type(panel.plan_button))
                  if 'understood parts' in button.text()]
         self.assertEqual(len(apply), 1)

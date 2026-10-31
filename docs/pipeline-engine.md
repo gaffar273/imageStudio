@@ -121,11 +121,11 @@ measured and why it did nothing:
 
 | Step | Reads | Sets |
 |---|---|---|
-| White balance | the light's colour three ways: the greyest midtones, the brightest near-neutrals, the white patch | per-channel point curves (exact gains, as a white-balance dropper); less when the readings disagree; 40% of a warm cast kept as the light's mood, a green or magenta cast removed in full |
-| Tones | the 0.5th and 99.5th percentiles and the middle tone, after the white balance | a point curve putting the black and white points at the ends (never stretching more than 1.8×) and lifting dark midtones to about 40% (a night shot stays dark); highlight recovery when over 2% clips; contrast if still flat |
+| White balance | the light's colour three ways: the greyest midtones, the brightest near-neutrals, the white patch | per-channel point curves (exact gains, as a white-balance dropper, scaled to keep the brightness); less when the readings disagree; 40% of a warm cast kept as the light's mood, a green or magenta cast removed in full |
+| Tones | the 0.5th and 99.5th percentiles and the middle tone, after the white balance | exposure bringing the brightest real tones to about 92% (light multiplied, so blacks stay black); then a point curve setting the black point and lifting a dark middle (at most doubled, to about 34%) through a toe that keeps the deepest shadows down; a night shot stays dark; highlight recovery when over 2% clips; contrast if still flat |
 | Colour | the coloured parts' saturation, after the white balance and curve, on a 256 px copy | vibrance |
-| Noise | the grain in the flat areas | luminance and colour noise reduction in proportion |
-| Sharpening | the grain | capture sharpening 40, masked 40 to 80 so the grain is not sharpened |
+| Noise | the grain in the flat areas, at the camera's own pixels for a large photo | luminance and colour noise reduction in proportion |
+| Sharpening | the grain, and whether the photo is at camera resolution | capture sharpening 60 at camera resolution (40 below it), masked 40 to 80 so the grain is not sharpened |
 | Sky | the top quarter against the rest | a soft graduated filter |
 | Horizon | the strongest family of near-horizontal lines | straightened when 0.5° to 4° off |
 | Vignette | the frame's edge after the curve | corners 10 darker; none on a plain backdrop |
@@ -147,35 +147,54 @@ What the measurements showed (PhotoCraft, 2026-10-15), and what each changed:
   whole levels); it is now a trimmed mean deviation, continuous.
 - **Sharpening raises grain unless masked**: amount 80 took a noisy photo's grain from 2.97 to
   4.45; with masking 50 the edges gained as much and the grain did not rise.
+- **Real RAW files are not a flattened photo** (a Canon EOS 6D CR2 and a Nikon D750 NEF from
+  raw.pixls.us, 24 MP, opened by PhotoCraft as 16-bit documents in about 3 s). Lifting the middle
+  with the curve alone raised the NEF's shadows straight to grey (21 of 255 became 102) and the
+  CR2 came out flatter than shot. A retoucher brightens with exposure and sets the black point
+  after it, so the develop does that; a toe on the curve keeps the deepest shadows down. The CR2's
+  white balance pulled red and blue to ×0.82, which dimmed the whole photo before the curve lifted
+  it again; the gains now keep the brightness.
+- **A preview hides a camera's grain and sharpening**: at 1600 px a 24 MP file is shown at about a
+  quarter of its resolution. Each revision of a large photo now also keeps a 1024 px crop of its
+  middle at 100% (`photocraft_workspace.snapshot`; PhotoCraft renders at most 2048 px, so the saved
+  document is cropped in memory before the session closes). Grain is read there. Inside the develop,
+  sharpening 40 added only 2.7% and 4.6% fine detail at the edges on the two RAW files (A/B in
+  PhotoCraft); it scales about linearly and, masked, left the grain alone, so camera files get 60.
 - **Camera Raw's vignette is strong**: −25 darkened the corners by 29% and the ring halfway out
   by 23%; the develop uses −10 at midpoint 25 (corners about 13% darker, the middle untouched).
   On the puppy and the mugs it showed as a spotlight on the backdrop, so a plain border (tones
   spread under 0.15 after the curve; real scenes measured 0.24 and up) gets none.
 
-Each step has a measured check against the photo with only the develop's other steps applied
-(`camera_develop.preview`), so a vignette is judged on the corners it darkened, not on the
-brightening the curve gave the whole picture. Results on the nine bench photos, each given a
+Each step but sharpening has a measured check against the photo with only the develop's other
+steps applied (`camera_develop.preview`), so a vignette is judged on the corners it darkened, not on
+the brightening the curve gave the whole picture. Sharpening's few per cent are smaller than the
+error of any yardstick rebuilt outside PhotoCraft (its curves are smooth, the yardstick's straight),
+so a check failed sharpened photos and could pass unsharpened ones; the A/B above stands for it.
+Results on the nine bench photos, each given a
 camera file's faults of known size (0.6 EV under, flattened to 7–88%, a warm, cool or green cast,
 30% less colour, a 0.8 px blur, grain):
 
 | Photo | Faults | Colour difference from the original (CIELAB ΔE) | | |
 |---|---|---|---|---|
 | | | faulty | old workflow | **develop** |
-| man | warm | 17.4 | 18.8 | **9.3** |
-| woman | cool | 14.2 | 11.8 | **7.8** |
-| group | green | 16.8 | 18.0 | **10.3** |
-| mugs | warm | 16.0 | 7.5 | **6.2** |
-| puppy | cool | 20.9 | 19.1 | **9.1** |
-| town | green | 14.0 | 21.1 | **7.6** |
-| room | warm | 17.2 | 11.4 | **10.1** |
-| neon | cool | 10.0 | 34.1 | **4.7** |
-| street | green | 12.1 | 11.7 | **6.0** |
-| mean | | 15.4 | 17.1 | **7.9** |
+| man | warm | 17.4 | 18.8 | **9.6** |
+| woman | cool | 14.2 | 11.8 | **7.5** |
+| group | green | 16.8 | 15.1 | **10.5** |
+| mugs | warm | 16.0 | 7.5 | **6.5** |
+| puppy | cool | 20.9 | 19.1 | **8.7** |
+| town | green | 14.0 | 15.6 | **8.2** |
+| room | warm | 17.2 | 11.3 | 12.8 |
+| neon | cool | 10.0 | 34.1 | **5.2** |
+| street | green | 12.1 | 11.7 | **6.1** |
+| mean | | 15.4 | 16.1 | **8.3** |
 
-46 of the 47 checks that applied pass. The one that does not is the grainiest photo (the puppy):
-its noise reduction and masked sharpening nearly cancel, and its edges end only 1% crisper. A
-develop takes 1.1 to 1.7 s in PhotoCraft, its checks included. The faults are synthetic so that
-the original is known; real camera files have not been benchmarked this way.
+Exposure-first tones made the synthetic set a little worse than the curve-only first version
+(7.9) and the room worse than the old workflow, but the curve-only version turned real RAW files
+grey, so the real files decide. A develop of a 1600 px photo takes 1.1 to 2.8 s in PhotoCraft,
+its checks included; a 24 MP RAW about 15 s, and every check passed on both RAW files (4 of 4 and
+3 of 3), with the review agreeing on each. A revision of a 24 MP RAW is a 150 to 330 MB file, so
+the files of revisions that leave the history (an undone branch a new edit replaces, the steps a
+follow-up rebuilds) are deleted.
 
 ## Talking to any model
 

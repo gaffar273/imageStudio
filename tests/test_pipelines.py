@@ -534,10 +534,19 @@ class DevelopTests(unittest.TestCase):
         self.develop = camera_develop
 
     def gains(self, image):
+        """The correction against green, which is what sets the colour."""
         import numpy as np
 
         small = np.asarray(image, dtype=np.float32) / 255
-        return self.develop.white_balance(small)[0]
+        red, green, blue = self.develop.white_balance(small)[0]
+        return red / green, 1.0, blue / green
+
+    def test_the_white_balance_keeps_the_brightness(self):
+        # Red and blue pulled to ×0.82 dimmed a Canon CR2, and the curve then lifted it to grey.
+        import numpy as np
+
+        red, green, blue = self.develop.white_balance(np.asarray(scene((1.0, 0.85, 1.0)), dtype=np.float32) / 255)[0]
+        self.assertAlmostEqual(0.2126 * red + 0.7152 * green + 0.0722 * blue, 1.0, places=3)
 
     def test_a_cool_cast_is_read_and_undone(self):
         red, green, blue = self.gains(scene((0.93, 1.0, 1.07)))
@@ -561,12 +570,31 @@ class DevelopTests(unittest.TestCase):
         self.assertEqual(settings, {})
         self.assertIn('neutral', note)
 
-    def test_the_curve_puts_the_black_and_white_points_at_the_ends(self):
-        plan = self.develop.read(scene(low=0.12, high=0.7))
-        (black, zero), *_, (white, top) = plan['tone'][0]['pointCurve']
-        self.assertAlmostEqual(black / 255, 0.12 + 0.03 * 0.58, delta=0.03)
-        self.assertAlmostEqual(white / 255, 0.12 + 0.97 * 0.58, delta=0.03)
+    def test_a_flat_dark_file_is_brightened_by_exposure_and_spread_to_the_ends(self):
+        import numpy as np
+
+        flat = scene(low=0.12, high=0.7)
+        settings = self.develop.read(flat)['tone'][0]
+        self.assertGreater(settings['exposure'], 0)  # light multiplied first, so blacks stay black
+        (black, zero), *_, (white, top) = settings['pointCurve']
         self.assertEqual((zero, top), (0, 255))
+        developed = np.asarray(self.develop.preview(flat, {'tone'}).convert('L'), dtype=np.float32) / 255
+        low, high = np.percentile(developed, [0.5, 99.5])
+        self.assertLess(low, 0.05)
+        self.assertGreater(high, 0.93)
+
+    def test_a_midtone_lift_keeps_the_deepest_shadows_down(self):
+        # A straight lift took a Nikon NEF's 21 of 255 to 102: the shadows went grey.
+        import numpy as np
+
+        rng = np.random.default_rng(4)  # like the NEF: mostly dark cloth, a few bright highlights
+        a = rng.uniform(0.03, 0.22, (200, 300, 1)).repeat(3, axis=2)
+        a[:12, :60] = 0.6
+        dark = Image.fromarray((a * 255).astype('uint8'))
+        points = self.develop.read(dark)['tone'][0]['pointCurve']
+        self.assertEqual(len(points), 4)  # black, toe, middle, white
+        lift = self.develop.curve(points)
+        self.assertLess(lift(0.05) / 0.05, lift(points[2][0] / 255) / (points[2][0] / 255))
 
     def test_a_well_exposed_photo_keeps_its_tones(self):
         self.assertEqual(self.develop.read(scene())['tone'][0], {})
@@ -593,7 +621,7 @@ class DevelopTests(unittest.TestCase):
         settings = develops[0]['params']['params']
         self.assertIn('pointCurve', settings)
         self.assertGreaterEqual(settings['sharpenMasking'], 40)  # never sharpen the grain
-        self.assertNotIn('exposure', settings)  # the curve sets the tones; a median aim darkened white backdrops
+        self.assertGreaterEqual(settings.get('exposure', 0), 0)  # never darkens: a median aim darkened white backdrops
 
     def test_strength_dials_the_measured_develop_back_or_up(self):
         def develop(strength):

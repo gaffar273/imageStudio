@@ -112,6 +112,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   const [inspector, setInspector] = useState(true);
   const [menu, setMenu] = useState<'' | 'export' | 'new' | 'recent'>('');
   const uploadInput = useRef<HTMLInputElement>(null);
+  const layerInput = useRef<HTMLInputElement>(null);
   const importedSource = useRef('');
   const busy = pending || job?.state === 'running';
 
@@ -215,17 +216,29 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   }
 
   async function upload(file?: File) {
-    if (!file || busy) return;
-    if (file.size > 100_000_000) {
-      error('Choose a document under 100 MB.');
+    if (file) await uploadFiles([file]);
+  }
+
+  async function uploadFiles(files: File[], asLayers = false) {
+    if (!files.length || busy || (asLayers && !document)) return;
+    if (
+      files.length > 16 ||
+      files.some((file) => !file.size) ||
+      files.reduce((total, file) => total + file.size, 0) > 100_000_000
+    ) {
+      error('Choose up to 16 nonempty images totaling at most 100 MB.');
       return;
     }
     setPending(true);
-    setMessage('Opening your document…');
+    setMessage(asLayers ? 'Adding images as layers…' : 'Opening your document…');
     try {
       const body = new FormData();
-      body.append('file', file);
-      const response = await fetch('/api/photocraft/workspaces/import', { method: 'POST', body });
+      files.forEach((file, index) => body.append(asLayers || index ? 'files' : 'file', file));
+      const path =
+        asLayers && document
+          ? `/api/photocraft/workspaces/${document.id}/layers?revision=${document.revision}`
+          : '/api/photocraft/workspaces/import';
+      const response = await fetch(path, { method: 'POST', body });
       const data = await response.json();
       if (!response.ok) throw new Error(data.detail || 'Could not open the document.');
       setPlan(null);
@@ -301,9 +314,22 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
         ref={uploadInput}
         hidden
         type="file"
+        multiple
         accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.psd,.psb,.pcraft,.ora,.bmp"
         onChange={(event) => {
-          upload(event.target.files?.[0]);
+          void uploadFiles(Array.from(event.target.files || []));
+          event.target.value = '';
+        }}
+      />
+      <input
+        ref={layerInput}
+        hidden
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp,image/tiff,image/bmp"
+        aria-label="Add images as layers"
+        onChange={(event) => {
+          void uploadFiles(Array.from(event.target.files || []), true);
           event.target.value = '';
         }}
       />
@@ -374,6 +400,14 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
           >
             <FolderOpen size={14} />
             Open
+          </button>
+          <button
+            className="pc-bar-button"
+            disabled={busy || !document || !capabilities?.installed}
+            onClick={() => layerInput.current?.click()}
+            title="Place images above your background as separate layers"
+          >
+            <Plus size={14} /> Add images
           </button>
           <button className="pc-bar-button" onClick={() => setLibrary(!library)} aria-pressed={library}>
             <Images size={14} />
@@ -559,7 +593,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
             onDrawing={setDrawing}
             onOpen={() => uploadInput.current?.click()}
             onLibrary={() => setLibrary(true)}
-            onDrop={upload}
+            onDrop={(files) => void uploadFiles(files, !!document)}
           />
           {library && (
             <div className="pc-library">

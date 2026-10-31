@@ -516,11 +516,9 @@ class EditPage(QWidget):
         symbol.setPixmap(theme.icon('image-plus', theme.FAINT).pixmap(38, 38))
         symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(symbol)
-        for text, role in (('Add a photo to edit', 'heading'),
-                           ('Drop a photo here, paste one with Ctrl + V, or choose a file.', 'muted')):
-            widget = label(text, role, wrap=True)
-            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            column.addWidget(widget)
+        heading = label('Add a photo to edit', 'heading', wrap=True)
+        heading.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(heading)
         column.addSpacing(6)
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -533,7 +531,7 @@ class EditPage(QWidget):
         buttons.addWidget(paste)
         buttons.addStretch()
         column.addLayout(buttons)
-        note = label('PNG, JPG, WEBP · Up to 25 megapixels', 'small')
+        note = label('or drop or paste a photo here', 'small')
         note.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(note)
         column.addStretch(1)
@@ -627,6 +625,7 @@ class EditPage(QWidget):
         config = self.config or {}
         kontext = self.engine == 'kontext'
         self.counter.setText(f'{len(self.prompt.toPlainText())}/{MAX_PROMPT}')
+        self.counter.setVisible(len(self.prompt.toPlainText()) > MAX_PROMPT * 0.8)
         for engine, chip in self.ideas:
             chip.setVisible(engine == self.engine or (engine == 'cloud' and self.engine not in ENGINES))
         self.workspace_button.setVisible(bool(config.get('photocraft')))

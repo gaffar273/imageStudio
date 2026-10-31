@@ -29,7 +29,7 @@ from image_studio.desktop.controls import Box, Flow, PageHeader, Section, Thumb
 from image_studio.desktop.edit import PICTURES, check_size, encode, read_picture
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.library import ImageView, prompt_of, searchable
-from image_studio.desktop.photocraft import ElidedLabel
+from image_studio.desktop.photocraft import ElidedLabel, png_bytes
 from image_studio.desktop.theme import label
 
 POLL_MS = 2000
@@ -233,11 +233,14 @@ class KritaPage(QWidget):
         row.addWidget(self.open_file)
         row.addWidget(self.from_library)
         column.addLayout(row)
+        self.add_images = QPushButton(theme.icon('plus'), 'Add images as layers…')
+        self.add_images.setToolTip('Choose several images to place on the current background. Move or resize them in Krita.')
+        self.add_images.clicked.connect(self.choose_layers)
+        column.addWidget(self.add_images)
         self.blank = QPushButton(theme.icon('plus'), f'New blank canvas  ({BLANK})')
         self.blank.setProperty('kind', 'flat')
         self.blank.clicked.connect(lambda: self.command('new_canvas'))
         column.addWidget(self.blank, 0, Qt.AlignmentFlag.AlignLeft)
-        column.addWidget(label('Opens a new document. Your current canvas stays open in Krita.', 'small', wrap=True))
 
         column.addSpacing(6)
         column.addWidget(label('What to change', 'eyebrow'))
@@ -363,18 +366,15 @@ class KritaPage(QWidget):
         connected, document = self.connected, self.document
         has_document = self.has_document
         if not self.ready:
-            dot, text = theme.DANGER, 'The engine is not running'
-            note = 'Krita connects through the engine. This PC can restart it.'
+            dot, text, note = theme.DANGER, 'The engine is not running', ''
         elif not self.installed:
-            dot, text = theme.DANGER, 'Krita is not installed'
-            note = 'Krita is a free painting app. Install it, then come back here and click Open Krita.'
+            dot, text, note = theme.DANGER, 'Krita is not installed', ''
         elif self.lost:
             dot, text, note = theme.WARN, 'Connection lost. Retrying…', ''
         elif connected:
             dot, text, note = theme.ACCENT, 'Krita connected', ''
         else:
-            dot, text = theme.MUTED, 'Krita is not open'
-            note = 'Open Krita to connect. Its AI panel starts with it.'
+            dot, text, note = theme.MUTED, 'Krita is not open', ''
         self.connection.setText(f'<span style="color:{dot}">●</span>&nbsp; {text}')
         self.connection_note.setText(note)
         self.connection_note.setVisible(bool(note))
@@ -384,6 +384,7 @@ class KritaPage(QWidget):
         for widget in (self.open_file, self.from_library, self.empty_open, self.empty_library):
             widget.setEnabled(usable)
         self.blank.setEnabled(usable and connected)
+        self.add_images.setEnabled(usable and has_document)
         self.send.setEnabled(usable and connected and bool(self.prompt.toPlainText().strip()))
         self.undo.setEnabled(usable and has_document)
         self.save.setEnabled(usable and has_document)
@@ -400,27 +401,21 @@ class KritaPage(QWidget):
         self.empty_library.setVisible(not installing and not has_document)
         if installing:
             self.empty_title.setText('Krita is not on this PC yet')
-            self.empty_text.setText('Krita is a free painting app. Once it is installed, pictures open here as '
-                                    'Krita documents and you can edit them by typing.')
+            self.empty_text.setText('Krita is a free painting app.')
         elif has_document:
             self.empty_title.setText('Waiting for the preview')
-            self.empty_text.setText('The canvas appears here as Krita updates.')
+            self.empty_text.setText('')
         else:
             self.empty_title.setText('Open a picture in Krita')
-            self.empty_text.setText('Drop or paste a picture here, or open one, to start a new document in Krita.')
-        if has_document:
-            self.caption.setText('Live preview · Paint and select areas in Krita.')
-        elif document and not connected:
-            self.caption.setText('Reconnect Krita to see the current canvas and use the editing tools.')
-        else:
-            self.caption.setText('Pictures open as a new document in Krita.')
+            self.empty_text.setText('')
+        self.empty_text.setVisible(bool(self.empty_text.text()))
+        self.caption.setText('Reconnect Krita to see the current canvas.' if document and not connected else '')
+        self.caption.setVisible(bool(self.caption.text()))
         self.selection.setVisible(has_document and bool(document.get('selection')))
-        if not connected:
-            self.hint.setText('Open Krita to send edits.')
-        elif has_document and document.get('selection'):
-            self.hint.setText('Your edit will use the selection made in Krita. Ctrl + Enter sends.')
-        else:
-            self.hint.setText('Describe an edit, or ask for a new image. Ctrl + Enter sends.')
+        self.hint.setText('Uses the selection made in Krita.' if connected and has_document
+                          and document.get('selection') else '')
+        self.hint.setVisible(bool(self.hint.text()))
+        self.send.setToolTip('Ctrl + Enter')
         self.show_layers(document if has_document else None)
         self.show_activity()
 
@@ -447,7 +442,8 @@ class KritaPage(QWidget):
                 box.setStyleSheet(f'#ActiveLayer {{ background: {theme.RAISED}; border-radius: 6px; }} '
                                   'QLabel { background: transparent; }')
             self.layers.addWidget(box)
-        self.layers_note.setText('Manage layers in Krita.' if layers else 'Layers appear when a document is open.')
+        self.layers_note.setText('' if layers else 'No layers yet')
+        self.layers_note.setVisible(not layers)
 
     def show_activity(self):
         events = (self.state or {}).get('events') or []
@@ -516,6 +512,48 @@ class KritaPage(QWidget):
             return
         self.import_image(image)
 
+    def choose_layers(self):
+        if not self.add_images.isEnabled():
+            return
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Add images as layers', '', PICTURES)
+        if paths:
+            self.import_layers(paths)
+
+    def import_layers(self, paths=None, image=None):
+        if self.sending or not self.ready or not self.has_document:
+            return
+        try:
+            files, total = [], 0
+            if image is not None:
+                files = [('Pasted image.png', png_bytes(check_size(image)))]
+            else:
+                if not 1 <= len(paths or []) <= 16:
+                    raise ValueError('Choose between 1 and 16 images at a time.')
+                for value in paths:
+                    path = Path(value)
+                    total += path.stat().st_size
+                    if total > 100_000_000 or path.stat().st_size == 0:
+                        raise ValueError('Choose nonempty files totaling at most 100 MB.')
+                    files.append((path.name, path.read_bytes()))
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), error=True)
+            return
+        self.sending = True
+        self.render()
+
+        def done(answer):
+            self.sending = False
+            self.notify(answer['message'])
+            self.render()
+            self.poll()
+
+        def failed(error):
+            self.sending = False
+            self.notify(error, error=True)
+            self.render()
+
+        self.client.upload_files('/api/krita/layers', files, done, failed)
+
     def import_image(self, image):
         """A picture from this PC: sent to the engine, which saves a PNG copy and opens it in Krita."""
         if self.sending or not self.ready or not self.installed:
@@ -552,15 +590,23 @@ class KritaPage(QWidget):
     def take(self, mime):
         if mime is None or self.sending or not self.ready:
             return False
-        for url in mime.urls():
-            if url.isLocalFile():
-                self.import_file(url.toLocalFile())
-                return True
+        paths = [url.toLocalFile() for url in mime.urls() if url.isLocalFile()]
+        if paths:
+            if self.has_document:
+                self.import_layers(paths)
+            elif len(paths) == 1:
+                self.import_file(paths[0])
+            else:
+                self.notify('Open a background first, then add or drop the other images as layers.', error=True)
+            return True
         if mime.hasImage():
             image = QImage(mime.imageData())
             if not image.isNull():
                 try:
-                    self.import_image(check_size(image))
+                    if self.has_document:
+                        self.import_layers(image=image)
+                    else:
+                        self.import_image(check_size(image))
                 except ValueError as exc:
                     self.notify(str(exc), error=True)
                 return True

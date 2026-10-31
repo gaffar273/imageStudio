@@ -52,7 +52,7 @@ export function Gallery() {
               Every picture here <Em>started as a sentence.</Em>
             </>
           }
-          lead="Straight out of the app on one laptop graphics card. Hover a picture to read its prompt, or open it full size."
+          lead="Made on one laptop graphics card. Hover a picture to read its prompt."
         />
       </div>
       <div className="mt-14 space-y-1 [mask-image:linear-gradient(to_right,transparent,black_8%,black_92%,transparent)]">

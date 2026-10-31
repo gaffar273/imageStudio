@@ -12,6 +12,7 @@ import queue
 import re
 import shutil
 import subprocess
+import tempfile
 import threading
 import time
 import uuid
@@ -30,9 +31,14 @@ from image_studio.integrations import (
     photocraft_planner,
     photocraft_specs,
 )
-from image_studio.services import brain
+from image_studio.services import brain, image_imports
 
 ROOT = CACHE / 'photocraft-workspaces'
+DOCUMENT_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.psd', '.psb', '.pcraft', '.ora', '.bmp'}
+# Camera RAW files PhotoCraft opens itself, as a 16-bit document (a Canon CR2 and a Nikon NEF were
+# checked, 2026-10-15); the camera develop (pipelines/library/camera_develop.py) is made for them.
+RAW_SUFFIXES = {'.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.srf', '.sr2', '.dng', '.raf', '.orf', '.rw2',
+                '.pef', '.srw', '.3fr', '.iiq', '.erf', '.mrw', '.x3f'}
 LOCK = threading.RLock()
 # Up to 16 edits per request, each a few engine steps (select, check, filter, deselect).
 MAX_STEPS = 64
@@ -308,30 +314,87 @@ def snapshot(engine, folder, label, steps):
     revision_id = uuid.uuid4().hex
     engine.call('doc.save', {'path': str(folder / f'{revision_id}.pcraft')})
     engine.call('doc.render', {'path': str(folder / f'{revision_id}.png'), 'maxSide': 1600})
+    if max(state['width'], state['height']) > DETAIL * 1.5:
+        # Grain and sharpness live at the camera's own pixels, which a 1600 px preview of a 24 MP
+        # RAW averages away (noise reduction never triggered and 1 px sharpening was invisible,
+        # 2026-10-15). Renders stop at 2048 px, so the saved document is cropped to its middle
+        # and rendered at 100%; the session ends here, so the crop is never saved.
+        side = DETAIL
+        x, y = (state['width'] - side) // 2, (state['height'] - side) // 2
+        engine.call('engine.execute', {'command': 'image.crop', 'params': {'x': x, 'y': y, 'width': side,
+                                                                          'height': side}})
+        engine.call('doc.render', {'path': str(folder / f'{revision_id}-detail.png'), 'maxSide': side})
     return {'id': revision_id, 'label': label, 'created': time.time(), 'state': state, 'steps': steps}
 
 
-def create(contents=None, filename='Untitled', width=1600, height=1000, cancelled=None):
+DETAIL = 1024  # the side of a revision's 100% detail crop
+
+
+def render(folder, revision_id):
+    """A revision's preview, carrying its 100% detail crop (when it has one) as info['detail']."""
+    with Image.open(folder / f'{revision_id}.png') as image:
+        preview = image.copy()
+    detail = folder / f'{revision_id}-detail.png'
+    if detail.exists():
+        with Image.open(detail) as image:
+            preview.info['detail'] = image.convert('RGB')
+    return preview
+
+
+def _place_images(engine, folder, files, cancelled=None):
+    """Only this trusted upload path may place external resources into a document."""
+    if not 1 <= len(files) <= image_imports.MAX_FILES:
+        raise ValueError('Choose between 1 and 16 images at a time.')
+    # Stage on disk so a batch does not hold every full-resolution RGBA image in Python memory.
+    # Validate the whole batch before changing the engine document.
+    with tempfile.TemporaryDirectory(prefix='layers-', dir=folder) as staging:
+        images = []
+        for index, (name, contents) in enumerate(files):
+            check_cancel(cancelled)
+            source = Path(staging) / f'{index}.png'
+            with image_imports.decode_layer(contents) as image:
+                image.save(source)
+            images.append((Path(name).stem[:150] or 'Image', source))
+        state = engine.call('doc.inspect')
+        if state.get('layers'):
+            engine.call('engine.execute', {'command': 'layer.select', 'params': {'layer': state['layers'][0]['id']}})
+        for name, source in images:
+            check_cancel(cancelled)
+            engine.call('doc.place', {
+                'path': str(source), 'fit': True, 'smartObject': True,
+                'center': [state['width'] / 2, state['height'] / 2],
+            })
+            engine.call('engine.execute', {'command': 'layer.renameLayer', 'params': {'name': name}})
+
+
+def add_layers(workspace_id, expected, files, cancelled=None):
+    """Append a batch as one undoable revision; errors leave the existing history intact."""
+    with LOCK:
+        data = load(workspace_id)
+        require_revision(data, expected)
+        folder = folder_for(workspace_id)
+        with Engine(folder, cancelled) as engine:
+            engine.call('doc.open', {'path': str(folder / f'{expected}.pcraft')})
+            _place_images(engine, folder, files, cancelled)
+            label = 'Add image layer' if len(files) == 1 else f'Add {len(files)} image layers'
+            revision = snapshot(engine, folder, label, [])
+        try:
+            check_cancel(cancelled)
+        except Cancelled:
+            _discard(folder, revision)
+            raise
+        return _commit(data, data['cursor'] + 1, [revision], None)
+
+
+def create(contents=None, filename='Untitled', width=1600, height=1000, cancelled=None, layers=None):
     workspace_id = uuid.uuid4().hex
     folder = folder_for(workspace_id)
     folder.mkdir(parents=True)
     with Engine(folder, cancelled) as engine:
         if contents is not None:
             suffix = Path(filename).suffix.lower()
-            if suffix not in {
-                '.png',
-                '.jpg',
-                '.jpeg',
-                '.webp',
-                '.tif',
-                '.tiff',
-                '.psd',
-                '.psb',
-                '.pcraft',
-                '.ora',
-                '.bmp',
-            }:
-                raise ValueError('Use PNG, JPEG, WebP, TIFF, PSD, PSB, PCraft, ORA, or BMP.')
+            if suffix not in DOCUMENT_SUFFIXES | RAW_SUFFIXES:
+                raise ValueError('Use a camera RAW file, PNG, JPEG, WebP, TIFF, PSD, PSB, PCraft, ORA, or BMP.')
             source = folder / ('import' + suffix)
             source.write_bytes(contents)
             engine.call('doc.open', {'path': str(source)})
@@ -339,6 +402,8 @@ def create(contents=None, filename='Untitled', width=1600, height=1000, cancelle
             engine.call(
                 'doc.new', {'width': width, 'height': height, 'name': filename, 'background': 'white'}
             )
+        if layers:
+            _place_images(engine, folder, layers, cancelled)
         revision = snapshot(engine, folder, 'Original', [])
     data = {
         'id': workspace_id,
@@ -431,8 +496,8 @@ def _measured_checks(plan, folder, expected, before, revision, outcomes, geometr
                        'check': 'Pixels outside your marked area are unchanged (full resolution)'})
     if geometry is None:  # a stage before any crop or turn says so; the whole request asks its edits
         geometry = any(photocraft_intents.group(edit) == 'geometry' for edit in plan['edits'])
-    with Image.open(folder / f'{expected}.png') as old, Image.open(folder / f'{revision["id"]}.png') as new:
-        checks += photocraft_intents.measure(plan['edits'], plan.get('regions', []), old.copy(), new.copy(), geometry)
+    checks += photocraft_intents.measure(plan['edits'], plan.get('regions', []), render(folder, expected),
+                                         render(folder, revision['id']), geometry)
     return checks
 
 
@@ -459,7 +524,7 @@ def _failed(checks):
 
 
 def _discard(folder, revision):
-    for suffix in ('.pcraft', '.png'):
+    for suffix in ('.pcraft', '.png', '-detail.png'):
         (folder / f'{revision["id"]}{suffix}').unlink(missing_ok=True)
 
 
@@ -547,9 +612,7 @@ def _run_part(folder, origin, steps, label, progress, cancelled, plan, before, r
         names = ', '.join(f'“{plan["edits"][index]["quote"]}”' for index in faint)
         progress(0.7, desc='Too faint: running it again a step stronger…')
         try:
-            with Image.open(folder / f'{start}.png') as image:
-                preview = image.convert('RGB')
-            stronger = stronger_plan(on_start, plan, faint, preview)
+            stronger = stronger_plan(on_start, plan, faint, render(folder, start).convert('RGB'))
             redo = stronger['steps']
             if requirements is not None:
                 redo = next(([stronger['steps'][index] for index in indices]
@@ -608,9 +671,15 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
             origin = made[-1]['id'] if made else start
             before = made[-1]['state'] if made else current(on_start)['state']
             part_label = label if name is None else f'{label[:150]} · step {number}/{len(groups)}: {name}'
+
+            def staged(value=None, desc='', number=number, name=name, **extra):
+                # Each stage takes its share of the bar, and says which stage it is.
+                share = None if value is None else (number - 1 + value) / len(groups)
+                progress(share, desc=f'Step {number} of {len(groups)} · {name}: {desc}' if name else desc, **extra)
+
             try:
                 revision, part_checks, part_notes, part_steps = _run_part(
-                    folder, origin, [steps[index] for index in indices], part_label, progress, cancelled, plan,
+                    folder, origin, [steps[index] for index in indices], part_label, staged, cancelled, plan,
                     before, requirements, on_start, start, name)
             except Cancelled:
                 for revision in made:
@@ -635,8 +704,10 @@ def apply(workspace_id, expected, steps, label, progress, cancelled, plan=None):
             ran += part_steps
         final = made[-1]
         if plan and plan.get('edits'):
-            # The last stage shows every check and note of the request, and the one review.
-            final['checks'], final['notes'] = checks, notes
+            # The last stage shows every check and note of the request, and the one review; the
+            # plan's notes say what was measured and decided, so they stay with the result.
+            final['checks'] = checks
+            final['notes'] = list(dict.fromkeys([*plan.get('measured', []), *plan.get('notes', []), *notes]))
             if plan.get('planner') not in ('manual', 'preset', 'rules') and models.available('checker'):
                 progress(0.8, desc='Checking the result against each requirement…')
                 try:
@@ -660,11 +731,21 @@ def _commit(data, keep, made, plan):
     if plan and plan.get('id'):
         for revision in made:
             revision['plan'] = plan['id']  # what a follow-up revises (photocraft_followup.last_request)
+    dropped = data['history'][keep:]
     data['history'] = data['history'][:keep] + made
     data['cursor'] = keep + len(made) - 1
     data['updated'] = time.time()
     save(data)
+    _forget(folder_for(data['id']), dropped)
     return public(data)
+
+
+def _forget(folder, revisions):
+    """Delete the files of revisions that left the history (an undone branch a new edit replaced,
+    the steps a follow-up rebuilt): nothing can reach them again, and a camera RAW's revision is
+    150 to 330 MB (a 24 MP CR2 and NEF, 2026-10-15)."""
+    for revision in revisions:
+        _discard(folder, revision)
 
 
 def move_history(workspace_id, expected, direction):
@@ -726,11 +807,13 @@ def sync_desktop(workspace_id, expected, cancelled):
             engine.call('doc.open', {'path': str(folder / handoff['file'])})
             revision = snapshot(engine, folder, 'Saved changes from PhotoCraft desktop', [])
         check_cancel(cancelled)
+        dropped = data['history'][data['cursor'] + 1:]
         data['history'] = data['history'][: data['cursor'] + 1] + [revision]
         data['cursor'] += 1
         data['updated'] = time.time()
         data.pop('desktop', None)
         save(data)
+        _forget(folder, dropped)
         return public(data)
 
 
@@ -877,13 +960,27 @@ def compile_plan(data, prompt, edits, preserve, questions, notes, preview, plann
             steps.append({**step, 'requirements': [index]})
         compile_notes += expert_notes
     uncovered = photocraft_intents.uncovered_clauses(prompt, edits, preserve) if planner != 'manual' else []
+    # A measured step's own note (“White balance: the light read cool…”) explains its card, in
+    # place of the one Camera Raw filter it shares with the rest of a develop; it is then not
+    # listed again below the cards.
+    from image_studio.pipelines.library.camera_develop import LEADS
+
+    measured = {}
+    for index, edit in enumerate(edits):
+        lead = LEADS.get(edit['action'])
+        note = next((note for note in compile_notes if lead and note.startswith(lead)), None)
+        if note:
+            measured[index] = note
+    used = set(measured.values())
     return {
         'summary': '; '.join(edit['quote'] for edit in edits)[:400] or prompt[:400],
         'requirements': [edit['quote'] for edit in edits],
-        'edits': [{**edit, 'explain': explain(edit, steps, index)} for index, edit in enumerate(edits)],
+        'edits': [{**edit, 'explain': measured[index][len(LEADS[edit['action']]):].strip() if index in measured
+                   else explain(edit, steps, index)} for index, edit in enumerate(edits)],
         'preserve': preserve,
         'questions': questions,
-        'notes': notes + compile_notes,
+        'notes': notes + [note for note in compile_notes if note not in used],
+        'measured': [measured[index] for index in sorted(measured)],
         'unresolved': blocking + [f'Not understood: “{clause}”' for clause in uncovered],
         'regions': regions,
         'steps': steps,
@@ -927,8 +1024,7 @@ def follow_up(data, folder, last, edits, notes, prompt, preserve=(), questions=(
     """The last request rebuilt with a follow-up's changes, on the revision before it (see
     photocraft_followup). The boxes it found are reused, so nothing is asked of a model again."""
     plan, base = last
-    with Image.open(folder / f'{base}.png') as image:
-        preview = image.copy()
+    preview = render(folder, base)
     on_base = {**data, 'cursor': photocraft_followup.base_index(data, base, plan['id'])}
     result = compile_plan(on_base, f'{plan.get("prompt", "")} · {prompt}', edits,
                           list(dict.fromkeys([*plan.get('preserve', []), *preserve])), list(questions), list(notes),
@@ -942,8 +1038,7 @@ def smart_plan(workspace_id, expected, prompt, progress, cancelled, area=None):
     require_revision(data, expected)
     folder = folder_for(workspace_id)
     check_cancel(cancelled)
-    with Image.open(folder / f'{expected}.png') as image:
-        preview = image.copy()
+    preview = render(folder, expected)
     state = current(data)['state']
     # A follow-up (“too much”, “without the vignette”, “less warm” after “warmer”) revises the
     # request that made the photo on screen instead of stacking a new edit on it.

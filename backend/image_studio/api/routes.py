@@ -4,7 +4,8 @@ import base64
 import io
 import uuid
 from pathlib import Path
-from fastapi import APIRouter, HTTPException
+from typing import Annotated
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
 from PIL import Image, ImageOps, UnidentifiedImageError
 from image_studio.api.schemas import (
@@ -21,7 +22,7 @@ from image_studio.core.engine import local_models
 from image_studio.core.paths import CACHE, IMAGES, WORK
 from image_studio.services.runtime import render_session
 from image_studio.services import workflows, library, assistant, search, repair, faces, memory, personal
-from image_studio.services import brain, cloud, segment
+from image_studio.services import brain, cloud, segment, image_imports
 from image_studio.core import providers
 from image_studio.services.jobs import store, BusyError
 from image_studio.integrations import bridge, photocraft
@@ -61,7 +62,7 @@ def submit(run):
 
 @router.get('/health')
 def health():
-    return dict(ok=True, title='Local Image Studio', version='2.0.0')
+    return dict(ok=True, title='Local Image Studio', version='2.0.1')
 
 
 @router.get('/config')
@@ -434,3 +435,34 @@ def krita_command(request: KritaRequest):
         return dict(message=message)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
+
+
+@router.post('/krita/layers')
+async def krita_layers(files: Annotated[list[UploadFile], File()]):
+    """Stage the complete batch before queuing a single placement into Krita's active document."""
+    paths = []
+    try:
+        images = await image_imports.read_files(files)
+        if not bridge.link.connected or not bridge.link.state:
+            raise HTTPException(409, 'Open a canvas in connected Krita before adding image layers.')
+        if not bridge.link.state.get('image_layers'):
+            raise HTTPException(409, 'Close Krita and reopen it from Image Studio to enable image layers.')
+        document = dict(bridge.link.state)
+        folder = CACHE / 'krita-imports'
+        folder.mkdir(parents=True, exist_ok=True)
+        for name, contents in images:
+            path = folder / f'layer-{uuid.uuid4().hex}.png'
+            paths.append(path)
+            with image_imports.decode_layer(contents) as image:
+                image.save(path)
+        bridge.link.send('place', images=[dict(path=str(path), name=Path(name).stem[:150] or 'Image')
+                                         for path, (name, _) in zip(paths, images)],
+                         document=dict(path=document.get('path', ''), name=document.get('name', '')))
+        count = f'{len(images)} image layer{"s" if len(images) != 1 else ""}'
+        return dict(message=f'Adding {count} to the current Krita canvas.')
+    except Exception as exc:
+        for path in paths:
+            path.unlink(missing_ok=True)
+        if isinstance(exc, ValueError):
+            raise HTTPException(422, str(exc)) from exc
+        raise

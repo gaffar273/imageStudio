@@ -41,30 +41,26 @@ export function Features() {
             Built like a darkroom, <Em>not a slot machine.</Em>
           </>
         }
-        lead="The model only chooses what to do. Coded pipelines do the work, on layers you can open, and the result is measured before you see it."
+        lead="The model only chooses. Coded pipelines do the work, and the result is measured."
       />
       <div className="mx-auto mt-14 grid max-w-[1180px] gap-4 md:grid-cols-6">
         <Card className="md:col-span-4" visual={<GpuVisual />} title="Runs on your graphics card">
-          RealVisXL, Z-Image Turbo, SDXL Turbo and FLUX.1 Kontext run on your NVIDIA card. When a game needs it, one
-          button unloads every model and hands the memory back.
+          Every model runs on your NVIDIA card. One button hands the memory back when you need it.
         </Card>
         <Card className="md:col-span-2" visual={<PipelinesVisual />} title="Procedures, not guesses">
-          Every edit is a coded pipeline with exact commands. The language model only picks which ones to run.
+          Every edit is a coded pipeline. The model only picks which ones run.
         </Card>
         <Card className="md:col-span-2" visual={<LayersVisual />} title="Layers, never flattened">
-          Each change lands on its own named layer in a real PSD. The original pixels are never overwritten.
+          Each change is its own named layer in a real PSD.
         </Card>
         <Card className="md:col-span-4" visual={<ProvidersVisual />} title="Any model, your own keys">
-          Use the bundled model, a local server like Ollama or LM Studio, or a cloud service with your own key. Keys are
-          encrypted for your Windows account and only sent to their own service.
+          The bundled model, Ollama, LM Studio, or a cloud service with your own encrypted key.
         </Card>
         <Card className="md:col-span-3" visual={<ChecksVisual />} title="Checks its own work">
-          After an edit, each requirement is measured: aspect ratio, the exact text and where it sits, colour, and
-          whether things got brighter or darker as asked.
+          Each requirement is measured after the edit: size, text, colour and light.
         </Card>
         <Card className="md:col-span-3" visual={<AppsVisual />} title="Finish by hand in PhotoCraft or Krita">
-          Open any picture in PhotoCraft with its layers, with all {facts.commands} of its commands at hand, or type edits
-          onto Krita’s live canvas.
+          Open any picture with its layers in PhotoCraft, or type edits onto Krita’s live canvas.
         </Card>
       </div>
     </section>

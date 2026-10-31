@@ -105,6 +105,16 @@ class LinkExtension(Extension):
                     controller().submit(command.get('text', ''), source='browser')
                 elif kind == 'open':
                     self.open(command['path'])
+                elif kind == 'place':
+                    if controller().run is not None:
+                        raise ops.StepError('Wait for the current edit to finish before adding images.')
+                    doc = ops.need(ops.document())
+                    expected, actual = command.get('document', {}), ops.state(doc)
+                    if any(expected.get(key, '') != actual.get(key, '') for key in ('path', 'name')):
+                        raise ops.StepError('The active canvas changed. Add the images again.')
+                    ops.place_images(doc, command['images'])
+                    controller().history.append('Added image layers')
+                    controller().publish(dict(run=command.get('id'), kind='done', text='Image layers added.'))
                 elif kind == 'stop':
                     controller().stop()
                 elif kind == 'undo':

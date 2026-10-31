@@ -58,8 +58,7 @@ class SystemPage(QWidget):
         self.client, self.engine, self.notify = client, engine, notify
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
-        scroll, layout = scroll_page('This PC', 'What this computer can run locally, the engine, and where '
-                                                'files are kept.')
+        scroll, layout = scroll_page('This PC')
         outer.addWidget(scroll)
 
         frame, box = card()
@@ -124,8 +123,9 @@ class SystemPage(QWidget):
             row.addWidget(change)
             row.addWidget(show)
             box.addLayout(row)
-            text = note + (f' Set by {variable}, which takes priority.' if os.environ.get(variable) else '')
-            box.addWidget(label(text, 'small', wrap=True))
+            change.setToolTip(note)
+            if os.environ.get(variable):
+                box.addWidget(label(f'Set by {variable}, which takes priority.', 'small', wrap=True))
         layout.addWidget(frame)
 
         frame, box = card()
@@ -134,12 +134,9 @@ class SystemPage(QWidget):
         top.addStretch()
         top.addWidget(label(f'Version {feedback.version()}', 'small'))
         box.addLayout(top)
-        box.addWidget(label(
-            'Something not working, or a picture that should not have been made? Tell us. To report one '
-            'picture, open it in Library and choose Report this picture.', 'small', wrap=True))
         buttons = QHBoxLayout()
         report = QPushButton(theme.icon('flag'), 'Report a problem')
-        report.setToolTip(feedback.PUBLIC)
+        report.setToolTip('To report one picture, open it in Library and choose Report this picture.')
         report.clicked.connect(lambda: feedback.open_report(feedback.problem_report()))
         buttons.addWidget(report)
         buttons.addStretch()

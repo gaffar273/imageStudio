@@ -66,7 +66,7 @@ LOOKS = [
     ('monoContrast', 'Noir', '#000000', '#dddddd'),
 ]
 ASPECTS = ['1:1', '4:5', '5:4', '3:2', '2:3', '16:9', '9:16', '3:1']
-KEEP = [('center', 'The center'), ('subject', 'The main subject (found by AI)'), ('object', 'A named object…'),
+KEEP = [('center', 'The center'), ('subject', 'The main subject'), ('object', 'A named object…'),
         ('top', 'The top'), ('bottom', 'The bottom'), ('left', 'The left side'), ('right', 'The right side')]
 POSITIONS = ['top left', 'top', 'top right', 'left', 'center', 'right', 'bottom left', 'bottom', 'bottom right']
 TEXT_SIZES = [('small', 'Small'), ('medium', 'Medium'), ('large', 'Large'), ('huge', 'Huge'), ('points', 'Exact pt')]
@@ -88,10 +88,11 @@ FILTER_GROUPS = [
 ]
 EXAMPLES = [
     'Professional polish',
-    'Crop to 4:5 keeping the subject in frame, warm it slightly and add “SUMMER” at the top in white',
-    'Blur the background, brighten the subject a little and add a subtle vignette',
-    'Make the sky dramatic, deepen the blues and remove the small object on the left',
-    'Cut out the subject and put it on a pastel pink background',
+    'Blur the background',
+    'Make the sky dramatic',
+    'Warm it slightly',
+    'Crop to 4:5',
+    'Cut out the subject',
 ]
 TARGET_WORDS = {'whole image': 'Whole image', 'main subject': 'Subject', 'background': 'Background', 'sky': 'Sky',
                 'color': 'Color range', 'shadows': 'Shadows', 'midtones': 'Midtones', 'highlights': 'Highlights',
@@ -100,6 +101,17 @@ MAX_PROMPT = 6000
 
 
 # Pure rules -------------------------------------------------------------------------------
+
+def lead(text):
+    """A measured note as rich text with its subject in bold: “<b>White balance</b> the light read
+    cool…”. Everything is escaped, so a quote or an ampersand in the note shows as written."""
+    import html
+
+    head, sep, rest = text.partition(': ')
+    if sep and len(head) <= 24 and not any(sign in head for sign in '“"'):
+        return f'<b>{html.escape(head)}</b>&nbsp; {html.escape(rest)}'
+    return html.escape(text)
+
 
 def readable(text):
     """PhotoCraft sends some text with its UTF-8 read as Windows-1252 ("Â·" for "·"); show it as meant."""
@@ -241,37 +253,6 @@ class ColorButton(QPushButton):
         painter.drawRoundedRect(QRectF(self.rect()).adjusted(1, 1, -1, -1), 7, 7)
 
 
-class Card(QFrame):
-    """A clickable card with wrapping text (a push button cannot wrap)."""
-
-    clicked = Signal()
-
-    def __init__(self, text):
-        super().__init__()
-        self.setProperty('card', True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        row = QHBoxLayout(self)
-        row.setContentsMargins(12, 8, 10, 8)
-        self.text = label(text, 'muted', wrap=True)
-        row.addWidget(self.text, 1)
-        arrow = label('')
-        arrow.setPixmap(theme.icon('chevron-right', theme.MUTED).pixmap(12, 12))
-        row.addWidget(arrow)
-
-    def mouseReleaseEvent(self, event):
-        if self.isEnabled() and event.button() == Qt.MouseButton.LeftButton and self.rect().contains(
-                event.position().toPoint()):
-            self.clicked.emit()
-
-    def enterEvent(self, event):
-        self.text.setProperty('role', '')
-        self.text.style().polish(self.text)
-
-    def leaveEvent(self, event):
-        self.text.setProperty('role', 'muted')
-        self.text.style().polish(self.text)
-
-
 def swatch(start, end):
     """A small rounded gradient, the preview of a look."""
     result = QIcon()
@@ -296,7 +277,7 @@ def swatch(start, end):
 class Panel(QScrollArea):
     """One tool's controls, scrolling; buttons registered with act() follow the document and the job."""
 
-    def __init__(self, studio, title, intro):
+    def __init__(self, studio, title):
         super().__init__()
         self.studio = studio
         self.setWidgetResizable(True)
@@ -307,7 +288,6 @@ class Panel(QScrollArea):
         self.column.setContentsMargins(20, 18, 16, 18)
         self.column.setSpacing(10)
         self.column.addWidget(label(title, 'heading'))
-        self.column.addWidget(label(intro, 'muted', wrap=True))
         self.guarded = []  # (button, extra condition)
 
     def act(self, button, ready=None):
@@ -340,17 +320,13 @@ class AssistantPanel(Panel):
     """Describe an edit in words, review how it was understood, then apply it."""
 
     def __init__(self, studio):
-        super().__init__(studio, 'Describe your edit',
-                         'Say what to change, where, and how much. Name what must stay untouched. Every detail '
-                         'is read.')
-        self.show_steps = False
-        self.heading('APPLY PROMPT TO')
+        super().__init__(studio, 'Describe your edit')
+        self.show_steps = self.show_details = False
         self.scope = Segmented([('whole', 'Whole image'), ('area', 'Mark an area')], 'whole')
         self.scope.button('area').setIcon(theme.icon('lasso'))
         self.scope.changed.connect(lambda value: studio.set_area(value == 'area'))
         self.column.addWidget(self.scope)
-        self.area_note = label('Restart the studio after the current edit finishes to enable area marking.', 'small',
-                               wrap=True)
+        self.area_note = label('Restart the studio to mark areas.', 'small', wrap=True)
         self.column.addWidget(self.area_note)
 
         self.area = Box()
@@ -362,7 +338,7 @@ class AssistantPanel(Panel):
             self.tool.button(key).setIcon(theme.icon(icon))
         self.tool.changed.connect(studio.set_area_tool)
         area.addWidget(self.tool)
-        self.brush_size = Range('Brush size (% of the width)', 0.3, 15, 0.1)
+        self.brush_size = Range('Brush size', 0.3, 15, 0.1)
         self.brush_size.setValue(3)
         self.brush_size.changed.connect(lambda value: studio.set_brush(value / 100))
         area.addWidget(self.brush_size)
@@ -377,39 +353,33 @@ class AssistantPanel(Panel):
         self.clear_marks.clicked.connect(studio.clear_marks)
         row.addWidget(self.clear_marks)
         area.addLayout(row)
-        self.area_state = label('', 'small', wrap=True)
-        area.addWidget(self.area_state)
         self.column.addWidget(self.area)
 
         self.column.addSpacing(4)
         self.prompt = QPlainTextEdit()
         self.prompt.setFixedHeight(120)
         self.prompt.setTabChangesFocus(True)
-        self.prompt.setPlaceholderText(
-            'Warm only the sky a little, blur the background, add “SUMMER” at the top in white at 48 pt, then '
-            'crop to 4:5. Keep the person unchanged.')
+        self.prompt.setPlaceholderText('Warm the sky a little and blur the background. Keep the person unchanged.')
         self.prompt.textChanged.connect(self.prompt_changed)
         self.column.addWidget(self.prompt)
         foot = QHBoxLayout()
         self.planner = label('', 'small', wrap=True)  # a long model name must not widen the panel
         foot.addWidget(self.planner, 1)
         self.plan_button = QPushButton(theme.icon('send', theme.ON_ACCENT), 'Plan')
+        self.plan_button.setToolTip('Ctrl + Enter')
         self.plan_button.setProperty('kind', 'primary')
         self.plan_button.clicked.connect(self.plan)
         foot.addWidget(self.plan_button)
         self.column.addLayout(foot)
 
         self.examples = Box()
-        examples = QVBoxLayout(self.examples)
-        examples.setContentsMargins(0, 6, 0, 0)
-        examples.setSpacing(6)
-        examples.addWidget(label('TRY', 'eyebrow'))
-        self.example_cards = []
+        examples = Flow()
+        self.examples.setLayout(examples)
         for text in EXAMPLES:
-            card = Card(text)
-            card.clicked.connect(lambda text=text: self.set_prompt(text))
-            examples.addWidget(card)
-            self.example_cards.append(card)
+            chip = QPushButton(text)
+            chip.setProperty('kind', 'chip')
+            chip.clicked.connect(lambda _=False, text=text: self.set_prompt(text))
+            examples.addWidget(chip)
         self.column.addWidget(self.examples)
 
         self.plan_box = Box()
@@ -465,29 +435,25 @@ class AssistantPanel(Panel):
         self.brush_size.setVisible(studio.canvas.tool_choice != 'lasso')
         self.brush_size.setEnabled(free)
         marks = len(studio.canvas.marks)
-        self.area_help.setText(
-            ('Draw a closed loop around each spot.' if studio.canvas.tool_choice == 'lasso'
-             else 'Paint over the spots you want to change.')
-            + ' You can mark several spots. Only the green area will be edited.')
+        self.area_help.setText('Draw around what to change.' if studio.canvas.tool_choice == 'lasso'
+                               else 'Paint over what to change.')
         self.undo_mark.setEnabled(free and bool(marks))
         self.clear_marks.setEnabled(free and bool(marks))
-        self.area_state.setText('Marked area only · outside protected' if marks else 'Mark the photo before planning.')
         planner = (capabilities.get('models') or {}).get('planner') or {}
         local = planner.get('kind', 'local') == 'local'
-        name = 'Local vision planner' if local else ' · '.join(
+        name = 'Local planner' if local else ' · '.join(
             part for part in (planner.get('name'), planner.get('model')) if part)
-        if capabilities.get('brain'):
-            self.planner.setText(f'{name} · Ctrl + Enter')
-        else:
-            self.planner.setText('Planner not installed · presets only' if local
-                                 else f'{name} is not reachable · check Settings → Providers')
-        self.planner.setToolTip('Choose the model that plans edits in Settings → Providers.')
+        # Only a problem is worth a line here; the working planner is named in the tooltip.
+        self.planner.setText('' if capabilities.get('brain') or not capabilities else
+                             'Planner not installed' if local else f'{name} is not reachable')
+        self.planner.setToolTip(f'{name} · change it in Settings → Providers')
         self.plan_button.setEnabled(self.can_plan())
         self.plan_button.setText('Planning…' if studio.busy and studio.job_kind == 'plan' else 'Plan')
-        self.examples.setVisible(studio.plan_data is None)
+        # Examples help with a fresh photo; after an edit its result and Less / More come first.
+        self.examples.setVisible(studio.plan_data is None and not (studio.document and studio.document['cursor'] > 0))
         document = studio.document
         key = (json.dumps(studio.plan_data, sort_keys=True) if studio.plan_data else '',
-               document and document['revision'], studio.busy, self.show_steps)
+               document and document['revision'], studio.busy, self.show_steps, self.show_details)
         if key != self.shown:
             self.shown = key
             self.build_plan()
@@ -506,13 +472,15 @@ class AssistantPanel(Panel):
             elif item.layout():
                 AssistantPanel.clear(item.layout())
 
-    def note(self, layout, text, icon='info', color=theme.MUTED):
+    def note(self, layout, text, icon='info', color=theme.MUTED, rich=False):
         row = QHBoxLayout()
         row.setSpacing(8)
         mark = label('')
         mark.setPixmap(theme.icon(icon, color).pixmap(13, 13))
         row.addWidget(mark, 0, Qt.AlignmentFlag.AlignTop)
-        row.addWidget(label(text, 'small', wrap=True, selectable=True), 1)
+        line = label(text, 'small', wrap=True, selectable=True)
+        line.setTextFormat(Qt.TextFormat.RichText if rich else Qt.TextFormat.PlainText)
+        row.addWidget(line, 1)
         layout.addLayout(row)
 
     def build_plan(self):
@@ -524,7 +492,7 @@ class AssistantPanel(Panel):
         edits, steps = plan.get('edits') or [], plan.get('steps') or []
         count = len(edits) or len(steps)
         head = QHBoxLayout()
-        head.addWidget(label(f'I UNDERSTOOD {count} CHANGE{"" if count == 1 else "S"}', 'eyebrow'))
+        head.addWidget(label(f'{count} CHANGE{"" if count == 1 else "S"}', 'eyebrow'))
         head.addStretch()
         discard = QPushButton('Discard')
         discard.setProperty('kind', 'flat')
@@ -534,15 +502,14 @@ class AssistantPanel(Panel):
         for index, edit in enumerate(edits):
             layout.addWidget(EditCard(index, edit, studio.set_highlight))
         if plan.get('preserve'):
-            self.note(layout, 'Kept unchanged: ' + '; '.join(plan['preserve']), 'lock', theme.ACCENT)
-        for text in [*(plan.get('questions') or []), *(plan.get('notes') or [])]:
+            self.note(layout, 'Keeps ' + '; '.join(plan['preserve']), 'lock', theme.ACCENT)
+        for text in plan.get('questions') or []:
             self.note(layout, text)
+        for text in plan.get('notes') or []:
+            self.note(layout, lead(readable(text)), 'ruler', theme.MUTED, rich=True)
         unresolved = plan.get('unresolved') or []
-        if unresolved:
-            title = 'Not included in this plan' if steps else 'Nothing can be applied yet'
-            self.note(layout, f'{title}: ' + ' '.join(unresolved)
-                      + ' Rephrase and plan again, or apply the parts that were understood.',
-                      'triangle-alert', theme.WARN)
+        for text in unresolved:
+            self.note(layout, text, 'triangle-alert', theme.WARN)
         toggle = QPushButton(theme.icon('chevron-down' if self.show_steps else 'chevron-right', theme.MUTED),
                              f'{len(steps)} engine steps')
         toggle.setProperty('kind', 'flat')
@@ -558,7 +525,7 @@ class AssistantPanel(Panel):
                 line.setToolTip(json.dumps(step.get('params'), indent=1)[:1500])
                 layout.addWidget(line)
         if studio.document and plan.get('revision') != studio.document['revision']:
-            self.note(layout, 'The document changed since this plan. Plan again to apply it to the current version.')
+            self.note(layout, 'The photo changed since this plan. Plan again.')
         elif steps:
             text = 'Apply the understood parts' if unresolved else (
                 f'Apply {len(edits) or ""} change{"" if len(edits) == 1 else "s"}'.replace('  ', ' '))
@@ -587,20 +554,34 @@ class AssistantPanel(Panel):
         failed = sum(not check.get('passed') for check in checks) + sum(
             verdict.get('verdict') == 'not done' for verdict in review)
         head = QHBoxLayout()
-        head.addWidget(label('RESULT CHECK', 'eyebrow'))
+        head.addWidget(label('RESULT', 'eyebrow'))
         head.addStretch()
-        summary = label(f'{failed} item{"s" if failed > 1 else ""} to look at' if failed else 'Everything checked out',
-                        'value')
+        summary = label(f'{failed} to look at' if failed else 'All checks passed', 'value')
         summary.setStyleSheet(f'color: {theme.WARN if failed else theme.ACCENT};')
         head.addWidget(summary)
         layout.addLayout(head)
+        if revision.get('plan'):
+            # The last request can be revised in place: no new layer stacked on it.
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            for text, icon, tip, prompt in (
+                    ('Less', 'minus', 'Turn the last edit down a step', 'too much'),
+                    ('More', 'plus', 'Turn the last edit up a step', 'more')):
+                button = QPushButton(theme.icon(icon), text)
+                button.setToolTip(tip)
+                button.setEnabled(not self.studio.busy)
+                button.clicked.connect(lambda _=False, prompt=prompt: self.studio.adjust(prompt))
+                row.addWidget(button)
+            row.addStretch()
+            layout.addLayout(row)
         for check in checks:
             passed = check.get('passed')
             self.note(layout, check.get('check') or '', 'check' if passed else 'x',
                       theme.ACCENT if passed else theme.DANGER)
         if review:
-            layout.addWidget(label('AI visual review (can be wrong; measured checks above are exact)', 'small',
-                                   wrap=True))
+            heading = label('AI review', 'small')
+            heading.setToolTip('Judged by eye, so it can be wrong; the checks above are measured')
+            layout.addWidget(heading)
             requirements = revision.get('requirements') or []
             for verdict in review:
                 state = verdict.get('verdict')
@@ -611,8 +592,19 @@ class AssistantPanel(Panel):
                 icon, color = {'done': ('check', theme.ACCENT), 'not done': ('x', theme.DANGER)}.get(
                     state, ('circle-help', theme.WARN))
                 self.note(layout, f'{item or ""}: {verdict.get("note") or state}', icon, color)
-        for text in notes:
-            self.note(layout, text)
+        if notes:
+            # What was measured stays one click away: the checks above already say how it went.
+            toggle = QPushButton(theme.icon('chevron-down' if self.show_details else 'chevron-right', theme.MUTED),
+                                 'Details')
+            toggle.setProperty('kind', 'flat')
+            toggle.clicked.connect(self.flip_details)
+            layout.addWidget(toggle, 0, Qt.AlignmentFlag.AlignLeft)
+        for text in notes if self.show_details else []:
+            self.note(layout, lead(readable(text)), 'ruler', theme.MUTED, rich=True)
+
+    def flip_details(self):
+        self.show_details = not self.show_details
+        self.sync()
 
 
 class EditCard(QFrame):
@@ -633,6 +625,8 @@ class EditCard(QFrame):
             column.addWidget(label(f'“{edit["quote"]}”', 'value', wrap=True))
         if edit.get('explain'):
             column.addWidget(label(edit['explain'], 'small', wrap=True))
+            row.addLayout(column, 1)
+            return
         chips = [(edit.get('action') or '').replace('_', ' ')]
         target = edit.get('target')
         if target and target != 'whole image':
@@ -654,8 +648,7 @@ class EditCard(QFrame):
 
 class AdjustPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Adjust',
-                         'Light, color and detail, developed non-destructively. Choose where it applies.')
+        super().__init__(studio, 'Adjust')
         self.target = Segmented(TARGETS, 'whole image', columns=2)
         self.column.addWidget(self.target)
         self.sliders = {}
@@ -699,7 +692,7 @@ class AdjustPanel(Panel):
 
 class LooksPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Looks', 'Complete color grades. Each one is a set of editable layers and filters.')
+        super().__init__(studio, 'Looks')
         self.strength = Segmented(STRENGTHS, 'moderate')
         self.column.addWidget(self.strength)
         grid = QGridLayout()
@@ -750,8 +743,7 @@ class LooksPanel(Panel):
 
 class CropPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Crop & rotate', '')
-        self.intro = self.column.itemAt(1).widget()
+        super().__init__(studio, 'Crop & rotate')
         self.heading('CROP TO A SHAPE')
         self.column.addWidget(label('Keep in frame', 'small'))
         self.keep = QComboBox()
@@ -794,7 +786,7 @@ class CropPanel(Panel):
         self.angle.setValue(0)
         self.angle.changed.connect(lambda _: self.sync())
         self.column.addWidget(self.angle)
-        self.column.addWidget(self.button('Straighten (crops the empty corners)', self.straighten,
+        self.column.addWidget(self.button('Straighten', self.straighten,
                                           ready=lambda: self.angle.value()))
 
         self.heading('RESIZE')
@@ -858,22 +850,18 @@ class CropPanel(Panel):
     def sync(self):
         super().sync()
         width, height = self.document_size()
-        self.intro.setText(f'Exact geometry, computed from the document ({width} × {height}).' if width
-                           else 'Exact geometry, computed from the document.')
         self.named.setVisible(self.keep.currentData() == 'object')
         self.width_box.setPlaceholderText(str(width or ''))
         self.height_box.setPlaceholderText(str(height or ''))
-        self.resize_button.setText('Resize' if self.lock.isChecked() else 'Resize (crops first so nothing stretches)')
+        self.resize_button.setToolTip('' if self.lock.isChecked() else 'Crops first, so nothing stretches')
 
 
 class SelectPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Select & cut out',
-                         'The planner finds what you name; PhotoCraft outlines it precisely and every result is '
-                         'masked.')
+        super().__init__(studio, 'Select & cut out')
         self.column.addWidget(label('Subject', 'small'))
         self.subject = QLineEdit()
-        self.subject.setPlaceholderText('Empty for the main subject, or: the woman, the car…')
+        self.subject.setPlaceholderText('Main subject')
         self.column.addWidget(self.subject)
 
         self.heading('REMOVE BACKGROUND')
@@ -909,8 +897,6 @@ class SelectPanel(Panel):
                   quote=f'remove {self.remove.text().strip()}')], f'Remove {self.remove.text().strip()}'),
             ready=lambda: self.remove.text().strip()))
         self.column.addLayout(row)
-        self.column.addWidget(label('Small things use content-aware fill; larger ones are rebuilt by AI on their own '
-                                    'layer.', 'small', wrap=True))
 
         self.heading('RECOLOR AN OBJECT')
         row = QHBoxLayout()
@@ -949,8 +935,7 @@ class SelectPanel(Panel):
 
 class TextPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Text', 'Measured placement: the title is fitted inside the margins and kept '
-                                         'readable.')
+        super().__init__(studio, 'Text')
         self.column.addWidget(label('Words', 'small'))
         self.words = QPlainTextEdit()
         self.words.setFixedHeight(64)
@@ -1257,8 +1242,7 @@ class CommandRunner(Box):
 
 class FiltersPanel(Panel):
     def __init__(self, studio):
-        super().__init__(studio, 'Filters', 'Applied to the photo as editable smart filters; toggle or delete them '
-                                            'from the layer later.')
+        super().__init__(studio, 'Filters')
         self.chips = QButtonGroup(self)
         self.chips.setExclusive(True)
         self.groups = []
@@ -1308,8 +1292,7 @@ class CommandsPanel(Panel):
     LIMIT = 80
 
     def __init__(self, studio):
-        super().__init__(studio, 'All tools', '')
-        self.intro = self.column.itemAt(1).widget()
+        super().__init__(studio, 'All tools')
         self.search = QLineEdit()
         self.search.setPlaceholderText('Curves, mask, warp, text, liquify…')
         self.search.addAction(theme.icon('search', theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
@@ -1342,9 +1325,6 @@ class CommandsPanel(Panel):
 
     def set_commands(self, commands, discovered):
         self.commands = commands
-        runnable = sum(bool(command.get('runnable')) for command in commands)
-        self.intro.setText(f'Every one of PhotoCraft’s {discovered} engine commands, with real controls. {runnable} '
-                           'run here; the rest need the desktop app (files, preferences, plug-ins).')
         self.filter(reset=True)
 
     def matches(self):
@@ -1393,8 +1373,7 @@ class PipelinesPanel(Panel):
                ('object', 'Named thing')]
 
     def __init__(self, studio):
-        super().__init__(studio, 'Pipelines', 'Professional procedures and whole jobs. The assistant picks these '
-                                              'for you; here you choose one yourself.')
+        super().__init__(studio, 'Pipelines')
         self.search = QLineEdit()
         self.search.setPlaceholderText('Product, real estate, skin, sky, frame…')
         self.search.addAction(theme.icon('search', theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
@@ -1434,7 +1413,7 @@ class PipelinesPanel(Panel):
         self.target = Segmented(self.TARGETS, 'whole image', columns=2)
         form.addWidget(self.target)
         self.thing = QLineEdit()
-        self.thing.setPlaceholderText('What it applies to, e.g. the red mug (optional)')
+        self.thing.setPlaceholderText('the red mug')
         form.addWidget(self.thing)
         self.words = QLineEdit()
         self.words.setPlaceholderText('Exact words, for titles')
@@ -1487,15 +1466,10 @@ class PipelinesPanel(Panel):
         item = self.chosen
         self.name.setText(item['title'])
         self.summary.setText(item['summary'][:1].upper() + item['summary'][1:] + '.')
-        lines = []
-        if item['steps']:
-            lines.append('Runs: ' + ' → '.join(step.replace('_', ' ') for step in item['steps']))
-        if item['measures']:
-            lines.append('Measures first: ' + ', '.join(item['measures']).replace('_', ' '))
-        if item['ai']:
-            lines.append('Needs the AI content model.')
-        self.parts.setText('\n'.join(lines))
-        self.parts.setVisible(bool(lines))
+        self.parts.setToolTip('Runs ' + ' → '.join(step.replace('_', ' ') for step in item['steps'])
+                              if item['steps'] else '')
+        self.parts.setText('Uses the AI model')
+        self.parts.setVisible(bool(item['ai']))
         self.option.clear()
         for option in item['options']:
             self.option.addItem(option)

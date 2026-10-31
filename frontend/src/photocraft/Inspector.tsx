@@ -70,7 +70,9 @@ export function Inspector({ document, busy, commands, onGoto, onDesktop, onSync 
   const layers = document ? flatten(document.state.layers) : [];
   const active = layers.find((layer) => layer.id === document?.state.activeLayer);
   const [name, setName] = useState('');
+  const [placement, setPlacement] = useState({ dx: 0, dy: 0, scale: 100 });
   useEffect(() => setName(active?.name || ''), [active?.id, document?.revision]);
+  useEffect(() => setPlacement({ dx: 0, dy: 0, scale: 100 }), [active?.id, document?.revision]);
 
   function run(command: string, params: object, label: string) {
     commands([{ command, params, label }], label);
@@ -227,6 +229,48 @@ export function Inspector({ document, busy, commands, onGoto, onDesktop, onSync 
                   ))}
                 </select>
               </label>
+              <details>
+                <summary>Move / resize layer</summary>
+                {(['dx', 'dy', 'scale'] as const).map((key) => (
+                  <label className="field-label" key={key}>
+                    {key === 'dx' ? 'Move right (px)' : key === 'dy' ? 'Move down (px)' : 'Scale (%)'}
+                    <input
+                      type="number"
+                      min={key === 'scale' ? 1 : -8192}
+                      max={key === 'scale' ? 1000 : 8192}
+                      value={placement[key]}
+                      disabled={busy}
+                      onChange={(event) => setPlacement({ ...placement, [key]: Number(event.target.value) })}
+                    />
+                  </label>
+                ))}
+                <button
+                  className="button"
+                  disabled={
+                    busy ||
+                    placement.scale < 1 ||
+                    placement.scale > 1000 ||
+                    Math.abs(placement.dx) > 8192 ||
+                    Math.abs(placement.dy) > 8192 ||
+                    (!placement.dx && !placement.dy && placement.scale === 100)
+                  }
+                  onClick={() =>
+                    run(
+                      'edit.transform',
+                      {
+                        layer: active.id,
+                        dx: placement.dx,
+                        dy: placement.dy,
+                        scaleX: placement.scale,
+                        scaleY: placement.scale,
+                      },
+                      'Move / resize layer',
+                    )
+                  }
+                >
+                  Apply placement
+                </button>
+              </details>
               {!!active.smartFilters?.length && (
                 <div className="pc-filters">
                   <span className="field-label">Smart filters</span>

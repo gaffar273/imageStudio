@@ -217,11 +217,9 @@ class Hero(QFrame):
         symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(symbol)
         column.addSpacing(6)
-        for text, role in (('Describe a picture to get started', 'heading'),
-                           ('Write a prompt on the left, then press Generate or Ctrl + Enter.', 'muted')):
-            widget = label(text, role, wrap=True)
-            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            column.addWidget(widget)
+        heading = label('Describe a picture to get started', 'heading', wrap=True)
+        heading.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(heading)
         column.addSpacing(12)
         ideas = QHBoxLayout()
         ideas.setSpacing(8)
@@ -673,6 +671,7 @@ class CreatePage(QWidget):
         model = s['model']
         cloud = is_cloud(model)
         self.counter.setText(f'{len(s["prompt"])}/{MAX_PROMPT}')
+        self.counter.setVisible(len(s['prompt']) > MAX_PROMPT * 0.8)
         if cloud:
             entry = cloud_models(config).get(model, {})
             self.model_note.setText(f'Runs on {entry.get("label", "the provider")} with your API key.'

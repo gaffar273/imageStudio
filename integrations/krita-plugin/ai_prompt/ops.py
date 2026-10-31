@@ -121,6 +121,39 @@ def pixel_layer(doc, name, image, x=0, y=0, above=None):
     return insert(doc, pixel_node(doc, name, image, x, y), above)
 
 
+def place_images(doc, images):
+    """Keep the canvas and existing layers; fit and center each new image above the stack."""
+    need(doc)
+    prepared = []
+    for item in images:
+        image = QImage(item['path'])
+        if image.isNull():
+            raise StepError('Could not read an image layer.')
+        factor = min(1, doc.width() / image.width(), doc.height() / image.height())
+        if factor < 1:
+            image = scaled_exact(image, max(1, round(image.width() * factor)),
+                                 max(1, round(image.height() * factor)))
+        prepared.append((item['name'], image))
+    previous, added = active_node(doc), []
+    try:
+        for name, image in prepared:
+            layer = pixel_node(doc, name, image, (doc.width() - image.width()) // 2,
+                               (doc.height() - image.height()) // 2)
+            children = doc.rootNode().childNodes()
+            doc.rootNode().addChildNode(layer, children[-1] if children else None)
+            added.append(layer)
+            activate(doc, layer)
+        settle(doc)
+    except Exception:
+        for layer in reversed(added):
+            layer.remove()
+        if previous is not None:
+            activate(doc, previous)
+        settle(doc)
+        raise
+    return added
+
+
 def filter_node(doc, label, name, selection, **props):
     """A filter layer limited to `selection`, not yet in the layer stack."""
     found = app().filter(name)
@@ -854,7 +887,7 @@ def state(doc):
               for node, depth in walk(doc.rootNode()) if node.type() != 'selectionmask'][:60]
     import os
     return dict(name=os.path.basename(doc.fileName()) if doc.fileName() else doc.name() or 'Untitled',
-                path=doc.fileName(), width=doc.width(), height=doc.height(), layers=layers,
+                path=doc.fileName(), width=doc.width(), height=doc.height(), layers=layers, image_layers=True,
                 selection=current_selection(doc) is not None, color=f'{doc.colorModel()} {doc.colorDepth()}')
 
 

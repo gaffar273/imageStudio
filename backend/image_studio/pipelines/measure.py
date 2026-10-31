@@ -247,7 +247,10 @@ def develop(preview, state, boxes, edits):
     from image_studio.pipelines.library.camera_develop import read
 
     found = dict(read(preview))
-    found['noise'] = noise(preview, state, boxes, edits)
+    # The grain at the camera's own pixels: the revision's 100% crop when the photo is larger than
+    # its preview (photocraft_workspace.snapshot).
+    found['noise'] = noise(preview.info.get('detail', preview), state, boxes, edits)
+    found['camera_pixels'] = 'detail' in preview.info
     return found
 
 

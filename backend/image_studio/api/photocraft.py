@@ -2,13 +2,13 @@
 
 from typing import Annotated, Literal
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from image_studio.integrations import photocraft_workspace as workspace
 from image_studio.integrations.photocraft_area import MarkedArea
-from image_studio.services import library, workflows
+from image_studio.services import image_imports, library, workflows
 from image_studio.services.jobs import BusyError, store
 
 router = APIRouter(prefix='/api/photocraft')
@@ -135,17 +135,37 @@ def new_document(request: NewDocument):
 
 
 @router.post('/workspaces/import', status_code=202)
-async def import_document(file: Annotated[UploadFile, File()]):
-    contents = await file.read(100_000_001)
-    await file.close()
-    if not contents or len(contents) > 100_000_000:
-        raise HTTPException(422, 'Choose a document between 1 byte and 100 MB.')
-    filename = file.filename or 'image.png'
+async def import_document(
+    file: Annotated[UploadFile, File()], files: Annotated[list[UploadFile] | None, File()] = None,
+):
+    try:
+        (filename, contents), *layers = await image_imports.read_files([file, *(files or [])])
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
 
     def run(progress, update):
         progress(0.1, desc='Opening the document and reading its layers…')
-        result = workspace.create(contents, filename, cancelled=workflows.engine.cancelled)
+        result = workspace.create(contents, filename, cancelled=workflows.engine.cancelled, layers=layers)
         update(workspace=result, message='Document ready. Describe your edit.')
+
+    return submit(run)
+
+
+@router.post('/workspaces/{workspace_id}/layers', status_code=202)
+async def import_layers(
+    workspace_id: str, revision: Annotated[str, Query(pattern='^[a-f0-9]{32}$')],
+    files: Annotated[list[UploadFile], File()],
+):
+    try:
+        images = await image_imports.read_files(files)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    guarded(lambda: workspace.require_revision(workspace.load(workspace_id), revision))
+
+    def run(progress, update):
+        progress(0.1, desc='Adding images as layers…')
+        result = workspace.add_layers(workspace_id, revision, images, workflows.engine.cancelled)
+        update(workspace=result, message=f'Added {len(images)} image layer{"s" if len(images) != 1 else ""}.')
 
     return submit(run)
 

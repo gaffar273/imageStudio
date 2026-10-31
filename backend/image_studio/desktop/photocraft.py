@@ -22,7 +22,11 @@ from PySide6.QtWidgets import (
     QButtonGroup,
     QCheckBox,
     QComboBox,
+    QDialog,
+    QDialogButtonBox,
+    QDoubleSpinBox,
     QFileDialog,
+    QFormLayout,
     QFrame,
     QHBoxLayout,
     QLabel,
@@ -83,8 +87,13 @@ EXPORTS = [('psd', 'PSD · layered, for Photoshop'), ('pcraft', 'PCraft · nativ
            ('tif', 'TIFF · print'), ('png', 'PNG · lossless'), ('jpg', 'JPEG · sharing'), ('webp', 'WebP · web')]
 BLENDS = ['Normal', 'Multiply', 'Screen', 'Overlay', 'Soft Light', 'Hard Light', 'Darken', 'Lighten', 'Color Dodge',
           'Color Burn', 'Difference', 'Hue', 'Saturation', 'Color', 'Luminosity']
-DOCUMENTS = 'Photos and documents (*.png *.jpg *.jpeg *.webp *.tif *.tiff *.psd *.psb *.pcraft *.ora *.bmp)'
-SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.psd', '.psb', '.pcraft', '.ora', '.bmp'}
+# Camera RAW files open as 16-bit documents in PhotoCraft (the engine's RAW_SUFFIXES, kept in step).
+RAW = {'.cr2', '.cr3', '.crw', '.nef', '.nrw', '.arw', '.srf', '.sr2', '.dng', '.raf', '.orf', '.rw2', '.pef', '.srw',
+       '.3fr', '.iiq', '.erf', '.mrw', '.x3f'}
+SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.psd', '.psb', '.pcraft', '.ora', '.bmp'} | RAW
+_RAW_PATTERNS = ' '.join(f'*{suffix}' for suffix in sorted(RAW))
+DOCUMENTS = (f'Photos, camera RAW and documents (*.png *.jpg *.jpeg *.webp *.tif *.tiff *.psd *.psb *.pcraft *.ora *.bmp '
+             f'{_RAW_PATTERNS});;Camera RAW ({_RAW_PATTERNS})')
 MAX_FILE = 100_000_000
 ZOOMS = [0, 25, 50, 100, 200]
 WIDE = 1180  # below this page width the layers and the tool panel take turns
@@ -473,14 +482,13 @@ class Inspector(QWidget):
         self.pages.addWidget(history)
 
         column.addWidget(rule())
-        column.addWidget(label('CONTINUE IN PHOTOCRAFT', 'eyebrow'))
-        column.addWidget(label('Open a native copy for hands-on painting. Save it there, then bring the changes back.',
-                               'small', wrap=True))
         row = QHBoxLayout()
-        self.desktop = QPushButton(theme.icon('folder-open'), 'Open desktop')
+        self.desktop = QPushButton(theme.icon('external-link'), 'Open in PhotoCraft')
+        self.desktop.setToolTip('Paint by hand in PhotoCraft, save there, then sync the changes back')
         self.desktop.clicked.connect(lambda: studio.operation(dict(action='desktop')))
         row.addWidget(self.desktop)
-        self.sync_button = QPushButton(theme.icon('refresh-cw'), 'Sync saved changes')
+        self.sync_button = QPushButton(theme.icon('refresh-cw'), 'Sync')
+        self.sync_button.setToolTip('Bring back the changes saved in PhotoCraft')
         self.sync_button.clicked.connect(lambda: studio.operation(dict(action='sync')))
         row.addWidget(self.sync_button)
         row.addStretch()
@@ -500,8 +508,8 @@ class Inspector(QWidget):
         column.addWidget(label('SELECTED LAYER', 'eyebrow'))
         self.description = label('', 'small', wrap=True)
         column.addWidget(self.description)
-        column.addWidget(label('Name', 'small'))
         self.name = QLineEdit()
+        self.name.setPlaceholderText('Layer name')
         self.name.editingFinished.connect(self.rename)
         column.addWidget(self.name)
         self.opacity = Range('Opacity', 0, 100)
@@ -513,6 +521,9 @@ class Inspector(QWidget):
         self.blend.addItems(BLENDS)
         self.blend.activated.connect(self.set_blend)
         column.addWidget(self.blend)
+        self.transform = QPushButton('Move / resize…')
+        self.transform.clicked.connect(self.transform_layer)
+        column.addWidget(self.transform)
         self.filters = Box()
         self.filter_rows = QVBoxLayout(self.filters)
         self.filter_rows.setContentsMargins(0, 4, 0, 0)
@@ -561,6 +572,33 @@ class Inspector(QWidget):
         if answer == QMessageBox.StandardButton.Yes:
             self.run('layer.delete', dict(layer=layer['id']), f'Delete {name}')
 
+    def transform_layer(self):
+        layer = self.active()
+        if layer is None or self.studio.busy:
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle('Move / resize selected layer')
+        form = QFormLayout(dialog)
+        values = []
+        for title, low, high, value, suffix in [('Move right', -8192, 8192, 0, ' px'),
+                                                ('Move down', -8192, 8192, 0, ' px'),
+                                                ('Scale', 1, 1000, 100, '%')]:
+            field = QDoubleSpinBox()
+            field.setRange(low, high)
+            field.setValue(value)
+            field.setSuffix(suffix)
+            form.addRow(title, field)
+            values.append(field)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(dialog.accept)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            dx, dy, scale = [field.value() for field in values]
+            if dx or dy or scale != 100:
+                self.run('edit.transform', dict(layer=layer['id'], dx=dx, dy=dy, scaleX=scale, scaleY=scale),
+                         'Move / resize layer')
+
     def show_document(self):
         studio, document = self.studio, self.studio.document
         key = (document and document['revision'], document and document['cursor'], studio.busy)
@@ -573,23 +611,32 @@ class Inspector(QWidget):
         layers = flatten(document['state'].get('layers')) if document else []
         active = self.active()
         if document is None:
-            empty = label('Your layers will appear here. Every edit gets its own named layer, so you can hide, fade '
-                          'or delete it later.', 'small', wrap=True)
-            self.layer_rows.addWidget(empty)
-            self.history_rows.addWidget(label('Your revisions will appear here. Click one to return to it.', 'small',
-                                              wrap=True))
+            self.layer_rows.addWidget(label('No layers yet', 'small'))
+            self.history_rows.addWidget(label('No history yet', 'small'))
         for layer, depth in layers:
             row = LayerRow(layer, depth, layer is active, studio)
             row.setEnabled(not busy)
             self.layer_rows.addWidget(row)
-        for index, entry in enumerate((document or {}).get('history') or []):
+        history = (document or {}).get('history') or []
+        for index, entry in enumerate(history):
             current = index == document['cursor']
+            stage = entry.get('stage')
+            title = readable(entry.get('label')).split(' · step ')[0]
+            if stage and (index == 0 or history[index - 1].get('plan') != entry.get('plan')
+                          or not history[index - 1].get('stage')):
+                # A long request ran stage by stage: its words once, its stages under them.
+                heading = label(title, 'small', wrap=True)
+                heading.setToolTip(title)
+                heading.setStyleSheet(f'color: {theme.MUTED if index > document["cursor"] else theme.TEXT};'
+                                      'padding: 6px 0 0 6px;')
+                self.history_rows.addWidget(heading)
             button = QPushButton(theme.icon('check', theme.ACCENT) if current else theme.icon('history', theme.MUTED), '')
             button.setMinimumWidth(10)
-            text = f'{index + 1}.  {readable(entry.get("label"))}'
-            button.setText(' ' + button.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, 215)
+            text = f'{index + 1}.  {stage}' if stage else f'{index + 1}.  {readable(entry.get("label"))}'
+            button.setText(' ' + button.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, 200 if stage else 215)
                            .replace('&', '&&'))
-            button.setStyleSheet('text-align: left;' + (f' color: {theme.MUTED};' if index > document['cursor'] else ''))
+            button.setStyleSheet('text-align: left;' + (' margin-left: 14px;' if stage else '')
+                                 + (f' color: {theme.MUTED};' if index > document['cursor'] else ''))
             button.setToolTip(f'{readable(entry.get("label"))} · {when(entry.get("created"))}')
             button.setEnabled(not busy and not current)
             button.setCheckable(True)
@@ -600,7 +647,9 @@ class Inspector(QWidget):
 
         self.properties.setVisible(active is not None)
         if active is not None:
-            self.description.setText(readable(describe_layer(active)))
+            description = readable(describe_layer(active))
+            self.description.setText(description)
+            self.description.setVisible(description != active.get('kind', ''))  # the row already says the kind
             if not self.name.hasFocus():
                 self.name.setText(readable(active.get('name')))
             self.opacity.setValue(round((active.get('opacity') if active.get('opacity') is not None else 1) * 100))
@@ -616,7 +665,7 @@ class Inspector(QWidget):
                 box.toggled.connect(lambda on, index=index, layer=active['id']: self.run(
                     'layer.smartFilter.setVisible', dict(layer=layer, index=index, visible=on), 'Toggle smart filter'))
                 self.filter_rows.addWidget(box)
-            for widget in (self.name, self.opacity, self.blend, self.filters):
+            for widget in (self.name, self.opacity, self.blend, self.filters, self.transform):
                 widget.setEnabled(not busy)
             self.delete.setEnabled(not busy and len(layers) > 1)
         self.desktop.setEnabled(document is not None and not busy)
@@ -637,6 +686,7 @@ class PhotoCraftPage(QWidget):
         self.active = None  # the job being followed
         self.job_kind = ''
         self.pending = False  # a request is on its way
+        self.quick = False  # apply the plan being made as soon as it arrives (a Less or More)
         self.failures = 0
         self.area = False  # the assistant edits only the marked area
         self.renders = {}  # preview images by address (revisions never change)
@@ -742,6 +792,10 @@ class PhotoCraftPage(QWidget):
         self.open_menu.aboutToShow.connect(self.fill_open_menu)
         self.open_button.setMenu(self.open_menu)
         row.addWidget(self.open_button)
+        self.add_images = QPushButton(theme.icon('plus'), 'Add images…')
+        self.add_images.setToolTip('Add one or more images as layers above the background.')
+        self.add_images.clicked.connect(self.choose_layers)
+        row.addWidget(self.add_images)
         self.export_button = QToolButton()
         self.export_button.setText('Export')
         self.export_button.setIcon(theme.icon('arrow-down-to-line', theme.ON_ACCENT))
@@ -810,7 +864,7 @@ class PhotoCraftPage(QWidget):
         line = QHBoxLayout()
         self.dot = label('')
         line.addWidget(self.dot)
-        self.message = label('Ready. Each edit lands on its own layer; the original is kept.', 'small', wrap=True)
+        self.message = label('', 'small', wrap=True)
         self.message.setMinimumWidth(100)
         line.addWidget(self.message, 1)
         self.stop = QPushButton(theme.icon('square', theme.MUTED), 'Stop')
@@ -836,12 +890,9 @@ class PhotoCraftPage(QWidget):
         symbol.setPixmap(theme.icon('layers', theme.FAINT).pixmap(38, 38))
         symbol.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(symbol)
-        for text, role in (('Open a photo or document', 'heading'),
-                           (('Then describe the edit, or use the tools on the left. Every change lands on its own '
-                             'layer, and every revision is kept.'), 'muted')):
-            widget = label(text, role, wrap=True)
-            widget.setAlignment(Qt.AlignmentFlag.AlignHCenter)
-            column.addWidget(widget)
+        heading = label('Open a photo or document', 'heading', wrap=True)
+        heading.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        column.addWidget(heading)
         column.addSpacing(6)
         buttons = QHBoxLayout()
         buttons.addStretch()
@@ -849,12 +900,12 @@ class PhotoCraftPage(QWidget):
         self.empty_open.setProperty('kind', 'primary')
         self.empty_open.clicked.connect(self.choose_file)
         buttons.addWidget(self.empty_open)
-        self.empty_library = QPushButton(theme.icon('images'), 'From the library')
+        self.empty_library = QPushButton(theme.icon('images'), 'From library')
         self.empty_library.clicked.connect(self.open_picker)
         buttons.addWidget(self.empty_library)
         buttons.addStretch()
         column.addLayout(buttons)
-        self.empty_note = label('PSD · PSB · PCraft · TIFF · PNG · JPEG · WebP · drop a file here', 'small', wrap=True)
+        self.empty_note = label('or drop a file here', 'small', wrap=True)
         self.empty_note.setAlignment(Qt.AlignmentFlag.AlignHCenter)
         column.addWidget(self.empty_note)
         column.addStretch(1)
@@ -1011,13 +1062,13 @@ class PhotoCraftPage(QWidget):
         if document is not None:
             state = document['state']
             self.title.setText(readable(document['name']))
-            self.subtitle.setText(f'{state["width"]} × {state["height"]} px · {state.get("mode", "")} '
-                                  f'{state.get("depth", "")}-bit · revision {document["cursor"] + 1} of '
-                                  f'{len(document["history"])}')
+            self.subtitle.setText(f'{state["width"]} × {state["height"]} px · {str(state.get("mode", "")).upper()} '
+                                  f'{state.get("depth", "")}-bit')
         else:
             self.title.setText('PhotoCraft studio')
             self.subtitle.setText('PhotoCraft is not installed on this PC' if self.capabilities and not installed
-                                  else 'Open a photo or document to begin')
+                                  else '')
+        self.subtitle.setVisible(bool(self.subtitle.text()))  # an empty line would push the title up
         self.stack.setCurrentIndex(1 if document is not None else 0)
         plan = self.plan_data
         self.canvas.regions = (plan.get('regions') or []) if plan and document and plan.get(
@@ -1034,16 +1085,17 @@ class PhotoCraftPage(QWidget):
         self.compare.setEnabled(document is not None)
         self.zoom.setEnabled(document is not None)
         self.open_button.setEnabled(self.ready and not busy)
+        self.add_images.setEnabled(self.ready and installed and document is not None and not busy)
         self.export_button.setVisible(document is not None)
         for button in (self.empty_open, self.empty_library):
             button.setEnabled(self.ready and installed and not busy)
         if self.ready and self.capabilities and not installed:
-            self.empty_note.setText('PhotoCraft was not found on this PC. Install it, then restart the studio.')
+            self.empty_note.setText('PhotoCraft is not installed on this PC.')
         for thumb in self.picks:
             thumb.setEnabled(not busy and installed)
         running = self.job is not None and self.job.get('state') == 'running'
         self.stop.setVisible(running and self.active is not None)
-        self.progress.setVisible(busy)
+        self.status.setVisible(busy)
         self.progress.setValue(max(40, int(((self.job or {}).get('progress') or 0) * 1000)) if running else 40)
         color = theme.WARN if busy else theme.DANGER if (self.job or {}).get('state') == 'error' else theme.ACCENT
         self.dot.setText(f'<span style="color:{color}">●</span>')
@@ -1213,7 +1265,20 @@ class PhotoCraftPage(QWidget):
             self.plan_data = job['plan']
         if job.get('workspace') and job.get('state') == 'done':
             self.load_recent()
+        quick, self.quick = self.quick, False
+        plan = job.get('plan')
+        if quick and plan and plan.get('steps') and not plan.get('unresolved') and job.get('state') == 'done':
+            # A “Less” or “More” revises the last edit by rule: there is nothing to review first.
+            self.render()
+            self.apply_plan(False)
+            return
         self.render()
+
+    def adjust(self, prompt):
+        """Revise the last edit (“too much”, “more”) and apply it as soon as it is planned."""
+        if self.document is not None and not self.busy:
+            self.plan(prompt)
+            self.quick = self.active is not None or self.pending
 
     def lost(self, job_id, error):
         if job_id != self.active:
@@ -1314,15 +1379,63 @@ class PhotoCraftPage(QWidget):
         if self.busy or not self.ready:
             return
         start = Path.home() / 'Pictures'
-        path, _ = QFileDialog.getOpenFileName(self, 'Open a photo or document', str(start if start.is_dir() else ''),
-                                              DOCUMENTS)
-        if path:
-            self.open_file(path)
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Open a background and optional image layers',
+                                               str(start if start.is_dir() else ''), DOCUMENTS)
+        if paths:
+            self.import_files(paths, new_document=True)
+
+    def choose_layers(self):
+        if not self.add_images.isEnabled():
+            return
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Add images as layers', '',
+                                                'Images (*.png *.jpg *.jpeg *.webp *.tif *.tiff *.bmp)')
+        if paths:
+            self.import_files(paths)
+
+    def import_files(self, paths, new_document=False):
+        """Drop onto an open document to add layers; the first file starts an empty workspace."""
+        if self.busy or not self.ready:
+            return
+        if (new_document or not self.document) and len(paths) == 1:
+            self.open_file(paths[0])
+            return
+        try:
+            if not 1 <= len(paths) <= 16:
+                raise ValueError('Choose between 1 and 16 images at a time.')
+            files, total = [], 0
+            for value in paths:
+                path = Path(value)
+                total += path.stat().st_size
+                if total > MAX_FILE or path.stat().st_size == 0:
+                    raise ValueError('Choose nonempty files totaling at most 100 MB.')
+                files.append((path.name, path.read_bytes()))
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), error=True)
+            return
+        document = None if new_document else self.document
+        route = (f'/api/photocraft/workspaces/{document["id"]}/layers?revision={document["revision"]}'
+                 if document else '/api/photocraft/workspaces/import')
+        self.pending, self.job_kind = True, 'layers' if document else 'open'
+        self.plan_data = None
+        self.say('Adding images as layers…')
+        self.render()
+
+        def started(job):
+            self.pending = False
+            self.follow(job['id'], self.job_kind, job)
+
+        def refused(error):
+            self.pending = False
+            self.notify(error, error=True)
+            self.render()
+
+        self.client.upload_files(route, files, started, refused, first_field='files' if document else 'file')
 
     def open_file(self, path):
         path = Path(path)
         if path.suffix.lower() not in SUFFIXES:
-            self.notify('Use PNG, JPEG, WebP, TIFF, PSD, PSB, PCraft, ORA or BMP.', error=True)
+            self.notify('Use a camera RAW file (CR2, CR3, NEF, ARW, DNG, RAF…), PNG, JPEG, WebP, TIFF, PSD, PSB, PCraft, '
+                        'ORA or BMP.', error=True)
             return
         try:
             size = path.stat().st_size
@@ -1385,11 +1498,10 @@ class PhotoCraftPage(QWidget):
             event.acceptProposedAction()
 
     def dropEvent(self, event):
-        for url in event.mimeData().urls():
-            if url.isLocalFile():
-                self.open_file(url.toLocalFile())
-                event.acceptProposedAction()
-                return
+        paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
+        if paths:
+            self.import_files(paths)
+            event.acceptProposedAction()
 
     def export(self, kind):
         document = self.document

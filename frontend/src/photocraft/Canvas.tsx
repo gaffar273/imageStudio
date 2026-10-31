@@ -12,7 +12,7 @@ interface Props {
   busy: boolean;
   onOpen: () => void;
   onLibrary: () => void;
-  onDrop: (file?: File) => void;
+  onDrop: (files: File[]) => void;
   marks: AreaMark[];
   areaTool: AreaTool | null;
   brushSize: number;
@@ -52,7 +52,7 @@ export function Canvas({
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
-        onDrop(event.dataTransfer.files[0]);
+        onDrop(Array.from(event.dataTransfer.files));
       }}
     >
       {document ? (

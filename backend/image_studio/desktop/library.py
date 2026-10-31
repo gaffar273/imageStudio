@@ -501,7 +501,8 @@ class LibraryPage(QWidget):
         self.everything.setChecked(True)
         group.buttonClicked.connect(lambda _: self.apply())
         self.search = QLineEdit()
-        self.search.setPlaceholderText('Search by prompt, or press Enter to search by what is in the picture')
+        self.search.setPlaceholderText('Search your pictures')
+        self.search.setToolTip('Matches prompts as you type; Enter also searches by what is in the picture')
         self.search.setClearButtonEnabled(True)
         self.search.addAction(theme.icon('search', theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
         self.search.textChanged.connect(lambda _: self.apply())
@@ -557,7 +558,7 @@ class LibraryPage(QWidget):
         self.stack.addWidget(empty)
         layout.addLayout(self.stack, 1)
         self.update_sort()
-        self.waiting('Waiting for the engine…', 'Your library appears as soon as the engine is ready.')
+        self.waiting('Waiting for the engine…', '')
 
     # Loading -------------------------------------------------------------------------
 
@@ -603,6 +604,7 @@ class LibraryPage(QWidget):
     def waiting(self, title, text):
         self.empty_title.setText(title)
         self.empty_text.setText(text)
+        self.empty_text.setVisible(bool(text))
         self.stack.setCurrentIndex(1)
 
     def apply(self):

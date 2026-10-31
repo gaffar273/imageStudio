@@ -46,6 +46,7 @@ export function Krita({
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
+  const layerInput = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLDialogElement>(null);
   const pending = useRef(false);
   useEffect(() => {
@@ -108,6 +109,32 @@ export function Krita({
       setSending(false);
     }
   }
+  async function addLayers(files: File[]) {
+    if (!files.length || pending.current || !hasDocument) return;
+    if (
+      files.length > 16 ||
+      files.some((file) => !file.size) ||
+      files.reduce((total, file) => total + file.size, 0) > 100_000_000
+    ) {
+      error('Choose up to 16 nonempty images totaling at most 100 MB.');
+      return;
+    }
+    pending.current = true;
+    setSending(true);
+    try {
+      const body = new FormData();
+      files.forEach((file) => body.append('files', file));
+      const response = await fetch('/api/krita/layers', { method: 'POST', body });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || 'Could not add image layers.');
+      notify(result.message);
+    } catch (err) {
+      error(String(err));
+    } finally {
+      pending.current = false;
+      setSending(false);
+    }
+  }
   return (
     <div className="page-content krita-page">
       <input
@@ -119,6 +146,19 @@ export function Krita({
         disabled={sending}
         onChange={(event) => {
           void upload(event.target.files?.[0]);
+          event.target.value = '';
+        }}
+      />
+      <input
+        ref={layerInput}
+        type="file"
+        multiple
+        accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff"
+        className="sr-only"
+        aria-label="Add images as layers to Krita"
+        disabled={sending || !hasDocument}
+        onChange={(event) => {
+          void addLayers(Array.from(event.target.files || []));
           event.target.value = '';
         }}
       />
@@ -150,7 +190,10 @@ export function Krita({
           onDrop={(event) => {
             event.preventDefault();
             setDragging(false);
-            void upload(event.dataTransfer.files[0]);
+            const files = Array.from(event.dataTransfer.files);
+            if (hasDocument) void addLayers(files);
+            else if (files.length === 1) void upload(files[0]);
+            else if (files.length) error('Open a background first, then add the other images as layers.');
           }}
         >
           <div className="krita-canvas-heading">
@@ -191,14 +234,14 @@ export function Krita({
             {dragging && (
               <div className="krita-drop-overlay">
                 <Upload size={28} />
-                Drop to open in Krita
+                {hasDocument ? 'Drop to add image layers' : 'Drop to open in Krita'}
               </div>
             )}
           </div>
           <div className="krita-canvas-caption">
             <span>
               {hasDocument
-                ? 'Live preview · Paint and select areas in Krita.'
+                ? 'Live preview · Drop images to add layers. Move and resize them in Krita.'
                 : 'Images open as a new document in Krita.'}
             </span>
             {hasDocument && document.selection && <span className="selection-badge">Selection active</span>}
@@ -222,6 +265,13 @@ export function Krita({
                 From library
               </button>
             </div>
+            <button
+              className="button"
+              disabled={sending || !hasDocument}
+              onClick={() => layerInput.current?.click()}
+            >
+              <ImagePlus size={16} /> Add images as layers
+            </button>
             <button
               className="text-button krita-new"
               disabled={!connected || sending}

@@ -167,6 +167,16 @@ the tool rail:
 - **Inspector**: layers (visibility, opacity, blend mode, rename, delete, smart filters) and a clickable
   revision history. **Export** gives PSD, native PCraft, TIFF, PNG, JPEG or WebP.
 
+To combine pictures, open your background, then choose **Add images…** in PhotoCraft or
+**Add images as layers…** in Krita. Select several files together, or drop them onto an open canvas.
+Each becomes a named layer above the background, centered and reduced to fit if needed; transparency
+is preserved. Imports accept up to 16 images totaling 100 MB. In PhotoCraft, select a layer and use
+**Move / resize…** in the Inspector to position it; the whole import can be undone, and PSD/PCraft
+exports keep the layers. In Krita, move and resize the imported layers with Krita's tools. **Open**
+still starts a separate document. PhotoCraft can also open several files together, using the first
+as the background. After updating an older installation, close Krita and reopen it from Image Studio
+so its AI panel receives the new layer-import command.
+
 Every change lands on its own named layer or smart filter, and the original pixels are never
 overwritten. Small blemishes are removed with content-aware fill. Larger objects, and requests for new
 content ("add a sailboat", "replace the sky"), are painted by FLUX.1 Kontext and come back as a masked

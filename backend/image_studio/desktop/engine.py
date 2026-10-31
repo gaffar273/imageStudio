@@ -63,14 +63,20 @@ class Client(QObject):
 
     def upload(self, path, filename, data, done=None, failed=None, timeout=300000):
         """POST one file as a form upload (field "file"), the way a browser sends it."""
+        return self.upload_files(path, [(filename, data)], done, failed, timeout, first_field='file')
+
+    def upload_files(self, path, files, done=None, failed=None, timeout=300000, first_field='files'):
+        """Upload a batch; document opening uses 'file' for its background and 'files' for overlays."""
         form = QHttpMultiPart(QHttpMultiPart.ContentType.FormDataType)
-        part = QHttpPart()
-        safe = ''.join(char for char in filename if char not in '"\\\r\n') or 'image.png'
-        part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
-                       f'form-data; name="file"; filename="{safe}"')
-        part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, 'application/octet-stream')
-        part.setBody(data)
-        form.append(part)
+        for index, (filename, data) in enumerate(files):
+            part = QHttpPart()
+            safe = ''.join(char for char in filename if char not in '"\\\r\n') or 'image.png'
+            field = first_field if index == 0 else 'files'
+            part.setHeader(QNetworkRequest.KnownHeaders.ContentDispositionHeader,
+                           f'form-data; name="{field}"; filename="{safe}"')
+            part.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, 'application/octet-stream')
+            part.setBody(data)
+            form.append(part)
         request = QNetworkRequest(QUrl(self.url(path)))
         request.setTransferTimeout(timeout)
         reply = self.network.post(request, form)

@@ -3,6 +3,7 @@
 import importlib.util
 import json
 import os
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -275,6 +276,24 @@ class SetupOutputTests(unittest.TestCase):
 
 
 class BuildTests(unittest.TestCase):
+    def test_desktop_pipeline_catalog_does_not_load_engine_dependencies(self):
+        # A fresh installer has no NumPy/OpenCV/Torch until the engine is installed.
+        script = (
+            f'import sys; sys.path.insert(0, {str(ROOT / "backend")!r})\n'
+            'import builtins\n'
+            'original = builtins.__import__\n'
+            'def lightweight(name, *args, **kwargs):\n'
+            '    if name.split(".")[0] in {"numpy", "cv2", "torch"}:\n'
+            '        raise ModuleNotFoundError(name)\n'
+            '    return original(name, *args, **kwargs)\n'
+            'builtins.__import__ = lightweight\n'
+            'from image_studio.pipelines import catalog, models\n'
+            'assert catalog()\n'
+            'assert models.settings()\n'
+        )
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
     def test_everything_the_app_reads_is_copied(self):
         build = load_build()
         for item in build.CONTENT:

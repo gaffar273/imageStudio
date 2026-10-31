@@ -277,9 +277,7 @@ class ProvidersPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         scroll, column = scroll_page(
             'Providers',
-            'Use your own API keys to create and edit pictures in the cloud, which needs no graphics card, or '
-            'to choose the model behind the editing assistant. Keys are encrypted on this PC and only ever '
-            'sent to their own service.')
+            'Your own API keys, encrypted on this PC and sent only to their own service.')
         outer.addWidget(scroll)
 
         self.rows = {}
@@ -316,9 +314,8 @@ class ProvidersPage(QWidget):
         head.addWidget(self.assistant_badge)
         head.addStretch()
         box.addLayout(head)
-        box.addWidget(label('The vision model that plans PhotoCraft edits and checks the results. It only '
-                            'chooses which edits to run; the edits themselves stay exact. A cloud model sees '
-                            'the photos you edit.', 'small', wrap=True))
+        box.addWidget(label('Plans PhotoCraft edits and checks the results. A cloud model sees the photos you edit.',
+                            'small', wrap=True))
         row = QHBoxLayout()
         row.setSpacing(8)
         self.assistant_provider = QComboBox()

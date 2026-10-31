@@ -586,33 +586,37 @@ def develop_color(index, edit, before, after, boxes, pairs, geometry):
     return [_record(index, f'saturation of the coloured parts {old:.0%} → {new:.0%}', new > old)]
 
 
-def _per_range(image, value):
-    low, high = _tonal_range(image)
-    return value / max(high - low, 0.05)
+def _detail_of(image, other):
+    """The 100% crop of a large photo when both renders carry one (grain and 1 px sharpening do not
+    survive the preview's downscale), else the render itself."""
+    return image.info['detail'] if 'detail' in image.info and 'detail' in other.info else image
+
+
+def _toned(before, after):
+    """(the photo before with only the develop's white balance, exposure and curve, the photo
+    after), at the same pixels: the 100% crops of a large photo, else the renders. Stretched tones
+    stretch the grain and steepen every edge, so grain and sharpness are judged against this."""
+    from image_studio.pipelines.library.camera_develop import preview
+
+    old, new = _detail_of(before, after), _detail_of(after, before)
+    return preview(before, {'white_balance', 'tone'}, pixels=old).resize(new.size), new
 
 
 def develop_noise(index, edit, before, after, boxes, pairs, geometry):
-    """Grain against the photo's tonal range: stretching the tones stretches the grain with them."""
     from image_studio.pipelines.measure import noise
 
-    old, new = noise(before, None, None, []), noise(after, None, None, [])
-    if old is None or new is None or old < 1.8:
-        return []
-    a, b = _per_range(before, old), _per_range(after, new)
-    return [_record(index, f'grain for the tonal range {a:.1f} → {b:.1f}', b < a)]
+    if (noise(_detail_of(before, after), None, None, []) or 0) < 1.8:
+        return []  # measured clean; nothing was reduced
+    toned, new = _toned(before, after)
+    a, b = noise(toned, None, None, []), noise(new, None, None, [])
+    return [_record(index, f'grain {a:.1f} → {b:.1f} (against the same tones without noise reduction)', b < a)]
 
 
-def develop_sharpen(index, edit, before, after, boxes, pairs, geometry):
-    """The strongest 5% of edges, against the tonal range (the curve steepens every edge too)."""
-    def edges(image):
-        luma = _luma(_reduced(image, 1024))
-        gy, gx = np.gradient(luma)
-        strength = np.hypot(gx, gy)
-        return float(strength[strength >= np.percentile(strength, 95)].mean())
-
-    a, b = _per_range(before, edges(before)), _per_range(after, edges(after))
-    return [_record(index, f'edge crispness for the tonal range {a:.4f} → {b:.4f} ({b / max(a, 1e-6) - 1:+.0%})',
-                    b > a * 1.02)]
+# Capture sharpening has no measured check. Inside a develop it adds a few per cent of fine detail
+# at the edges (2.7% and 4.6% at amount 40 on two RAW files, A/B in PhotoCraft at 100%), less than
+# the error of any yardstick that has to rebuild the develop's tones outside PhotoCraft (its curves
+# are smooth, the yardstick's straight), so such a check failed sharpened photos and could pass
+# unsharpened ones. The review and the A/B measurement stand for it.
 
 
 def develop_vignette(index, edit, before, after, boxes, pairs, geometry):
@@ -648,7 +652,7 @@ CHECKS = {check.__name__: check for check in (
     polaroid, high_pass_sharpen, backlit_fix, product_frame, compose, sharpen, texture, noise_reduction, grain, blur,
     motion_blur, radial_blur, tilt_shift, vignette, tint, hue_shift, posterize, threshold, invert, flip,
     color_filter, color_overlay, duotone, retouch_portrait, develop_white_balance, develop_tone, develop_color,
-    develop_noise, develop_sharpen, develop_vignette, develop_sky)}
+    develop_noise, develop_vignette, develop_sky)}
 
 
 def run(index, edit, before, after, boxes, pairs, geometry, others=(), spots=()):

@@ -65,7 +65,7 @@ export function EditDemo() {
             Say what to change. <Em>Keep everything else.</Em>
           </>
         }
-        lead="Real requests typed into Image Studio and the pictures that came back, untouched. Drag the line to compare."
+        lead="Real requests and the pictures that came back. Drag the line to compare."
       />
 
       <div ref={ref} className="mx-auto mt-12 max-w-[1180px]">

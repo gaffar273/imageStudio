@@ -31,13 +31,23 @@ of known size: 0.6 EV under, flat, a cast, washed out, soft, grainy):
 
 import math
 
-import numpy as np
-
 from image_studio.pipelines.core import procedure
 
 CONTRAST_PER_UNIT = 0.0006  # luminance spread per Camera Raw contrast unit (contrast 30 → +0.018)
 VIBRANCE_PER_UNIT = 0.0012  # saturation of the coloured pixels per vibrance unit
-AIMS = {'mid': 0.40, 'spread': 0.21, 'colour': 0.38}
+AIMS = {'mid': 0.34, 'spread': 0.21, 'colour': 0.38}
+
+
+# How each step's note begins, so the plan can show a step's measurement on its own card.
+LEADS = {'develop_white_balance': 'White balance:', 'develop_tone': 'Tones:', 'develop_color': 'Colour:',
+         'develop_noise': 'Noise:', 'develop_sharpen': 'Sharpening:', 'develop_sky': 'Sky:',
+         'develop_level': 'Horizon:', 'develop_vignette': 'Vignette:'}
+
+
+def EXPOSURE(stops):
+    """What Camera Raw exposure does to an 8-bit tone: +0.5 EV moved a photo's median ×1.17 and
+    its 98th percentile ×1.14 (measured), close to 2^(EV / 2.2)."""
+    return 2 ** (stops / 2.2)
 
 
 def _luma(a):
@@ -45,21 +55,29 @@ def _luma(a):
 
 
 def _saturation(a):
+    import numpy as np
+
     high = a.max(axis=-1)
     return (high - a.min(axis=-1)) / np.maximum(high, 1e-3)
 
 
 def _unit(e):
+    import numpy as np
+
     return e / np.linalg.norm(e)
 
 
 def _angle(u, v):
+    import numpy as np
+
     return math.degrees(math.acos(max(-1.0, min(1.0, float(np.dot(_unit(u), _unit(v)))))))
 
 
 def light_colour(a):
     """The colour of the light, three ways: the greyest quarter of the midtones, the brightest
     near-neutrals, the brightest 1% (white patch). None for a reading without enough pixels."""
+    import numpy as np
+
     luma, sat = _luma(a), _saturation(a)
     unclipped = a.max(axis=-1) < 0.98
     readings = []
@@ -85,6 +103,8 @@ def white_balance(a):
     10°. The cast is split the way a white-balance control is: temperature (blue to amber), of which
     40% of a warm cast is kept as lamp light and late sun are part of the picture, and tint (green
     to magenta), which is always corrected (a green cast once read as warm and was only 60% fixed)."""
+    import numpy as np
+
     readings = [_unit(r) for r in light_colour(a)]
     if len(readings) < 2:
         return None
@@ -97,6 +117,9 @@ def white_balance(a):
     t, m = temperature * kept, tint * share
     light = np.exp([t - m / 3, 2 * m / 3, -t - m / 3])
     gains = light[1] / light
+    # Gains that keep the picture's brightness: red and blue at ×0.82 against green (a Canon CR2's
+    # magenta) dimmed the whole photo, and the tones step then lifted it to grey (2026-10-15).
+    gains = gains / (0.2126 * gains[0] + 0.7152 * gains[1] + 0.0722 * gains[2])
     words = [word for word, size in (('warm' if temperature > 0 else 'cool', abs(temperature)),
                                      ('green' if tint > 0 else 'magenta', abs(tint))) if size > 0.01]
     return [round(float(g), 4) for g in gains], round(spread, 2), round(kept, 2), ' and '.join(words) or 'neutral'
@@ -104,6 +127,8 @@ def white_balance(a):
 
 def curve(points):
     """A Camera Raw point curve (0..255) as a function on 0..1."""
+    import numpy as np
+
     xs, ys = zip(*points)
     return lambda v: np.interp(v * 255, xs, ys) / 255
 
@@ -123,6 +148,8 @@ def read(image):
 
 
 def _read(image):
+    import numpy as np
+
     small = image.convert('RGB')
     small.thumbnail((512, 512))
     a = np.asarray(small, dtype=np.float32) / 255
@@ -142,12 +169,26 @@ def _read(image):
                         for name, gain in zip(('Red', 'Green', 'Blue'), gains) if abs(gain - 1) >= 0.005}
             reason = (f'the readings disagreed by {spread:.0f}°' if spread > 3 else 'some warmth is the light’s '
                       'mood') if share < 0.99 else ''
-            note = (f'White balance: the light read {cast} → red ×{gains[0]:.3f}, blue ×{gains[2]:.3f} against '
-                    'green' + (f' ({share:.0%} of the warm shift corrected: {reason})' if reason else '') + '.')
+            note = (f'White balance: the light read {cast} → red ×{gains[0]:.3f}, green ×{gains[1]:.3f}, '
+                    f'blue ×{gains[2]:.3f}' + (f' ({share:.0%} of the warm shift corrected: {reason})' if reason
+                                               else '') + '.')
             plan['white_balance'] = (settings, note)
             a = np.clip(a * np.array(gains, dtype=np.float32), 0, 1)
 
+    # Tones the way a retoucher sets them: exposure first, which multiplies the light, so a dark
+    # file brightens and its blacks stay black; then the curve sets the black point and lifts dark
+    # midtones gently, with a toe that keeps the deepest shadows down. Lifting with the curve alone
+    # raised two real RAW files' shadows straight to grey (a Nikon NEF's 21 of 255 became 102).
     luma = _luma(a)
+    clipped = float((luma >= 0.98).mean())
+    high = float(np.percentile(luma, 99.5))
+    said, tone, stops = [], {}, 0.0
+    if high < 0.88:
+        stops = round(min(2.0, 2.2 * math.log2(0.92 / max(high, 0.05))), 2)
+        tone['exposure'] = stops
+        said.append(f'the brightest tones stopped at {high:.0%}')
+        a = np.clip(a * EXPOSURE(stops), 0, 1)
+        luma = _luma(a)
     low, high, middle = (float(v) for v in np.percentile(luma, [0.5, 99.5, 50]))
     black = low if low > 0.04 else 0.0  # blacks at 2-4% are a finished photo's, not a fault
     white = high if high < 0.95 else 1.0
@@ -156,17 +197,19 @@ def _read(image):
         black, white = max(0.0, black - extra), min(1.0, white + extra)
     points = [[round(black * 255), 0], [round(white * 255), 255]]
     lifted = (middle - black) / max(white - black, 1e-3)
-    said = []
     if black > 0:
         said.append(f'the darkest tones stopped at {low:.0%}')
-    if white < 1:
-        said.append(f'the brightest at {high:.0%}')
     if 0.12 <= lifted < AIMS['mid'] - 0.04:
-        # Midtones lifted to about 40%: a dark night or low-key photo (middle under 12%) stays dark.
-        points.insert(1, [round((black + lifted * (white - black)) * 255), round(AIMS['mid'] * 255)])
+        # A dark night or low-key photo (middle under 12%) stays dark; otherwise the middle comes up,
+        # at most doubled, through a toe that lifts the shadows less than the midtones.
+        target = min(AIMS['mid'], lifted * 2)
+        middle_in = black + lifted * (white - black)
+        toe_in = black + 0.4 * (middle_in - black)
+        points[1:1] = [[round(toe_in * 255), round(0.3 * target * 255)],
+                       [round(middle_in * 255), round(target * 255)]]
         said.append(f'the middle tone sat at {lifted:.0%}')
-    tone = {'pointCurve': points} if said else {}
-    clipped = float((luma >= 0.98).mean())
+    if points != [[0, 0], [255, 255]]:
+        tone['pointCurve'] = points
     if clipped > 0.02:
         tone['highlights'] = -round(min(70, 20 + clipped * 400))
         said.append(f'{clipped:.1%} is clipped white')
@@ -185,6 +228,8 @@ def _read(image):
     c = np.asarray(colour, dtype=np.float32) / 255
     if found is not None:
         c = np.clip(c * np.array(found[0], dtype=np.float32), 0, 1)
+    if stops:
+        c = np.clip(c * EXPOSURE(stops), 0, 1)
     if tone.get('pointCurve'):
         c = np.clip(np.stack([curve(points)(c[..., k]) for k in range(3)], axis=-1), 0, 1)
     sat, visible = _saturation(c), (_luma(c) > 0.1) & (_luma(c) < 0.95)
@@ -214,19 +259,28 @@ def _read(image):
     return plan
 
 
-def preview(image, steps):
-    """A small copy of the photo with only the named steps' white balance and curve, as the
-    yardstick a check compares the developed photo against: a step is judged on what it added,
-    not on the brightening the curve gave the whole picture."""
+def preview(image, steps, pixels=None):
+    """A small copy of the photo with only the named steps' white balance, exposure and curve, as
+    the yardstick a check compares the developed photo against: a step is judged on what it added,
+    not on the brightening the curve gave the whole picture. `pixels` (the 100% crop of a large
+    photo) takes the same tones at its own size, for grain and sharpness."""
+    import numpy as np
+
     plan = read(image)
-    small = image.convert('RGB')
-    small.thumbnail((512, 512))
+    if pixels is None:
+        small = image.convert('RGB')
+        small.thumbnail((512, 512))
+    else:
+        small = pixels.convert('RGB')
     a = np.asarray(small, dtype=np.float32) / 255
     if 'white_balance' in steps:
         for channel, name in enumerate(('Red', 'Green', 'Blue')):
             points = plan['white_balance'][0].get(f'pointCurve{name}')
             if points:
                 a[..., channel] = curve(points)(a[..., channel])
+    stops = plan['tone'][0].get('exposure') if 'tone' in steps else None
+    if stops:
+        a = np.clip(a * EXPOSURE(stops), 0, 1)
     points = plan['tone'][0].get('pointCurve') if 'tone' in steps else None
     if points:
         a = np.stack([curve(points)(a[..., c]) for c in range(3)], axis=-1)
@@ -236,9 +290,19 @@ def preview(image, steps):
 
 
 def _describe(params):
+    """Settings in a retoucher's words: “exposure +0.44 EV, black point 15, midtones lifted, white
+    point 235, contrast +20”."""
     def one(key, value):
-        if isinstance(value, list):
-            return f'{key} {value}'
+        if key == 'exposure':
+            return f'exposure {value:+.2f} EV'
+        if key == 'pointCurve':
+            (black, _), *middle, (white, _) = value
+            parts = [f'black point {black}'] if black else []
+            if middle:
+                parts.append('midtones lifted')
+            if white < 255:
+                parts.append(f'white point {white}')
+            return ', '.join(parts) or 'curve'
         return f'{key} {value:+g}'
 
     return ', '.join(one(key, value) for key, value in params.items())
@@ -262,7 +326,7 @@ def raw(b, index, params):
 # or “more” afterwards (photocraft_followup) moves a step down or up, as a retoucher dials a whole
 # develop back or pushes it.
 SHARE = {'subtle': 0.6, 'moderate': 1.0, 'strong': 1.4}
-AMOUNTS = ('contrast', 'vibrance', 'highlights', 'noiseLuminance', 'noiseColor', 'sharpenAmount', 'vignetteAmount')
+AMOUNTS = ('exposure', 'contrast', 'vibrance', 'highlights', 'noiseLuminance', 'noiseColor', 'sharpenAmount', 'vignetteAmount')
 
 
 def scaled(settings, share):
@@ -291,7 +355,8 @@ def _step(b, index, name, edit):
     settings, note = found[name]
     if settings:
         raw(b, index, scaled(settings, _share(edit)))
-    b.notes.append(note if _share(edit) == 1 or not settings else f'{note} ({_share(edit):.0%} of it, as asked)')
+    b.notes.append(note if _share(edit) == 1 or not settings else
+                   f'{note.rstrip(".")} ({_share(edit):.0%} of it, as asked).')
 
 
 @procedure('develop_white_balance', 'White balance (measured from the greys and whites)', 'correct', 'develop',
@@ -344,7 +409,10 @@ def develop_sharpen(b, index, edit):
     # stays: the grain is already reduced before sharpening, and turning it down as well left a
     # grainy photo's edges only 1.5% crisper (measured).
     masking = round(max(40, min(80, 40 + 10 * noise)))
-    amount = 40
+    # At a camera's own resolution amount 40 added only 2.7% and 4.6% fine detail inside the
+    # develop on a Canon CR2 and a Nikon NEF (A/B in PhotoCraft at 100%); it scales about linearly
+    # with the amount and, masked, did not raise the grain, so camera files get 60.
+    amount = 60 if found.get('camera_pixels') else 40
     raw(b, index, scaled({'sharpenAmount': amount, 'sharpenRadius': 1.0, 'sharpenDetail': 25,
                           'sharpenMasking': masking}, _share(edit)))
     b.notes.append(f'Sharpening: amount {amount}, masking {masking} (edges only, so the grain stays down).')

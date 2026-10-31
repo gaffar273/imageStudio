@@ -61,8 +61,8 @@ export function Hero() {
             Write it. <Em>Watch it develop.</Em>
           </h1>
           <p className="mx-auto mt-6 max-w-[56ch] text-[17px] leading-relaxed text-body sm:text-[19px]">
-            Image Studio makes pictures from a sentence and edits photos like a retoucher: your request becomes
-            a plan of exact edits on real layers. It runs on your own graphics card and keeps every file on your PC.
+            Make pictures from a sentence and edit photos like a retoucher, on real layers. Everything runs on
+            your own PC.
           </p>
           <div className="mt-9 flex flex-wrap items-center justify-center gap-3">
             {windows ? (

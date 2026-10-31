@@ -45,7 +45,7 @@ async def lifespan(app):
     server.server_close()
 
 
-app = FastAPI(title='Local Image Studio', version='2.0.0', lifespan=lifespan)
+app = FastAPI(title='Local Image Studio', version='2.0.1', lifespan=lifespan)
 
 
 @app.exception_handler(ModuleNotFoundError)

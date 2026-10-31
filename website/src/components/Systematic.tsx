@@ -118,7 +118,7 @@ export function Systematic() {
             Planned like a retoucher. <Em>Not redrawn.</Em>
           </>
         }
-        lead={`A request becomes a plan of coded editing pipelines. They run exact commands in PhotoCraft, every adjustment lands on its own layer, and the result is measured. Nothing you didn't ask for is repainted. One real request, step by step:`}
+        lead="Your request becomes exact PhotoCraft edits, each on its own layer, then the result is measured. One real request, step by step:"
       />
 
       <div ref={ref} className="mx-auto mt-12 max-w-[1180px] overflow-hidden rounded-[30px] border border-line bg-card shadow-float">
@@ -243,9 +243,6 @@ function ReadView() {
           <span className="shrink-0 text-[12px] font-medium text-[#166534]">keep</span>
         </motion.li>
       </ul>
-      <p className="mt-4 text-[13px] leading-relaxed text-muted">
-        Unclear parts come back as questions instead of guesses. This request had none.
-      </p>
     </Panel>
   )
 }
@@ -290,8 +287,8 @@ function FindView() {
         </motion.span>
       </div>
       <p className="mt-3 px-1 text-[13.5px] leading-relaxed text-body">
-        <span className="font-medium text-ink">How the cat stays out of it:</span> to make the room less yellow without touching
-        the cat, the temperature pipeline selects everything in the foreground and inverts the selection. Only the room is left.
+        <span className="font-medium text-ink">The cat stays out of it:</span> the foreground is selected and inverted, so
+        only the room is warmed down.
       </p>
     </div>
   )

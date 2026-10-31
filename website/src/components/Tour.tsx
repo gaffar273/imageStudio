@@ -9,42 +9,42 @@ const screens = [
     id: 'create',
     icon: Sparkles,
     title: 'Create',
-    text: 'Describe the picture, pick a model and a size, and generate. Ctrl + Enter works from anywhere on the screen.',
+    text: 'Describe the picture, pick a model and a size, and generate.',
     points: ['Four local models, or a cloud one', 'Smart prompt tidies short ideas', 'A sketch can guide the layout'],
   },
   {
     id: 'edit',
     icon: PenLine,
     title: 'Edit',
-    text: 'Drop in a photo, paste one, or pick a recent picture, then say what to change. Paint an area to keep the edit inside it.',
+    text: 'Drop in a photo and say what to change. Paint an area to keep the edit inside it.',
     points: ['Before and After on one click', 'Keep editing carries on from the result', 'Undo a painted stroke with Ctrl + Z'],
   },
   {
     id: 'photocraft',
     icon: Layers,
     title: 'PhotoCraft studio',
-    text: 'Describe a whole retouch at once. The plan lands as named layers in a real PSD, and the result is checked against what you asked.',
+    text: 'Describe a whole retouch at once. It lands as named layers in a real PSD, and the result is checked.',
     points: ['115 ready-made pipelines', 'Every PhotoCraft command, with controls', 'Export to PSD, TIFF, PNG, JPEG or WebP'],
   },
   {
     id: 'library',
     icon: FolderOpen,
     title: 'Library',
-    text: 'Every picture with the prompt and settings that made it. Search the words, or search by what is in the picture.',
+    text: 'Every picture with the prompt and settings that made it, searchable by words or by what is in it.',
     points: ['Use these settings loads a picture back into Create', 'Favorites and sorting', 'Plain files in a folder you choose'],
   },
   {
     id: 'providers',
     icon: KeyRound,
     title: 'Providers',
-    text: 'No NVIDIA card? Connect OpenAI, Gemini, fal.ai or Replicate with your own key. The editing assistant can run on Claude, GPT, Ollama or LM Studio.',
+    text: 'No NVIDIA card? Connect a cloud provider with your own key.',
     points: ['Keys encrypted for your Windows account', 'Test connection lists the models a key reaches', 'Cloud pictures land in the same library'],
   },
   {
     id: 'models',
     icon: PackageOpen,
     title: 'Models',
-    text: 'Install each model with one click. Downloads come straight from the maker and pick up where they left off.',
+    text: 'Install each model with one click, straight from its maker.',
     points: ['Progress, pause and resume', 'Shows what fits your graphics card', 'Finds PhotoCraft and Krita if installed'],
   },
 ]
@@ -77,7 +77,6 @@ export function Tour() {
             One window, from idea <Em>to finished file.</Em>
           </>
         }
-        lead="Screens captured from the app itself, in its light theme."
       />
 
       <div className="mx-auto mt-16 grid max-w-[1180px] grid-cols-[minmax(0,1fr)] gap-10 lg:grid-cols-[360px_minmax(0,1fr)] lg:gap-14">

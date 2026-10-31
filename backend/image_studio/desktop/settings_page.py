@@ -103,7 +103,7 @@ class PartRow(Box):
         column.addLayout(top)
         details = f'{part.what} {part.size[0].upper()}{part.size[1:]}.'
         if part.note:
-            details += ' ' + part.note
+            self.install.setToolTip(part.note)
         self.details = label(details, 'small', wrap=True)
         column.addWidget(self.details)
         self.bar = QProgressBar()
@@ -123,9 +123,10 @@ class PartRow(Box):
             name, tone = ('Not installed', 'off') if installable else ('Windows only for now', 'off')
         self.badge.setText(name)
         restyle(self.badge, tone=tone)
+        self.badge.setVisible(running or ready or not installable)
         self.install.setVisible(not ready and not running and installable)
         self.install.setEnabled(not blocked)
-        self.install.setToolTip(blocked)
+        self.install.setToolTip(blocked or self.part.note)
         self.cancel.setVisible(running)
         self.bar.setVisible(running)
         if percent is None:
@@ -226,9 +227,7 @@ class SettingsPage(QWidget):
         self.tab_group = QButtonGroup(self)
         self.tabs = {}  # key -> (button, icon, page)
 
-        page, layout = scroll_page('Models and tools', 'Models that run on this PC. Each downloads once from its '
-                                                         'maker into your models folder, and resumes if the '
-                                                         'connection drops.')
+        page, layout = scroll_page('Models and tools')
         self.waiting_note = label('Waiting for the engine…', 'muted')
         layout.addWidget(self.waiting_note)
         layout.addWidget(self.engine_card())
@@ -236,8 +235,8 @@ class SettingsPage(QWidget):
         layout.addWidget(self.apps_card())
         layout.addStretch()
         self.add_tab('models', 'Models', 'hard-drive', page)
-        page, layout = scroll_page('Personalization', 'What the studio has learned from your favorites and '
-                                                       'your corrections. It stays on this PC.')
+        page, layout = scroll_page('Personalization', 'Learned from your favorites and corrections. It stays on '
+                                                       'this PC.')
         layout.addWidget(self.learning_card())
         layout.addStretch()
         self.add_tab('learning', 'Personalization', 'heart', page)

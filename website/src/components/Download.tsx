@@ -61,7 +61,7 @@ export function Download() {
             Get Image Studio <Em>for Windows.</Em>
           </>
         }
-        lead="A small installer with its own Python. On first start it sets up the engine and the models you pick."
+        lead="A small installer. The engine and models you pick are set up on first start."
       />
 
       <div className="mx-auto mt-14 grid max-w-[1180px] grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1.25fr)_minmax(0,1fr)]">
@@ -127,8 +127,7 @@ export function Download() {
           ) : (
             <>
               <p className="relative mt-8 max-w-[52ch] text-[16px] leading-relaxed text-body">
-                The first Windows installer is being prepared for GitHub Releases. Watch the repository and GitHub
-                will tell you the moment it is published. You can run the app from source today.
+                The Windows installer is coming soon. Watch the repository to hear when it is out.
               </p>
               <div className="relative mt-7 flex flex-wrap gap-3">
                 <Button variant="dark" size="lg" href={links.watch} target="_blank" rel="noreferrer">
