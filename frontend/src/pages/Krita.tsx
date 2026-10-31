@@ -14,8 +14,12 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { api, readImage } from '../lib/api';
+import { api } from '../lib/api';
 import type { StudioImage } from '../lib/types';
+import { NewProject, ProjectAssets, ProjectHome, type ProjectImage, type ProjectSummary } from '../photocraft/Projects';
+import { LayerArrange } from '../photocraft/LayerArrange';
+import '../projects.css';
+interface KritaProject extends ProjectSummary { assets: ProjectImage[]; saved?: boolean; can_restore?: boolean; save_error?: string }
 interface KritaState {
   connected: boolean;
   state: {
@@ -23,11 +27,16 @@ interface KritaState {
     width: number;
     height: number;
     selection?: boolean;
-    layers: { name: string; visible: boolean; active: boolean; depth: number }[];
+    layers: { id?: string; name: string; visible: boolean; active: boolean; depth: number; kind?: string; bounds?: number[]; opacity?: number; locked?: boolean }[];
+    activeLayer?: string;
+    modified?: boolean;
+    save_error?: string;
   } | null;
   events: Record<string, unknown>[];
   preview: boolean;
   preview_version: number;
+  project?: KritaProject | null;
+  capabilities?: { projects?: boolean };
 }
 export function Krita({
   error,
@@ -45,10 +54,26 @@ export function Krita({
   const [choosing, setChoosing] = useState(false);
   const [query, setQuery] = useState('');
   const [dragging, setDragging] = useState(false);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [project, setProject] = useState<KritaProject | null>(null);
+  const [home, setHome] = useState(true);
+  const [newProject, setNewProject] = useState(false);
+  const [arranging, setArranging] = useState(false);
+  const [stageNode, setStageNode] = useState<HTMLDivElement | null>(null);
+  const [stageSize, setStageSize] = useState({ width: 700, height: 450 });
+  const frame = useRef<HTMLDivElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const layerInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
   const picker = useRef<HTMLDialogElement>(null);
   const pending = useRef(false);
+  function loadProjects() { api<{ projects: ProjectSummary[] }>('/krita/projects').then((result) => setProjects(result.projects)).catch(() => {}); }
+  useEffect(loadProjects, []);
+  useEffect(() => {
+    if (!stageNode) return;
+    const observer = new ResizeObserver(([entry]) => { if (entry) setStageSize({ width: entry.contentRect.width, height: entry.contentRect.height }); });
+    observer.observe(stageNode); return () => observer.disconnect();
+  }, [stageNode]);
   useEffect(() => {
     let active = true;
     let timer: number;
@@ -57,6 +82,7 @@ export function Krita({
         const data = await api<KritaState>('/krita');
         if (active) {
           setState(data);
+          if (data.project) setProject((current) => current?.id === data.project!.id ? data.project! : current);
           setConnectionError(false);
         }
       } catch {
@@ -77,8 +103,32 @@ export function Krita({
   const connected = !!state?.connected && !connectionError;
   const document = state?.state;
   const documentName = document?.name.replace(/^import-[a-f0-9]{32}\.png$/, 'Imported image');
-  const hasDocument = connected && !!document;
+  const hasDocument = connected && !!document && (!project || state?.project?.id === project.id);
+  async function projectCall(path: string, body: object) {
+    if (pending.current) return;
+    pending.current = true; setSending(true);
+    try {
+      const result = await api<{ project: KritaProject; closed?: boolean; message: string }>(path, body);
+      if (result.closed) { setProject(null); setHome(true); }
+      else { setProject(result.project); setHome(false); }
+      setState(await api<KritaState>('/krita'));
+      loadProjects(); notify(result.message); return result.project;
+    } catch (err) { error(String(err)); }
+    finally { pending.current = false; setSending(false); }
+  }
+  function projectAction(action: string) {
+    if (action === 'close' && state?.project?.id !== project?.id) { setProject(null); setHome(true); return; }
+    if (project) void projectCall(`/krita/projects/${project.id}/action`, { action });
+  }
+  function layerAction(id: string | undefined, operation: string, values: object = {}) {
+    if (project && id) void projectCall(`/krita/projects/${project.id}/layers/${id}`, { operation, ...values });
+  }
+  function placeAsset(asset: ProjectImage, values: { fit?: boolean; as_canvas?: boolean; x?: number; y?: number }) {
+    if (project) void projectCall(`/krita/projects/${project.id}/assets/${asset.id}/place`, values);
+  }
   async function command(action: string, image?: string) {
+    if (action === 'open' && image) { await projectCall('/krita/projects/from-library', { name: image }); setChoosing(false); return; }
+    if (action === 'new_canvas') { setNewProject(true); return; }
     if (pending.current) return;
     pending.current = true;
     setSending(true);
@@ -99,8 +149,12 @@ export function Krita({
     pending.current = true;
     setSending(true);
     try {
-      const image = await readImage(file);
-      const result = await api<{ message: string }>('/krita', { action: 'import', image });
+      if (!file.size || file.size > 500_000_000) throw new Error('Choose a project under 500 MB.');
+      const body = new FormData(); body.append('file', file);
+      const response = await fetch('/api/krita/projects/import', { method: 'POST', body });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.detail || 'Could not open the project.');
+      setProject(result.project); setHome(false); setState(await api<KritaState>('/krita')); loadProjects();
       notify(result.message);
     } catch (err) {
       error(String(err));
@@ -110,7 +164,7 @@ export function Krita({
     }
   }
   async function addLayers(files: File[]) {
-    if (!files.length || pending.current || !hasDocument) return;
+    if (!files.length || pending.current || !project) return;
     if (
       files.length > 16 ||
       files.some((file) => !file.size) ||
@@ -124,9 +178,10 @@ export function Krita({
     try {
       const body = new FormData();
       files.forEach((file) => body.append('files', file));
-      const response = await fetch('/api/krita/layers', { method: 'POST', body });
+      const response = await fetch(`/api/krita/projects/${project.id}/assets`, { method: 'POST', body });
       const result = await response.json();
       if (!response.ok) throw new Error(result.detail || 'Could not add image layers.');
+      setProject(result.project);
       notify(result.message);
     } catch (err) {
       error(String(err));
@@ -149,19 +204,34 @@ export function Krita({
           event.target.value = '';
         }}
       />
+      <input ref={projectInput} type="file" accept=".istudio,.kra" hidden aria-label="Open Krita project file"
+        onChange={(event) => { void upload(event.target.files?.[0]); event.target.value = ''; }} />
       <input
         ref={layerInput}
         type="file"
         multiple
         accept="image/png,image/jpeg,image/webp,image/bmp,image/tiff"
         className="sr-only"
-        aria-label="Add images as layers to Krita"
+        aria-label="Import Krita project images"
         disabled={sending || !hasDocument}
         onChange={(event) => {
           void addLayers(Array.from(event.target.files || []));
           event.target.value = '';
         }}
       />
+      {newProject && <NewProject editor="Krita" onClose={() => setNewProject(false)} onCreate={(values) => {
+        setNewProject(false); void projectCall('/krita/projects', values);
+      }} />}
+      {home ? <ProjectHome editor="Krita" projects={projects} busy={sending || !connected}
+        onNew={() => setNewProject(true)} onOpen={() => projectInput.current?.click()}
+        onImage={() => fileInput.current?.click()} onResume={(id) => void projectCall(`/krita/projects/${id}/action`, { action: 'open' })}>
+        <p>{connected ? 'Krita is connected.' : 'Open Krita to start or resume a project.'}</p>
+        {!connected && <button className="button" disabled={sending} onClick={() => void command('launch')}>Open Krita to connect</button>}
+        {connected && hasDocument && !state?.project && <button className="button" disabled={sending} onClick={() => {
+          const name = window.prompt('Project name', documentName || 'Untitled project')?.trim();
+          if (name) void projectCall('/krita/projects', { name, use_current: true });
+        }}>Save the open Krita canvas as a project</button>}
+      </ProjectHome> : <>
       <div className="krita-connection-bar">
         <span>
           <i className={connected ? 'dot' : 'dot offline'} />
@@ -175,6 +245,14 @@ export function Krita({
           Open Krita
           <ArrowUpRight size={16} />
         </button>
+      </div>
+      <div className="project-canvas-tools"><strong>{project?.name || documentName}</strong>
+        <span title={document?.save_error}>{document?.save_error ? 'Save failed — retry Save' : sending || document?.modified ? 'Saving…' : 'Saved on this computer'}</span>
+        <button className="button" disabled={sending || arranging} onClick={() => setNewProject(true)}>New project</button>
+        <a className="button" aria-disabled={sending || arranging || !hasDocument} onClick={(event) => { if (sending || arranging || !hasDocument) event.preventDefault(); }} href={project ? `/api/krita/projects/${project.id}/file` : undefined} download={`${project?.name}.istudio`}>Save project file</a>
+        <button className="button" disabled={sending || arranging} onClick={() => projectAction('clear')}>Clear canvas</button>
+        {project?.can_restore && <button className="button" disabled={sending} onClick={() => projectAction('restore')}>Restore previous canvas</button>}
+        <button className="button" disabled={sending || arranging} onClick={() => projectAction('close')}>Close project</button>
       </div>
       <div className="krita-workspace">
         <section
@@ -191,7 +269,13 @@ export function Krita({
             event.preventDefault();
             setDragging(false);
             const files = Array.from(event.dataTransfer.files);
-            if (hasDocument) void addLayers(files);
+            const asset = event.dataTransfer.getData('application/x-image-studio-project-image');
+            const rect = frame.current?.getBoundingClientRect();
+            if (asset && project && document && rect) { const image = project.assets.find((item) => item.id === asset);
+              if (image) placeAsset(image, { x: (event.clientX - rect.left) * document.width / rect.width,
+                y: (event.clientY - rect.top) * document.height / rect.height });
+            } else if (files.length === 1 && /\.(kra|istudio)$/i.test(files[0]!.name)) void upload(files[0]);
+            else if (hasDocument) void addLayers(files);
             else if (files.length === 1) void upload(files[0]);
             else if (files.length) error('Open a background first, then add the other images as layers.');
           }}
@@ -207,13 +291,22 @@ export function Krita({
               </span>
             )}
           </div>
-          <div className="krita-stage">
+          <div className="krita-stage" ref={setStageNode}>
             {hasDocument && state?.preview ? (
-              <img
+              <div ref={frame} style={{ position: 'relative', width: document.width * Math.min(stageSize.width / document.width, stageSize.height / document.height),
+                height: document.height * Math.min(stageSize.width / document.width, stageSize.height / document.height) }}><img
                 className="krita-preview"
                 src={`/api/krita/preview?v=${state.preview_version}`}
                 alt="Live Krita canvas"
               />
+                {project && <LayerArrange frame={frame} width={document.width} height={document.height}
+                  layers={document.layers.filter((layer) => layer.id).map((layer) => ({ ...layer, id: layer.id! }))}
+                  active={document.activeLayer || null} revision={state.preview_version} busy={sending}
+                  preview={(id, part) => `/api/krita/projects/${project.id}/layers/${id}/preview/${state.preview_version}/${part}`}
+                  onSelect={(id) => void projectCall(`/krita/projects/${project.id}/layers/${id}`, { operation: 'select' })}
+                  onTransform={(id, values) => void projectCall(`/krita/projects/${project.id}/layers/${id}`, { operation: 'transform', ...values })}
+                  onDrawing={setArranging} />}
+              </div>
             ) : (
               <div className="krita-empty">
                 <ImagePlus size={36} strokeWidth={1.4} />
@@ -234,14 +327,15 @@ export function Krita({
             {dragging && (
               <div className="krita-drop-overlay">
                 <Upload size={28} />
-                {hasDocument ? 'Drop to add image layers' : 'Drop to open in Krita'}
+                {hasDocument ? 'Drop to save source images in this project' : 'Drop to start a project'}
               </div>
             )}
           </div>
+          {project && <ProjectAssets images={project.assets} busy={sending} onImport={() => layerInput.current?.click()} onPlace={placeAsset} />}
           <div className="krita-canvas-caption">
             <span>
               {hasDocument
-                ? 'Live preview · Drop images to add layers. Move and resize them in Krita.'
+                ? 'Live preview · Import sources below, choose Place, then drag to move or resize an image.'
                 : 'Images open as a new document in Krita.'}
             </span>
             {hasDocument && document.selection && <span className="selection-badge">Selection active</span>}
@@ -270,7 +364,7 @@ export function Krita({
               disabled={sending || !hasDocument}
               onClick={() => layerInput.current?.click()}
             >
-              <ImagePlus size={16} /> Add images as layers
+              <ImagePlus size={16} /> Import project images
             </button>
             <button
               className="text-button krita-new"
@@ -280,7 +374,7 @@ export function Krita({
               <ImagePlus size={15} />
               New blank canvas <span>1024 × 1024</span>
             </button>
-            <p className="muted">Opens a new document. Your current canvas stays open in Krita.</p>
+            <p className="muted">Source images stay in the project. Place an image when you want it on the canvas.</p>
           </section>
           <section className="krita-tool-section">
             <label className="krita-instruction-label" htmlFor="krita-instruction">
@@ -346,12 +440,12 @@ export function Krita({
                     className={layer.active ? 'active' : ''}
                     style={{ paddingLeft: `${10 + Math.min(layer.depth, 5) * 10}px` }}
                   >
-                    {layer.visible ? (
+                    <button className="icon-button" aria-label={`${layer.visible ? 'Hide' : 'Show'} ${layer.name}`} disabled={sending || !project || layer.locked || !layer.id} onClick={() => layerAction(layer.id, 'visibility', { visible: !layer.visible })}>{layer.visible ? (
                       <Eye size={14} aria-label="Visible" />
                     ) : (
                       <EyeOff size={14} aria-label="Hidden" />
-                    )}
-                    <span>{layer.name}</span>
+                    )}</button>
+                    <button className="button" disabled={sending || !project || !layer.id} onClick={() => layerAction(layer.id, 'select')}>{layer.name}</button>
                     {layer.active && <small>Active</small>}
                   </div>
                 ))}
@@ -359,7 +453,7 @@ export function Krita({
             ) : (
               <p className="muted">Layers appear when a document is open.</p>
             )}
-            {hasDocument && <p className="muted">Manage layers in Krita.</p>}
+            {hasDocument && <p className="muted">Select a layer to move or resize it on the canvas. More layer tools are available in Krita.</p>}
           </section>
         </aside>
       </div>
@@ -440,6 +534,7 @@ export function Krita({
               .includes(query.toLowerCase()),
           ) && <p className="muted">No images match your search.</p>}
       </dialog>
+      </>}
     </div>
   );
 }

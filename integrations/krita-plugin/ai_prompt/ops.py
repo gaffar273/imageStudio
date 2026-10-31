@@ -9,7 +9,7 @@ operations that Ctrl+Z undoes."""
 import math
 from xml.sax.saxutils import escape
 from krita import Krita, Selection
-from .qt import (ARGB32, GRAY8, QByteArray, QColor, QImage, QPainter, QPointF, QRadialGradient, Qt, raw_bytes,
+from .qt import (ARGB32, GRAY8, QByteArray, QColor, QImage, QImageReader, QPainter, QPointF, QRadialGradient, Qt, raw_bytes,
                  scaled_exact, scoped)
 
 RGB8 = ('RGBA', 'U8', 'sRGB-elle-V2-srgbtrc.icc')
@@ -121,15 +121,17 @@ def pixel_layer(doc, name, image, x=0, y=0, above=None):
     return insert(doc, pixel_node(doc, name, image, x, y), above)
 
 
-def place_images(doc, images):
-    """Keep the canvas and existing layers; fit and center each new image above the stack."""
+def place_images(doc, images, fit=False, x=None, y=None):
+    """Place at original size above the stack; scaling to fit is an explicit choice."""
     need(doc)
     prepared = []
     for item in images:
-        image = QImage(item['path'])
+        reader = QImageReader(item['path'])
+        reader.setAutoTransform(True)
+        image = reader.read()
         if image.isNull():
             raise StepError('Could not read an image layer.')
-        factor = min(1, doc.width() / image.width(), doc.height() / image.height())
+        factor = min(1, doc.width() / image.width(), doc.height() / image.height()) if fit else 1
         if factor < 1:
             image = scaled_exact(image, max(1, round(image.width() * factor)),
                                  max(1, round(image.height() * factor)))
@@ -137,8 +139,8 @@ def place_images(doc, images):
     previous, added = active_node(doc), []
     try:
         for name, image in prepared:
-            layer = pixel_node(doc, name, image, (doc.width() - image.width()) // 2,
-                               (doc.height() - image.height()) // 2)
+            layer = pixel_node(doc, name, image, round((doc.width() / 2 if x is None else x) - image.width() / 2),
+                               round((doc.height() / 2 if y is None else y) - image.height() / 2))
             children = doc.rootNode().childNodes()
             doc.rootNode().addChildNode(layer, children[-1] if children else None)
             added.append(layer)
@@ -244,7 +246,7 @@ def trigger(name, times=1):
 
 # ---- Steps ---------------------------------------------------------------------------
 
-def new_canvas(width=1024, height=1024, **_):
+def new_canvas(width=1024, height=1024, return_document=False, **_):
     doc = app().createDocument(int(width), int(height), 'Untitled', 'RGBA', 'U8', '', 300.0)
     # A new document already has one empty layer; it becomes the white background.
     layers = doc.rootNode().childNodes()
@@ -255,12 +257,11 @@ def new_canvas(width=1024, height=1024, **_):
     image = QImage(int(width), int(height), ARGB32)
     image.fill(QColor('white'))
     background.setPixelData(QByteArray(raw_bytes(image)), 0, 0, int(width), int(height))
-    window = app().activeWindow()
-    if window is not None:
-        window.addView(doc)
+    window = app().activeWindow() or (app().windows()[0] if app().windows() else app().openWindow())
+    window.addView(doc)
     activate(doc, background)
     settle(doc)
-    return f'New {width} × {height} canvas.'
+    return doc if return_document else f'New {width} × {height} canvas.'
 
 
 def combine(doc, selection, mode='replace'):
@@ -883,11 +884,18 @@ def state(doc):
         return None
     active = doc.activeNode()
     layers = [dict(name=node.name(), type=node.type(), visible=node.visible(), depth=depth,
-                   opacity=round(node.opacity() * 100 / 255), active=active is not None and node == active)
+                   id=node.uniqueId().toString().strip('{}'),
+                   bounds=[node.bounds().x(), node.bounds().y(), node.bounds().width(), node.bounds().height()],
+                   kind={'paintlayer': 'Pixel', 'filelayer': 'Smart Object', 'filterlayer': 'Adjustment',
+                         'grouplayer': 'Group', 'vectorlayer': 'Type'}.get(node.type(), node.type()),
+                   opacity=round(node.opacity() * 100 / 255), locked=node.locked(),
+                   active=active is not None and node == active)
               for node, depth in walk(doc.rootNode()) if node.type() != 'selectionmask'][:60]
     import os
     return dict(name=os.path.basename(doc.fileName()) if doc.fileName() else doc.name() or 'Untitled',
                 path=doc.fileName(), width=doc.width(), height=doc.height(), layers=layers, image_layers=True,
+                activeLayer=active.uniqueId().toString().strip('{}') if active is not None else None,
+                modified=doc.modified(),
                 selection=current_selection(doc) is not None, color=f'{doc.colorModel()} {doc.colorDepth()}')
 
 

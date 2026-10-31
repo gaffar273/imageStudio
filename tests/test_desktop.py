@@ -765,7 +765,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         self.assertEqual(page.stack.currentIndex(), 1)
         self.assertEqual(page.title.text(), 'portrait.jpg')
         self.assertIn('400 × 200 px', page.subtitle.text())
-        self.assertIn('RGB 8-bit', page.subtitle.text())
+        self.assertIn('All changes saved', page.subtitle.text())
         self.assertTrue(page.undo_button.isEnabled())
         self.assertFalse(page.redo_button.isEnabled())
         self.assertFalse(page.canvas.current.isNull())
@@ -867,6 +867,7 @@ class PhotoCraftScreenTests(unittest.TestCase):
         self.open()
         page.choose_tool('assistant')
         panel = page.assistant
+        panel.review_first.setChecked(True)
         panel.set_prompt('Brighten this')
         self.assertTrue(panel.plan_button.isEnabled())
         panel.scope.button('area').click()
@@ -1232,6 +1233,7 @@ class KritaScreenTests(unittest.TestCase):
     def setUp(self):
         self.page = page = self.window.krita
         page.poller.stop()
+        page.project, page.home_mode = None, True
         page.ready, page.lost, page.sending = True, False, False
         page.prompt.clear()
         page.preview.set_pixmap(None)
@@ -1262,14 +1264,14 @@ class KritaScreenTests(unittest.TestCase):
 
     def test_follows_the_live_canvas(self):
         page = self.page
-        self.assertEqual(page.title.text(), 'No document open')
+        self.assertEqual(page.title.text(), 'No project open')
         self.assertFalse(page.send.isEnabled())
         fetched = self.connect()
         self.assertEqual([args[0] for args in fetched], ['/api/krita/preview?v=1'])
         fetched[0][1](png(80, 60)[1])
         self.assertIs(page.stage.currentWidget(), page.preview)
         self.assertEqual(page.title.text(), 'Imported image')
-        self.assertEqual(page.dimensions.text(), '800 × 600')
+        self.assertEqual(page.dimensions.text(), '')  # an external canvas has not been captured as a managed project
         self.assertFalse(page.selection.isHidden())
         self.assertEqual(page.layer_count.text(), '2')
         self.assertIn('Grade applied', page.activity.header.text())
@@ -1295,19 +1297,20 @@ class KritaScreenTests(unittest.TestCase):
     def test_opening_pictures(self):
         page = self.page
         posted = self.post(lambda: page.open_item(dict(name='a.png', metadata=dict(prompt='A fox'))))
-        self.assertEqual(posted[0][1], dict(action='open', image='a.png'))
+        self.assertEqual(posted[0][:2], ('/api/krita/projects/from-library', dict(name='a.png')))
         page.sending = False
         with tempfile.TemporaryDirectory() as folder:
             path = Path(folder) / 'photo.png'
             path.write_bytes(png(40, 30)[1])
             posted = []
-            with patch.object(page.client, 'post', side_effect=lambda *args, **kwargs: posted.append(args)):
+            with patch.object(page.client, 'upload', side_effect=lambda *args, **kwargs: posted.append(args)):
                 page.import_file(str(path))
                 deadline = __import__('time').monotonic() + 10
                 while not posted and __import__('time').monotonic() < deadline:
                     self.app.processEvents()
-        self.assertEqual(posted[0][1]['action'], 'import')
-        self.assertTrue(posted[0][1]['image'].startswith('data:image/png;base64,'))
+        self.assertEqual(posted[0][0], '/api/krita/projects/import')
+        self.assertEqual(posted[0][1], 'photo.png')
+        self.assertEqual(posted[0][2], png(40, 30)[1])
 
 
 LEARNED = dict(

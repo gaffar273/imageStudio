@@ -4,9 +4,10 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, File, HTTPException, Query, UploadFile
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from starlette.background import BackgroundTask
 
-from image_studio.integrations import photocraft_workspace as workspace
+from image_studio.integrations import photocraft_workspace as workspace, photocraft_projects as projects
 from image_studio.integrations.photocraft_area import MarkedArea
 from image_studio.services import image_imports, library, workflows
 from image_studio.services.jobs import BusyError, store
@@ -19,6 +20,12 @@ class NewDocument(BaseModel):
     width: int = Field(default=1600, ge=1, le=8192)
     height: int = Field(default=1000, ge=1, le=8192)
 
+    @model_validator(mode='after')
+    def canvas_size(self):
+        if self.width * self.height > 40_000_000:
+            raise ValueError('Choose a canvas of at most 40 megapixels.')
+        return self
+
 
 class PromptRequest(BaseModel):
     revision: str = Field(pattern='^[a-f0-9]{32}$')
@@ -28,7 +35,7 @@ class PromptRequest(BaseModel):
 
 class Operation(BaseModel):
     revision: str = Field(pattern='^[a-f0-9]{32}$')
-    action: Literal['apply', 'undo', 'redo', 'goto', 'desktop', 'sync'] = 'apply'
+    action: Literal['apply', 'undo', 'redo', 'goto', 'desktop', 'sync', 'clear'] = 'apply'
     plan_id: str | None = Field(default=None, pattern='^[a-f0-9]{32}$')
     partial: bool = False
     index: int | None = Field(default=None, ge=0, le=100000)
@@ -40,6 +47,18 @@ class EditsRequest(BaseModel):
     revision: str = Field(pattern='^[a-f0-9]{32}$')
     edits: list[dict] = Field(min_length=1, max_length=16)
     label: str = Field(default='Edit', min_length=1, max_length=200)
+
+
+class ProjectName(BaseModel):
+    name: str = Field(min_length=1, max_length=150)
+
+
+class PlacementRequest(BaseModel):
+    revision: str = Field(pattern='^[a-f0-9]{32}$')
+    fit: bool = False
+    x: float | None = Field(default=None, ge=-8192, le=16384, allow_inf_nan=False)
+    y: float | None = Field(default=None, ge=-8192, le=16384, allow_inf_nan=False)
+    as_canvas: bool = False
 
 
 def guarded(call):
@@ -117,6 +136,76 @@ def fonts():
 @router.get('/workspaces')
 def workspaces():
     return {'workspaces': workspace.recent()}
+
+
+@router.post('/projects/import', status_code=202)
+async def import_project(file: Annotated[UploadFile, File()]):
+    try:
+        contents = await file.read(projects.MAX_PROJECT_BYTES + 1)
+    finally:
+        await file.close()
+    if not contents or len(contents) > projects.MAX_PROJECT_BYTES:
+        raise HTTPException(422, 'Choose an Image Studio project under 500 MB.')
+
+    def run(progress, update):
+        progress(0.1, desc='Opening your project, images and editing history…')
+        update(workspace=projects.import_archive(contents), message='Project opened. Changes are saved automatically.')
+
+    return submit(run)
+
+
+@router.get('/workspaces/{workspace_id}/project')
+def save_project(workspace_id: str, revision: Annotated[str, Query(pattern='^[a-f0-9]{32}$')]):
+    path = guarded(lambda: projects.archive(workspace_id, revision))
+    return FileResponse(path, filename='Image Studio project.istudio', media_type='application/zip',
+                        background=BackgroundTask(path.unlink, missing_ok=True))
+
+
+@router.post('/workspaces/{workspace_id}/rename')
+def rename_project(workspace_id: str, request: ProjectName):
+    return guarded(lambda: projects.rename(workspace_id, request.name))
+
+
+@router.post('/workspaces/{workspace_id}/assets', status_code=202)
+async def project_images(workspace_id: str, revision: Annotated[str, Query(pattern='^[a-f0-9]{32}$')],
+                         files: Annotated[list[UploadFile], File()]):
+    try:
+        images = await image_imports.read_files(files)
+    except ValueError as exc:
+        raise HTTPException(422, str(exc)) from exc
+    guarded(lambda: workspace.require_revision(workspace.load(workspace_id), revision))
+
+    def run(progress, update):
+        progress(0.1, desc='Saving images to your project…')
+        result = projects.import_assets(workspace_id, revision, images, workflows.engine.cancelled)
+        update(workspace=result, message='Images saved to the project. Choose Place when you want one on the canvas.')
+
+    return submit(run)
+
+
+@router.get('/workspaces/{workspace_id}/assets/{asset_id}/thumbnail')
+def asset_thumbnail(workspace_id: str, asset_id: str):
+    data = guarded(lambda: workspace.load(workspace_id))
+    asset = guarded(lambda: projects.asset_for(data, asset_id))
+    return FileResponse(workspace.folder_for(workspace_id) / 'assets' / f'{asset["id"]}-thumb.png', media_type='image/png')
+
+
+@router.post('/workspaces/{workspace_id}/assets/{asset_id}/place', status_code=202)
+def place_image(workspace_id: str, asset_id: str, request: PlacementRequest):
+    data = guarded(lambda: workspace.load(workspace_id))
+    guarded(lambda: workspace.require_revision(data, request.revision))
+    guarded(lambda: projects.asset_for(data, asset_id))
+
+    def run(progress, update):
+        progress(0.1, desc='Placing your image…')
+        if request.as_canvas:
+            result = projects.clear_canvas(workspace_id, request.revision, workflows.engine.cancelled, asset_id)
+        else:
+            result = projects.place_asset(workspace_id, request.revision, asset_id, request.fit, request.x,
+                                           request.y, workflows.engine.cancelled)
+        update(workspace=result, message='Image placed. Drag it on the canvas to position it; drag a corner to resize.')
+
+    return submit(run)
 
 
 @router.post('/workspaces', status_code=202)
@@ -236,6 +325,12 @@ def preview(workspace_id: str, revision: str):
     return FileResponse(workspace.folder_for(workspace_id) / f'{revision}.png', media_type='image/png')
 
 
+@router.get('/workspaces/{workspace_id}/layers/{layer_id}/preview/{revision}/{part}')
+def layer_preview(workspace_id: str, layer_id: int, revision: str, part: str):
+    path = guarded(lambda: workspace.layer_render(workspace_id, revision, layer_id, part))
+    return FileResponse(path, media_type='image/png')
+
+
 @router.post('/workspaces/{workspace_id}/plan', status_code=202)
 def plan(workspace_id: str, request: PromptRequest):
     guarded(lambda: workspace.require_revision(workspace.load(workspace_id), request.revision))
@@ -251,6 +346,25 @@ def plan(workspace_id: str, request: PromptRequest):
             plan=result,
             message='Review the unresolved details.' if result['unresolved'] else 'Your edit plan is ready.',
         )
+
+    return submit(run)
+
+
+@router.post('/workspaces/{workspace_id}/assistant', status_code=202)
+def assistant_edit(workspace_id: str, request: PromptRequest):
+    guarded(lambda: workspace.require_revision(workspace.load(workspace_id), request.revision))
+    if not request.prompt.strip():
+        raise HTTPException(422, 'Describe what you want to change.')
+
+    def run(progress, update):
+        result = workspace.smart_plan(workspace_id, request.revision, request.prompt, progress,
+            workflows.engine.cancelled, area=request.area.model_dump() if request.area else None)
+        if result['unresolved'] or not result['steps']:
+            update(plan=result, message='Some details need your choice. Review the questions below.')
+            return
+        edited = workspace.apply(workspace_id, request.revision, result['steps'], request.prompt, progress,
+                                  workflows.engine.cancelled, result)
+        update(workspace=edited, message='Edit applied and saved. You can compare it or undo.')
 
     return submit(run)
 
@@ -274,6 +388,8 @@ def operation(workspace_id: str, request: Operation):
             result = workspace.apply(
                 workspace_id, request.revision, steps, label, progress, workflows.engine.cancelled, plan
             )
+        elif request.action == 'clear':
+            result = projects.clear_canvas(workspace_id, request.revision, workflows.engine.cancelled)
         elif request.action == 'goto':
             result = workspace.goto(workspace_id, request.revision, request.index)
         elif request.action in {'undo', 'redo'}:

@@ -99,7 +99,8 @@ class PhotoCraftTests(unittest.TestCase):
                         self.assertEqual(
                             client.post(f'/api/photocraft/{output.name}/open', json={}).status_code, 200
                         )
-                        launch.assert_called_once_with(output.with_suffix('.psd'))
+                        launch.assert_called_once()
+                        self.assertEqual(launch.call_args.args[0].resolve(), output.with_suffix('.psd').resolve())
                     source = result['url']
 
     @unittest.skipUnless(photocraft.available(), 'PhotoCraft CLI not installed')

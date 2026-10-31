@@ -56,7 +56,7 @@ function readStored<T>(key: string, fallback: T): T {
 }
 function getPage(): Page {
   const value = window.location.hash.slice(1);
-  return value in titles ? (value as Page) : 'create';
+  return value in titles ? (value as Page) : 'photocraft';
 }
 export default function App() {
   const [page, setPage] = useState<Page>(getPage);

@@ -4,7 +4,7 @@ export default defineConfig({
   timeout: 30000,
   workers: 1,
   use: {
-    baseURL: 'http://127.0.0.1:7860',
+    baseURL: process.env.STUDIO_TEST_URL || 'http://127.0.0.1:7860',
     channel: 'msedge',
     headless: true,
     viewport: { width: 1440, height: 1050 },

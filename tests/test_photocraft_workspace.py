@@ -9,6 +9,7 @@ from fastapi.testclient import TestClient
 from image_studio.api.app import app
 from image_studio.integrations import photocraft
 from image_studio.integrations import photocraft_workspace as ws
+from image_studio.services import brain
 
 
 @unittest.skipUnless(photocraft.available(), 'PhotoCraft CLI not installed')
@@ -88,7 +89,7 @@ class WorkspaceTests(unittest.TestCase):
         self.assertEqual(len(result['history']), 2)
 
     def test_simple_plan_no_model_and_unresolved_plan_cannot_apply(self):
-        with patch.object(ws.brain, 'chat') as model:
+        with patch.object(brain, 'chat') as model:
             plan = ws.smart_plan(
                 self.document['id'],
                 self.document['revision'],
@@ -119,8 +120,8 @@ class WorkspaceTests(unittest.TestCase):
             'questions': [],
         }
         with (
-            patch.object(ws.brain, 'available', return_value=True),
-            patch.object(ws.brain, 'chat', return_value=understood),
+            patch.object(brain, 'available', return_value=True),
+            patch.object(brain, 'chat', return_value=understood),
         ):
             plan = ws.smart_plan(
                 self.document['id'],

@@ -116,7 +116,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         else:
             self.resize(1360, 860)
-        self.navigate(self.settings.value('page', 'create'))
+        self.navigate('photocraft')
 
     # Layout ------------------------------------------------------------------------------
 

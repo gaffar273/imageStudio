@@ -22,7 +22,7 @@ from PIL import Image
 
 from image_studio import pipelines
 from image_studio.pipelines import models
-from image_studio.core.paths import CACHE
+from image_studio.core.paths import CACHE, data_dir
 from image_studio.integrations import (
     photocraft,
     photocraft_followup,
@@ -30,10 +30,12 @@ from image_studio.integrations import (
     photocraft_macros,
     photocraft_planner,
     photocraft_specs,
+    photocraft_projects as projects,
 )
-from image_studio.services import brain, image_imports
+from image_studio.services import image_imports
 
-ROOT = CACHE / 'photocraft-workspaces'
+ROOT = data_dir() / 'projects' / 'photocraft'
+LEGACY_ROOT = CACHE / 'photocraft-workspaces'
 DOCUMENT_SUFFIXES = {'.png', '.jpg', '.jpeg', '.webp', '.tif', '.tiff', '.psd', '.psb', '.pcraft', '.ora', '.bmp'}
 # Camera RAW files PhotoCraft opens itself, as a 16-bit document (a Canon CR2 and a Nikon NEF were
 # checked, 2026-10-15); the camera develop (pipelines/library/camera_develop.py) is made for them.
@@ -159,10 +161,23 @@ def folder_for(workspace_id):
 
 def load(workspace_id):
     folder = folder_for(workspace_id)
-    try:
-        return json.loads((folder / 'workspace.json').read_text(encoding='utf-8'))
-    except FileNotFoundError as exc:
-        raise ValueError('Workspace not found.') from exc
+    with LOCK:
+        projects.migrate(ROOT, LEGACY_ROOT, workspace_id)
+        try:
+            data = json.loads((folder / 'workspace.json').read_text(encoding='utf-8'))
+            if data.get('schema') != 2:
+                data['schema'], data['assets'] = 2, data.get('assets', [])
+                original = next(folder.glob('import.*'), None)
+                if original is not None and not data['assets']:
+                    asset = projects.store_asset(folder, data['name'], original.read_bytes(),
+                        thumbnail=folder / f'{data["history"][0]["id"]}.png', background=True)
+                    asset['width'] = data['history'][0]['state']['width']
+                    asset['height'] = data['history'][0]['state']['height']
+                    data['assets'].append(asset)
+                save(data)
+            return data
+        except FileNotFoundError as exc:
+            raise ValueError('Workspace not found.') from exc
 
 
 def save(data):
@@ -180,6 +195,8 @@ def public(data):
     revision = current(data)
     return {
         **data,
+        'assets': projects.public_assets(data),
+        'saved': True,
         'revision': revision['id'],
         'state': revision['state'],
         'preview': f'/api/photocraft/workspaces/{data["id"]}/preview/{revision["id"]}',
@@ -190,16 +207,23 @@ def public(data):
 
 
 def recent():
-    if not ROOT.exists():
-        return []
     result = []
-    for path in ROOT.glob('*/workspace.json'):
+    seen = set()
+    for path in [*ROOT.glob('*/workspace.json'), *LEGACY_ROOT.glob('*/workspace.json')]:
         try:
             data = json.loads(path.read_text(encoding='utf-8'))
-            result.append({'id': data['id'], 'name': data['name'], 'updated': data['updated']})
+            if data['id'] in seen or not re.fullmatch('[a-f0-9]{32}', data['id']):
+                continue
+            seen.add(data['id'])
+            revision = current(data)
+            state = revision['state']
+            result.append({'id': data['id'], 'name': data['name'], 'updated': data['updated'],
+                           'width': state['width'], 'height': state['height'],
+                           'images': len(data.get('assets', [])), 'revisions': len(data['history']),
+                           'preview': f'/api/photocraft/workspaces/{data["id"]}/preview/{revision["id"]}'})
         except (ValueError, KeyError, OSError):
             continue
-    return sorted(result, key=lambda value: value['updated'], reverse=True)[:30]
+    return sorted(result, key=lambda value: value['updated'], reverse=True)
 
 
 def restriction(command):
@@ -341,7 +365,35 @@ def render(folder, revision_id):
     return preview
 
 
-def _place_images(engine, folder, files, cancelled=None):
+def layer_render(workspace_id, revision, layer_id, part):
+    """Cached transparent projections for dragging a normal image layer on the live canvas."""
+    if part not in {'below', 'image', 'above'}:
+        raise ValueError('Unknown layer preview.')
+    with LOCK:
+        data = load(workspace_id)
+        entry = next((row for row in data['history'] if row['id'] == revision), None)
+        if entry is None:
+            raise ValueError('Revision not found.')
+        layers = entry['state']['layers']
+        index = next((i for i, layer in enumerate(layers) if layer['id'] == layer_id), None)
+        if index is None:
+            raise ValueError('This preview is available for images at the top level of the layer list.')
+        folder = folder_for(workspace_id)
+        target = folder / f'{revision}-layer-{layer_id}-{part}.png'
+        if target.is_file():
+            return target
+        with Engine(folder) as engine:
+            engine.call('doc.open', {'path': str(folder / f'{revision}.pcraft')})
+            for name, indices in [('below', range(index + 1, len(layers))), ('image', [index]), ('above', range(index))]:
+                for i, layer in enumerate(layers):
+                    engine.call('engine.execute', {'command': 'layer.setProps', 'params': {
+                        'layer': layer['id'], 'visible': bool(layer.get('visible', True) and i in indices)}})
+                output = folder / f'{revision}-layer-{layer_id}-{name}.png'
+                engine.call('doc.render', {'path': str(output), 'maxSide': 1600})
+        return target
+
+
+def _place_images(engine, folder, files, cancelled=None, fit=False, center=None):
     """Only this trusted upload path may place external resources into a document."""
     if not 1 <= len(files) <= image_imports.MAX_FILES:
         raise ValueError('Choose between 1 and 16 images at a time.')
@@ -361,13 +413,13 @@ def _place_images(engine, folder, files, cancelled=None):
         for name, source in images:
             check_cancel(cancelled)
             engine.call('doc.place', {
-                'path': str(source), 'fit': True, 'smartObject': True,
-                'center': [state['width'] / 2, state['height'] / 2],
+                'path': str(source), 'fit': fit, 'smartObject': True,
+                'center': center or [state['width'] / 2, state['height'] / 2],
             })
             engine.call('engine.execute', {'command': 'layer.renameLayer', 'params': {'name': name}})
 
 
-def add_layers(workspace_id, expected, files, cancelled=None):
+def add_layers(workspace_id, expected, files, cancelled=None, fit=False, center=None, record_sources=True):
     """Append a batch as one undoable revision; errors leave the existing history intact."""
     with LOCK:
         data = load(workspace_id)
@@ -375,14 +427,22 @@ def add_layers(workspace_id, expected, files, cancelled=None):
         folder = folder_for(workspace_id)
         with Engine(folder, cancelled) as engine:
             engine.call('doc.open', {'path': str(folder / f'{expected}.pcraft')})
-            _place_images(engine, folder, files, cancelled)
+            _place_images(engine, folder, files, cancelled, fit=fit, center=center)
             label = 'Add image layer' if len(files) == 1 else f'Add {len(files)} image layers'
             revision = snapshot(engine, folder, label, [])
+        added = []
         try:
+            if record_sources:
+                for name, contents in files:
+                    added.append(projects.store_asset(folder, name, contents))
             check_cancel(cancelled)
-        except Cancelled:
+        except Exception:
             _discard(folder, revision)
+            for asset in added:
+                (folder / 'assets' / asset['file']).unlink(missing_ok=True)
+                (folder / 'assets' / f'{asset["id"]}-thumb.png').unlink(missing_ok=True)
             raise
+        data['assets'] = data.get('assets', []) + added
         return _commit(data, data['cursor'] + 1, [revision], None)
 
 
@@ -402,15 +462,23 @@ def create(contents=None, filename='Untitled', width=1600, height=1000, cancelle
             engine.call(
                 'doc.new', {'width': width, 'height': height, 'name': filename, 'background': 'white'}
             )
-        if layers:
-            _place_images(engine, folder, layers, cancelled)
         revision = snapshot(engine, folder, 'Original', [])
+    assets = []
+    if contents is not None:
+        asset = projects.store_asset(folder, filename, contents,
+                                     thumbnail=folder / f'{revision["id"]}.png', background=True)
+        asset['width'], asset['height'] = revision['state']['width'], revision['state']['height']
+        assets.append(asset)
+    for name, contents in layers or []:
+        assets.append(projects.store_asset(folder, name, contents))
     data = {
         'id': workspace_id,
         'name': Path(filename).name[:150],
         'history': [revision],
         'cursor': 0,
         'updated': time.time(),
+        'schema': 2,
+        'assets': assets,
     }
     save(data)
     return public(data)

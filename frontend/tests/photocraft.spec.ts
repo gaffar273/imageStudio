@@ -27,7 +27,7 @@ test('PhotoCraft presets, submission, exports and AI mask controls', async ({ pa
     };
     await route.fulfill({ status: 202, json: job });
   });
-  await page.goto('/');
+  await page.goto('/#create');
   await page.getByRole('button', { name: 'Edit image', exact: true }).first().click();
   await expect(page.getByRole('combobox', { name: 'Editing tool' })).toHaveValue('photocraft');
   await expect(page.getByRole('switch', { name: /Paint an area/ })).toHaveCount(0);

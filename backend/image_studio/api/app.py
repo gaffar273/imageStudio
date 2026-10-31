@@ -8,6 +8,7 @@ from fastapi.staticfiles import StaticFiles
 from image_studio.core.paths import IMAGES, FRONTEND
 from image_studio.api.routes import router
 from image_studio.api.photocraft import router as photocraft_router
+from image_studio.api.krita_projects import router as krita_projects_router
 from image_studio.services import workflows, assistant
 from image_studio.integrations import bridge
 from image_studio.core.engine import CLOUD_ONLY, explain
@@ -45,7 +46,8 @@ async def lifespan(app):
     server.server_close()
 
 
-app = FastAPI(title='Local Image Studio', version='2.0.1', lifespan=lifespan)
+app = FastAPI(title='Local Image Studio', version='2.0.2', lifespan=lifespan)
+app.include_router(krita_projects_router)
 
 
 @app.exception_handler(ModuleNotFoundError)

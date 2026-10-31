@@ -46,6 +46,8 @@ import type {
   Plan,
 } from '../photocraft/types';
 import '../photocraft.css';
+import '../projects.css';
+import { NewProject, ProjectAssets, ProjectHome, type ProjectImage, type ProjectSummary } from '../photocraft/Projects';
 
 interface Props {
   images: StudioImage[];
@@ -88,7 +90,8 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   const [document, setDocument] = useState<CraftDocument | null>(null);
   const [capabilities, setCapabilities] = useState<Capabilities | null>(null);
   const [fonts, setFonts] = useState<string[]>([]);
-  const [recent, setRecent] = useState<{ id: string; name: string; updated: number }[]>([]);
+  const [recent, setRecent] = useState<ProjectSummary[]>([]);
+  const [newProject, setNewProject] = useState(false);
   const [plan, setPlan] = useState<Plan | null>(null);
   const [job, setJob] = useState<CraftJob | null>(null);
   const [pending, setPending] = useState(false);
@@ -108,11 +111,13 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   const [marks, setMarks] = useState<AreaMark[]>([]);
   const [brushSize, setBrushSize] = useState(0.03);
   const [drawing, setDrawing] = useState(false);
+  const [reviewFirst, setReviewFirst] = useState(false);
   const [library, setLibrary] = useState(false);
   const [inspector, setInspector] = useState(true);
   const [menu, setMenu] = useState<'' | 'export' | 'new' | 'recent'>('');
   const uploadInput = useRef<HTMLInputElement>(null);
   const layerInput = useRef<HTMLInputElement>(null);
+  const projectInput = useRef<HTMLInputElement>(null);
   const importedSource = useRef('');
   const busy = pending || job?.state === 'running';
 
@@ -156,11 +161,6 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
       .then((value) => setRecent(value.workspaces))
       .catch(() => {});
     try {
-      const id = localStorage.getItem('studio:photocraft-workspace');
-      if (id && !initialSource)
-        api<CraftDocument>(`/photocraft/workspaces/${id}`)
-          .then(remember)
-          .catch(() => store('studio:photocraft-workspace'));
       const jobId = localStorage.getItem('studio:photocraft-job');
       if (jobId)
         api<CraftJob>(`/jobs/${jobId}`)
@@ -230,13 +230,13 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
       return;
     }
     setPending(true);
-    setMessage(asLayers ? 'Adding images as layers…' : 'Opening your document…');
+    setMessage(asLayers ? 'Saving source images to the project…' : 'Opening your project…');
     try {
       const body = new FormData();
       files.forEach((file, index) => body.append(asLayers || index ? 'files' : 'file', file));
       const path =
         asLayers && document
-          ? `/api/photocraft/workspaces/${document.id}/layers?revision=${document.revision}`
+          ? `/api/photocraft/workspaces/${document.id}/assets?revision=${document.revision}`
           : '/api/photocraft/workspaces/import';
       const response = await fetch(path, { method: 'POST', body });
       const data = await response.json();
@@ -244,7 +244,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
       setPlan(null);
       accept(data);
       setLibrary(false);
-      setZoom(0);
+      if (!asLayers) setZoom(0);
     } catch (err) {
       error(String(err));
     } finally {
@@ -260,6 +260,49 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
     } catch (err) {
       error(String(err));
     }
+  }
+
+  async function resumeProject(id: string) {
+    if (busy) return;
+    setPending(true);
+    try { remember(await api<CraftDocument>(`/photocraft/workspaces/${id}`)); setPlan(null); setJob(null); }
+    catch (err) { error(String(err)); }
+    finally { setPending(false); }
+  }
+
+  async function importProject(file?: File) {
+    if (!file || busy) return;
+    if (!file.size || file.size > 500_000_000) { error('Choose an Image Studio project under 500 MB.'); return; }
+    setPending(true);
+    try {
+      const body = new FormData(); body.append('file', file);
+      const response = await fetch('/api/photocraft/projects/import', { method: 'POST', body });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.detail || 'Could not open the project.');
+      setPlan(null); accept(data);
+    } catch (err) { error(String(err)); }
+    finally { setPending(false); }
+  }
+
+  function closeProject() {
+    if (busy) return;
+    setDocument(null); setPlan(null); setJob(null); setCompare(false); setLibrary(false); setMarks([]);
+    store('studio:photocraft-workspace');
+    api<{ workspaces: ProjectSummary[] }>('/photocraft/workspaces').then((result) => setRecent(result.workspaces)).catch(() => {});
+  }
+
+  async function renameProject() {
+    if (!document || busy) return;
+    const name = window.prompt('Project name', document.name)?.trim();
+    if (!name) return;
+    setPending(true);
+    try { remember(await api<CraftDocument>(`/photocraft/workspaces/${document.id}/rename`, { name })); }
+    catch (err) { error(String(err)); }
+    finally { setPending(false); }
+  }
+
+  function placeAsset(image: ProjectImage, values: { fit?: boolean; as_canvas?: boolean; x?: number; y?: number }) {
+    if (document) submit(`/photocraft/workspaces/${document.id}/assets/${image.id}/place`, { revision: document.revision, ...values });
   }
 
   useEffect(() => {
@@ -309,12 +352,11 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
   const regions = plan && plan.revision === document?.revision ? plan.regions || [] : [];
 
   return (
-    <div className={`pc ${inspector ? '' : 'no-inspector'}`} onClick={() => menu && setMenu('')}>
+    <div className={document ? `pc ${inspector ? '' : 'no-inspector'}` : 'project-page'} onClick={() => menu && setMenu('')}>
       <input
         ref={uploadInput}
         hidden
         type="file"
-        multiple
         accept=".png,.jpg,.jpeg,.webp,.tif,.tiff,.psd,.psb,.pcraft,.ora,.bmp"
         onChange={(event) => {
           void uploadFiles(Array.from(event.target.files || []));
@@ -327,12 +369,22 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
         type="file"
         multiple
         accept="image/png,image/jpeg,image/webp,image/tiff,image/bmp"
-        aria-label="Add images as layers"
+        aria-label="Import project images"
         onChange={(event) => {
           void uploadFiles(Array.from(event.target.files || []), true);
           event.target.value = '';
         }}
       />
+      <input ref={projectInput} hidden type="file" accept=".istudio" aria-label="Open PhotoCraft project file"
+        onChange={(event) => { void importProject(event.target.files?.[0]); event.target.value = ''; }} />
+      {newProject && <NewProject editor="PhotoCraft" onClose={() => setNewProject(false)} onCreate={(values) => {
+        setNewProject(false); setPlan(null); void submit('/photocraft/workspaces', values);
+      }} />}
+      {!document ? <ProjectHome editor="PhotoCraft" projects={recent} busy={!!busy}
+        onNew={() => setNewProject(true)} onOpen={() => projectInput.current?.click()}
+        onImage={() => uploadInput.current?.click()} onResume={(id) => void resumeProject(id)}>
+        {busy && <p role="status">{message}</p>}
+      </ProjectHome> : <>
       <header className="pc-bar">
         <div className="pc-title">
           <span className="pc-title-icon">
@@ -342,7 +394,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
             <strong>{document?.name || 'PhotoCraft studio'}</strong>
             <small>
               {document
-                ? `${document.state.width} × ${document.state.height} px · ${document.state.mode} ${document.state.depth}-bit · revision ${document.cursor + 1} of ${document.history.length}`
+                ? `${document.state.width} × ${document.state.height} px · ${busy ? 'Saving changes…' : 'All changes saved on this computer'}`
                 : capabilities && !capabilities.installed
                   ? 'PhotoCraft is not installed'
                   : 'Open a photo or document to begin'}
@@ -393,21 +445,25 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
           </select>
         </div>
         <div className="pc-bar-group" onClick={(event) => event.stopPropagation()}>
+          <button className="pc-bar-button" disabled={busy} onClick={closeProject}><FolderOpen size={14} /> Projects</button>
+          <a className="pc-bar-button" aria-disabled={busy} onClick={(event) => { if (busy) event.preventDefault(); }} href={`/api/photocraft/workspaces/${document.id}/project?revision=${document.revision}`}
+            download={`${document.name}.istudio`}>Save project file</a>
+          <button className="pc-bar-button" disabled={busy} onClick={() => void renameProject()}>Rename</button>
           <button
             className="pc-bar-button"
             disabled={busy || !capabilities?.installed}
             onClick={() => uploadInput.current?.click()}
           >
             <FolderOpen size={14} />
-            Open
+            Start from image
           </button>
           <button
             className="pc-bar-button"
             disabled={busy || !document || !capabilities?.installed}
             onClick={() => layerInput.current?.click()}
-            title="Place images above your background as separate layers"
+            title="Keep source images in this project, then choose Place to add them to the canvas"
           >
-            <Plus size={14} /> Add images
+            <Plus size={14} /> Import images
           </button>
           <button className="pc-bar-button" onClick={() => setLibrary(!library)} aria-pressed={library}>
             <Images size={14} />
@@ -417,7 +473,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
             <button
               className="pc-bar-button"
               disabled={busy || !capabilities?.installed}
-              onClick={() => setMenu(menu === 'new' ? '' : 'new')}
+              onClick={() => setNewProject(true)}
             >
               <Plus size={14} />
               New
@@ -462,7 +518,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
                       }}
                     >
                       {item.name}
-                      <small>{new Date(item.updated * 1000).toLocaleString()}</small>
+                      <small>{new Date((item.updated || 0) * 1000).toLocaleString()}</small>
                     </button>
                   ))}
                 </div>
@@ -553,12 +609,14 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
                 }
                 setPlan(null);
                 setHighlight(null);
-                submit(`/photocraft/workspaces/${document.id}/plan`, {
+                submit(`/photocraft/workspaces/${document.id}/${reviewFirst ? 'plan' : 'assistant'}`, {
                   revision: document.revision,
                   prompt,
                   area: areaEnabled ? { marks } : null,
                 });
               }}
+              reviewFirst={reviewFirst}
+              onReviewFirst={setReviewFirst}
               onApply={(partial) => plan && operation({ plan_id: plan.id, partial })}
               onDiscard={() => setPlan(null)}
               onHighlight={setHighlight}
@@ -579,6 +637,11 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
           )}
         </section>
         <main className="pc-stage">
+          <div className="project-canvas-tools"><span>Select an image, drag to move, or drag a corner to resize.</span>
+            <button className="button" disabled={busy} onClick={() => operation({ action: 'clear' })}>Clear canvas</button>
+            <button className="button" disabled={busy} onClick={() => operation({ action: 'goto', index: 0 })}>Reset to original</button>
+            <button className="button" disabled={busy} onClick={closeProject}>Close project</button>
+          </div>
           <Canvas
             document={document}
             compare={compare}
@@ -591,10 +654,20 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
             brushSize={brushSize}
             onMarks={changeMarks}
             onDrawing={setDrawing}
+            onSelect={(id) => actions.commands([{ command: 'layer.select', params: { layer: id } }], 'Select image')}
+            onTransform={(id, values) => {
+              const layer = document.state.layers.find((item) => item.id === id);
+              const bounds = layer?.bounds;
+              actions.commands([{ command: 'select.deselect', params: {} }, { command: 'edit.transform', params: {
+                layer: id, ...values, ...(bounds ? { rect: [bounds[0], bounds[1], bounds[0]! + bounds[2]!, bounds[1]! + bounds[3]!] } : {}) } }], 'Position image');
+            }}
+            onAssetDrop={(id, x, y) => { const asset = document.assets?.find((item) => item.id === id); if (asset) placeAsset(asset, { x, y }); }}
             onOpen={() => uploadInput.current?.click()}
             onLibrary={() => setLibrary(true)}
-            onDrop={(files) => void uploadFiles(files, !!document)}
+            onDrop={(files) => files.length === 1 && files[0]?.name.endsWith('.istudio')
+              ? void importProject(files[0]) : void uploadFiles(files, !!document)}
           />
+          <ProjectAssets images={document.assets || []} busy={!!busy} onImport={() => layerInput.current?.click()} onPlace={placeAsset} />
           {library && (
             <div className="pc-library">
               <div className="pc-section-head">
@@ -651,6 +724,7 @@ export function PhotoCraft({ images, error, initialSource, consumed }: Props) {
           />
         )}
       </div>
+      </>}
     </div>
   );
 }

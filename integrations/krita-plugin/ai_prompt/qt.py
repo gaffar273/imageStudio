@@ -3,7 +3,7 @@ try:
     from PyQt6 import QtCore, QtGui, QtWidgets
     from PyQt6.QtCore import (QBuffer, QByteArray, QIODevice, QObject, QPointF, QRectF, QSize, Qt, QTimer,
                               pyqtSignal)
-    from PyQt6.QtGui import (QAction, QColor, QFont, QImage, QPainter, QRadialGradient, QTextCursor)
+    from PyQt6.QtGui import (QAction, QColor, QFont, QImage, QImageReader, QPainter, QRadialGradient, QTextCursor)
     from PyQt6.QtWidgets import (QApplication, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu,
                                  QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QTextBrowser, QToolButton,
                                  QVBoxLayout, QWidget)
@@ -12,7 +12,7 @@ except ImportError:  # Krita 5
     from PyQt5 import QtCore, QtGui, QtWidgets
     from PyQt5.QtCore import (QBuffer, QByteArray, QIODevice, QObject, QPointF, QRectF, QSize, Qt, QTimer,
                               pyqtSignal)
-    from PyQt5.QtGui import QColor, QFont, QImage, QPainter, QRadialGradient, QTextCursor
+    from PyQt5.QtGui import QColor, QFont, QImage, QImageReader, QPainter, QRadialGradient, QTextCursor
     from PyQt5.QtWidgets import (QAction, QApplication, QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QMenu,
                                  QPlainTextEdit, QProgressBar, QPushButton, QSizePolicy, QTextBrowser, QToolButton,
                                  QVBoxLayout, QWidget)

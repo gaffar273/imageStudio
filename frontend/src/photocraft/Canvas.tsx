@@ -2,6 +2,8 @@ import { useRef, useState } from 'react';
 import { Layers, Upload } from 'lucide-react';
 import type { AreaMark, AreaTool, CraftDocument, Region } from './types';
 import { AreaSelection } from './AreaSelection';
+import { LayerArrange, type TransformValues } from './LayerArrange';
+import { flatten } from './types';
 
 interface Props {
   document: CraftDocument | null;
@@ -18,6 +20,9 @@ interface Props {
   brushSize: number;
   onMarks: (marks: AreaMark[]) => void;
   onDrawing: (drawing: boolean) => void;
+  onSelect?: (id: number | string) => void;
+  onTransform?: (id: number | string, values: TransformValues) => void;
+  onAssetDrop?: (id: string, x: number, y: number) => void;
 }
 
 /** The document preview with a draggable before/after split and the areas a plan will touch. */
@@ -36,6 +41,7 @@ export function Canvas({
   brushSize,
   onMarks,
   onDrawing,
+  onSelect, onTransform, onAssetDrop,
 }: Props) {
   const [split, setSplit] = useState(50);
   const frame = useRef<HTMLDivElement>(null);
@@ -52,7 +58,12 @@ export function Canvas({
       onDragOver={(event) => event.preventDefault()}
       onDrop={(event) => {
         event.preventDefault();
-        onDrop(Array.from(event.dataTransfer.files));
+        const asset = event.dataTransfer.getData('application/x-image-studio-project-image');
+        const rect = frame.current?.getBoundingClientRect();
+        if (asset && document && rect && onAssetDrop) onAssetDrop(asset,
+          (event.clientX - rect.left) * document.state.width / rect.width,
+          (event.clientY - rect.top) * document.state.height / rect.height);
+        else onDrop(Array.from(event.dataTransfer.files));
       }}
     >
       {document ? (
@@ -124,6 +135,11 @@ export function Canvas({
               onDrawing={onDrawing}
             />
           )}
+          {!compare && !areaTool && onSelect && onTransform && <LayerArrange frame={frame}
+            width={document.state.width} height={document.state.height} layers={flatten(document.state.layers)}
+            active={document.state.activeLayer} revision={document.revision} busy={busy}
+            preview={(id, part) => `/api/photocraft/workspaces/${document.id}/layers/${id}/preview/${document.revision}/${part}`}
+            onSelect={onSelect} onTransform={onTransform} onDrawing={onDrawing} />}
         </div>
       ) : (
         <div className="pc-empty">

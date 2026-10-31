@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QInputDialog,
     QMenu,
     QMessageBox,
     QProgressBar,
@@ -66,6 +67,7 @@ from image_studio.desktop.photocraft_tools import (
     when,
 )
 from image_studio.desktop.theme import label
+from image_studio.desktop.projects import ASSET_MIME, NewProjectDialog, ProjectAssets, ProjectHome
 
 TOOLS = [
     ('assistant', 'Assistant', 'sparkles', AssistantPanel),
@@ -141,6 +143,9 @@ class DocumentCanvas(QWidget):
 
     marks_changed = Signal()
     drawing_changed = Signal(bool)
+    placed = Signal(object, object)
+    selected = Signal(object)
+    asset_dropped = Signal(str, float, float)
 
     def __init__(self):
         super().__init__()
@@ -157,6 +162,10 @@ class DocumentCanvas(QWidget):
         self.draft = None
         self.pointer = None
         self.dragging = False
+        self.layers, self.active_layer = [], None
+        self.arranging, self.transform, self.projections = True, None, {}
+        self.revision = None
+        self.setAcceptDrops(True)
         self.setMouseTracking(True)
         self.setMinimumSize(200, 200)
 
@@ -165,6 +174,46 @@ class DocumentCanvas(QWidget):
             self.document_size = size
             self.set_zoom(self.zoom)
         self.update()
+
+    def set_layers(self, layers, active, revision=None):
+        if self.revision != revision or self.active_layer != active:
+            self.projections = {}
+        self.layers = [layer for layer, _ in flatten(layers)]
+        self.active_layer, self.revision, self.transform = active, revision, None
+        self.update()
+
+    def layer_rect(self, layer=None):
+        layer = layer or next((item for item in self.layers if item['id'] == self.active_layer), None)
+        bounds = (layer or {}).get('bounds')
+        return QRectF(*bounds) if bounds and len(bounds) == 4 and bounds[2] > 0 and bounds[3] > 0 else QRectF()
+
+    def on_screen(self, rect):
+        box = self.target()
+        if box.isEmpty() or not self.document_size:
+            return QRectF()
+        scale = box.width() / self.document_size.width()
+        return QRectF(box.left() + rect.x() * scale, box.top() + rect.y() * scale,
+                      rect.width() * scale, rect.height() * scale)
+
+    def doc_point(self, position):
+        box = self.target()
+        return QPointF((position.x() - box.x()) * self.document_size.width() / box.width(),
+                       (position.y() - box.y()) * self.document_size.height() / box.height())
+
+    def dragEnterEvent(self, event):
+        if self.arranging and event.mimeData().hasFormat(ASSET_MIME) and self.document_size:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        if self.arranging and event.mimeData().hasFormat(ASSET_MIME) and not self.target().isEmpty():
+            point = self.doc_point(event.position())
+            ident = bytes(event.mimeData().data(ASSET_MIME)).decode('ascii', errors='ignore')
+            self.asset_dropped.emit(ident, point.x(), point.y())
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def set_zoom(self, zoom):
         self.zoom = zoom
@@ -218,6 +267,25 @@ class DocumentCanvas(QWidget):
             self.draft = dict(tool=self.tool, size=self.brush, points=[self.at(event.position())])
             self.drawing_changed.emit(True)
             self.update()
+        elif self.arranging:
+            rect = self.layer_rect()
+            screen = self.on_screen(rect)
+            corners = [screen.topLeft(), screen.topRight(), screen.bottomRight(), screen.bottomLeft()]
+            corner = next((i for i, point in enumerate(corners) if (point - event.position()).manhattanLength() < 13), None)
+            if corner is None:
+                hit = next((layer for layer in self.layers if layer.get('visible', True)
+                            and layer.get('kind') in {'Pixel', 'Smart Object', 'Type', 'Fill'} and not layer.get('locked')
+                            and self.on_screen(self.layer_rect(layer)).contains(event.position())), None)
+                if hit is None:
+                    return
+                if self.active_layer != hit['id']:
+                    self.active_layer, self.projections = hit['id'], {}
+                rect = self.layer_rect(hit)
+            self.transform = dict(kind='resize' if corner is not None else 'move', corner=corner,
+                                  start=self.doc_point(event.position()), rect=rect,
+                                  dx=0.0, dy=0.0, scaleX=100.0, scaleY=100.0)
+            self.drawing_changed.emit(True)
+            self.update()
 
     def move_split(self, position):
         box = self.target()
@@ -235,6 +303,21 @@ class DocumentCanvas(QWidget):
             if len(points) < POINT_LIMIT and ((point[0] - last[0]) * box.width()) ** 2 + (
                     (point[1] - last[1]) * box.height()) ** 2 >= 1:
                 points.append(point)
+        elif self.transform is not None and self.transform['kind'] != 'pending':
+            change, point = self.transform, self.doc_point(event.position())
+            rect = change['rect']
+            if change['kind'] == 'move':
+                change['dx'], change['dy'] = point.x() - change['start'].x(), point.y() - change['start'].y()
+            else:
+                corner = change['corner']
+                anchor = [rect.bottomRight(), rect.bottomLeft(), rect.topLeft(), rect.topRight()][corner]
+                scale = max(0.01, min(10.0, max(abs(point.x() - anchor.x()) / rect.width(),
+                                               abs(point.y() - anchor.y()) / rect.height())))
+                left = anchor.x() - rect.width() * scale if corner in (0, 3) else anchor.x()
+                top = anchor.y() - rect.height() * scale if corner in (0, 1) else anchor.y()
+                change.update(dx=left + rect.width() * scale / 2 - rect.center().x(),
+                              dy=top + rect.height() * scale / 2 - rect.center().y(), scaleX=scale * 100, scaleY=scale * 100)
+            self.update()
         if self.tool or self.draft is not None:
             self.update()
 
@@ -244,6 +327,16 @@ class DocumentCanvas(QWidget):
         self.dragging = False
         if self.draft is not None:
             self.finish(True)
+        if self.transform is not None:
+            change = self.transform
+            self.drawing_changed.emit(False)
+            if abs(change['dx']) + abs(change['dy']) + abs(change['scaleX'] - 100) > 0.2:
+                change['kind'] = 'pending'
+                self.placed.emit(self.active_layer, {key: change[key] for key in ('dx', 'dy', 'scaleX', 'scaleY')})
+            else:
+                self.transform = None
+                self.selected.emit(self.active_layer)
+            self.update()
 
     def finish(self, commit):
         mark, self.draft = self.draft, None
@@ -266,7 +359,24 @@ class DocumentCanvas(QWidget):
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(box.adjusted(-1, -1, 1, 1), QColor(0, 0, 0, 28))  # a hairline, so white photos stand out
-        painter.drawPixmap(box, self.current, QRectF(self.current.rect()))
+        if self.transform is not None and all(key in self.projections for key in ('below', 'image', 'above')):
+            painter.save()
+            painter.setClipRect(box)
+            below, image, above = (self.projections[key] for key in ('below', 'image', 'above'))
+            painter.drawPixmap(box, below, QRectF(below.rect()))
+            change = self.transform
+            center = self.on_screen(change['rect']).center()
+            scale = box.width() / self.document_size.width()
+            painter.save()
+            painter.translate(center.x() + change['dx'] * scale, center.y() + change['dy'] * scale)
+            painter.scale(change['scaleX'] / 100, change['scaleY'] / 100)
+            painter.translate(-center.x(), -center.y())
+            painter.drawPixmap(box, image, QRectF(image.rect()))
+            painter.restore()
+            painter.drawPixmap(box, above, QRectF(above.rect()))
+            painter.restore()
+        else:
+            painter.drawPixmap(box, self.current, QRectF(self.current.rect()))
         if self.compare and self.original is not None and not self.original.isNull():
             self.paint_compare(painter, box)
             return
@@ -281,7 +391,22 @@ class DocumentCanvas(QWidget):
             painter.drawEllipse(self.pointer, radius, radius)
             painter.setPen(QPen(QColor('#f3f5f1'), 1.2))
             painter.drawEllipse(self.pointer, radius, radius)
-
+        if self.arranging or self.transform is not None:
+            rect = self.layer_rect()
+            if not rect.isEmpty():
+                if self.transform is not None:
+                    change = self.transform
+                    size = rect.size() * (change['scaleX'] / 100)
+                    center = rect.center() + QPointF(change['dx'], change['dy'])
+                    rect = QRectF(QPointF(), size)
+                    rect.moveCenter(center)
+                frame = self.on_screen(rect)
+                painter.setPen(QPen(QColor(theme.ACCENT), 1.5))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(frame)
+                painter.setBrush(QColor('white'))
+                for point in (frame.topLeft(), frame.topRight(), frame.bottomRight(), frame.bottomLeft()):
+                    painter.drawRect(QRectF(point.x() - 4, point.y() - 4, 8, 8))
     def paint_compare(self, painter, box):
         x = box.left() + box.width() * self.split
         painter.save()
@@ -698,6 +823,16 @@ class PhotoCraftPage(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        self.views = QStackedWidget()
+        layout.addWidget(self.views)
+        self.home = ProjectHome(client, 'PhotoCraft', self.new_project, self.open_project_file,
+                                self.choose_file, self.open_workspace)
+        self.editor = QWidget()
+        self.views.addWidget(self.home)
+        self.views.addWidget(self.editor)
+        layout = QVBoxLayout(self.editor)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.top_bar())
         body = QHBoxLayout()
         body.setContentsMargins(0, 0, 0, 0)
@@ -725,7 +860,9 @@ class PhotoCraftPage(QWidget):
 
         self.setAcceptDrops(True)
         for keys, action in (('Ctrl+Z', self.undo), ('Ctrl+Y', self.redo), ('Ctrl+Shift+Z', self.redo),
-                             ('Ctrl+O', self.choose_file), ('Ctrl+Return', self.plan_shortcut),
+                             ('Ctrl+O', self.open_project_file), ('Ctrl+N', self.new_project),
+                             ('Ctrl+S', self.save_project_file), ('Ctrl+W', self.close_project),
+                             ('Ctrl+Return', self.plan_shortcut),
                              ('Ctrl+Enter', self.plan_shortcut)):
             shortcut = QShortcut(QKeySequence(keys), self, action)
             shortcut.setContext(Qt.ShortcutContext.WidgetWithChildrenShortcut)  # text boxes keep their own
@@ -752,6 +889,9 @@ class PhotoCraftPage(QWidget):
         row = QHBoxLayout(bar)
         row.setContentsMargins(24, 0, 16, 0)
         row.setSpacing(6)
+        self.projects_button = QPushButton(theme.icon('folder-open'), 'Projects')
+        self.projects_button.clicked.connect(self.close_project)
+        row.addWidget(self.projects_button)
         title = QVBoxLayout()
         title.setSpacing(0)
         self.title = ElidedLabel('PhotoCraft', 'heading')
@@ -784,7 +924,7 @@ class PhotoCraftPage(QWidget):
         row.addSpacing(6)
 
         self.open_button = QToolButton()
-        self.open_button.setText('Open')
+        self.open_button.setText('Project')
         self.open_button.setIcon(theme.icon('folder-open'))
         self.open_button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self.open_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
@@ -792,8 +932,8 @@ class PhotoCraftPage(QWidget):
         self.open_menu.aboutToShow.connect(self.fill_open_menu)
         self.open_button.setMenu(self.open_menu)
         row.addWidget(self.open_button)
-        self.add_images = QPushButton(theme.icon('plus'), 'Add images…')
-        self.add_images.setToolTip('Add one or more images as layers above the background.')
+        self.add_images = QPushButton(theme.icon('plus'), 'Import images…')
+        self.add_images.setToolTip('Save source images in this project. Place them on the canvas when you choose.')
         self.add_images.clicked.connect(self.choose_layers)
         row.addWidget(self.add_images)
         self.export_button = QToolButton()
@@ -840,6 +980,18 @@ class PhotoCraftPage(QWidget):
         column = QVBoxLayout(area)
         column.setContentsMargins(16, 14, 16, 12)
         column.setSpacing(10)
+        tools = QHBoxLayout()
+        self.arrange_button = QPushButton('Arrange images')
+        self.arrange_button.setCheckable(True)
+        self.arrange_button.setChecked(True)
+        self.arrange_button.toggled.connect(lambda on: self.set_arranging(on))
+        tools.addWidget(self.arrange_button)
+        self.canvas_hint = label('Select an image, then drag to move or drag a corner to resize.', 'small', wrap=True)
+        tools.addWidget(self.canvas_hint, 1)
+        self.clear_canvas_button = QPushButton(theme.icon('eraser'), 'Clear canvas')
+        self.clear_canvas_button.clicked.connect(lambda: self.operation(dict(action='clear')))
+        tools.addWidget(self.clear_canvas_button)
+        column.addLayout(tools)
         self.picker = self.library_picker()
         column.addWidget(self.picker)
         self.stack = QStackedLayout()
@@ -847,6 +999,9 @@ class PhotoCraftPage(QWidget):
         self.canvas = DocumentCanvas()
         self.canvas.marks_changed.connect(self.marks_changed)
         self.canvas.drawing_changed.connect(lambda _: self.sync())
+        self.canvas.placed.connect(self.position_layer)
+        self.canvas.selected.connect(self.select_canvas_layer)
+        self.canvas.asset_dropped.connect(self.place_asset_at)
         self.scroller = QScrollArea()
         self.scroller.setWidgetResizable(True)
         self.scroller.setWidget(self.canvas)
@@ -855,6 +1010,8 @@ class PhotoCraftPage(QWidget):
         holder = Box()
         holder.setLayout(self.stack)
         column.addWidget(holder, 1)
+        self.assets = ProjectAssets(self.client, self.place_asset, self.choose_layers)
+        column.addWidget(self.assets)
 
         self.status = QFrame()
         self.status.setProperty('card', True)
@@ -1032,6 +1189,8 @@ class PhotoCraftPage(QWidget):
         marking = (self.area and self.tool_stack.currentWidget() is self.assistant and not self.busy
                    and not self.canvas.compare and self.document is not None)
         self.canvas.set_tool(self.canvas.tool_choice if marking else None)
+        self.canvas.arranging = bool(self.arrange_button.isChecked() and not marking and not self.canvas.compare and not self.busy)
+        self.canvas.update()
 
     def marks_changed(self):
         self.plan_data = None
@@ -1062,14 +1221,17 @@ class PhotoCraftPage(QWidget):
         if document is not None:
             state = document['state']
             self.title.setText(readable(document['name']))
-            self.subtitle.setText(f'{state["width"]} × {state["height"]} px · {str(state.get("mode", "")).upper()} '
-                                  f'{state.get("depth", "")}-bit')
+            self.subtitle.setText(f'{state["width"]} × {state["height"]} px · '
+                                  + ('Saving changes…' if self.busy else 'All changes saved on this computer'))
         else:
             self.title.setText('PhotoCraft studio')
             self.subtitle.setText('PhotoCraft is not installed on this PC' if self.capabilities and not installed
                                   else '')
         self.subtitle.setVisible(bool(self.subtitle.text()))  # an empty line would push the title up
         self.stack.setCurrentIndex(1 if document is not None else 0)
+        self.views.setCurrentIndex(1 if document is not None else 0)
+        self.home.note.setText(self.message.text() if self.busy else
+            'Projects are saved automatically. Save a project file for a portable copy or backup.')
         plan = self.plan_data
         self.canvas.regions = (plan.get('regions') or []) if plan and document and plan.get(
             'revision') == document['revision'] else []
@@ -1085,6 +1247,12 @@ class PhotoCraftPage(QWidget):
         self.compare.setEnabled(document is not None)
         self.zoom.setEnabled(document is not None)
         self.open_button.setEnabled(self.ready and not busy)
+        self.projects_button.setEnabled(not busy)
+        self.home.set_ready(self.ready and installed, busy)
+        self.clear_canvas_button.setEnabled(document is not None and self.ready and not busy)
+        self.arrange_button.setEnabled(document is not None and not busy and not self.area)
+        self.assets.setVisible(document is not None)
+        self.assets.show_assets((document or {}).get('assets', []), busy)
         self.add_images.setEnabled(self.ready and installed and document is not None and not busy)
         self.export_button.setVisible(document is not None)
         for button in (self.empty_open, self.empty_library):
@@ -1125,14 +1293,18 @@ class PhotoCraftPage(QWidget):
                     # the first request otherwise); the engine skips it when the GPU is in use.
                     self.client.post('/api/photocraft/warm', {}, None, lambda error: None, timeout=10000)
         if document is None:
+            self.wanted.clear()
             self.canvas.current = self.canvas.original = None
             self.canvas.set_document(None)
+            self.canvas.set_layers([], None)
         else:
             state = document['state']
             self.canvas.document_size = None
             self.canvas.set_document(QSize(state['width'], state['height']))
+            self.canvas.set_layers(state.get('layers', []), state.get('activeLayer'), document['revision'])
             self.fetch(document['preview'], 'current')
             self.fetch(document['original'], 'original')
+            self.fetch_layer_projection()
         self.remember()
         self.render()
 
@@ -1157,10 +1329,56 @@ class PhotoCraftPage(QWidget):
                                                                      error=True), timeout=120000)
 
     def shown(self, role, address):
+        if self.document is None:
+            return
         setattr(self.canvas, role, self.renders[address])
         if role == 'current':
             self.canvas.set_zoom(self.canvas.zoom)
         self.canvas.update()
+
+    def set_arranging(self, on):
+        if on:
+            if self.area:
+                self.set_area(False)
+            self.compare.setChecked(False)
+        self.update_marking()
+
+    def select_canvas_layer(self, ident):
+        if self.document and not self.busy and ident != self.document['state'].get('activeLayer'):
+            self.commands([dict(command='layer.select', params=dict(layer=ident))], 'Select image')
+
+    def position_layer(self, ident, values):
+        if not self.document or self.busy:
+            return
+        layer = next((item for item, _ in flatten(self.document['state']['layers']) if item['id'] == ident), None)
+        bounds = (layer or {}).get('bounds')
+        if not bounds:
+            self.canvas.transform = None
+            return
+        x, y, width, height = bounds
+        params = dict(layer=ident, rect=[x, y, x + width, y + height], **values)
+        self.commands([dict(command='select.deselect', params={}), dict(command='edit.transform', params=params)],
+                      'Position image')
+
+    def fetch_layer_projection(self):
+        document = self.document
+        if not document or len(document['state'].get('layers', [])) < 2:
+            return
+        active = document['state'].get('activeLayer')
+        if not next((layer for layer in document['state']['layers'] if layer['id'] == active and layer.get('bounds')), None):
+            return
+        key = (document['id'], document['revision'], active)
+        for part in ('below', 'image', 'above'):
+            def loaded(data, part=part):
+                current = self.document
+                if current is None or key != (current['id'], current['revision'], self.canvas.active_layer):
+                    return
+                pixmap = QPixmap()
+                if pixmap.loadFromData(data):
+                    self.canvas.projections[part] = pixmap
+                    self.canvas.update()
+            self.client.bytes(f'/api/photocraft/workspaces/{document["id"]}/layers/{active}/preview/{document["revision"]}/{part}',
+                              loaded, None, timeout=120000)
 
     # The engine -----------------------------------------------------------------------
 
@@ -1172,9 +1390,6 @@ class PhotoCraftPage(QWidget):
                         None, timeout=60000)
         self.load_recent()
         saved = self.saved()
-        if self.document is None and saved.get('workspace'):
-            self.client.get(f'/api/photocraft/workspaces/{saved["workspace"]}',
-                            lambda document: self.document is None and self.show_document(document), None)
         if saved.get('job') and self.active is None:
             self.follow(saved['job'], 'resume')
         self.render()
@@ -1191,8 +1406,10 @@ class PhotoCraftPage(QWidget):
             self.show_library()
 
     def load_recent(self):
-        self.client.get('/api/photocraft/workspaces', lambda answer: setattr(self, 'recent', answer.get('workspaces')
-                                                                             or []), None)
+        def loaded(answer):
+            self.recent = answer.get('workspaces') or []
+            self.home.set_projects(self.recent)
+        self.client.get('/api/photocraft/workspaces', loaded, None)
 
     def got_capabilities(self, capabilities):
         self.capabilities = capabilities
@@ -1217,6 +1434,8 @@ class PhotoCraftPage(QWidget):
 
         def refused(error):
             self.pending = False
+            self.canvas.transform = None
+            self.canvas.update()
             self.say(error)
             self.notify(error, error=True)
             self.render()
@@ -1255,6 +1474,7 @@ class PhotoCraftPage(QWidget):
     def accept(self, job):
         """A finished job: its new document version and plan, or why it failed."""
         if job.get('state') == 'error':
+            self.canvas.transform = None
             self.notify(readable(job.get('message')), error=True)
         if job.get('workspace'):
             plan = self.plan_data
@@ -1326,6 +1546,14 @@ class PhotoCraftPage(QWidget):
         self.submit(f'/api/photocraft/workspaces/{self.document["id"]}/plan',
                     dict(revision=self.document['revision'], prompt=prompt, area=area), 'plan')
 
+    def assistant_edit(self, prompt):
+        if self.document is not None:
+            area = dict(marks=[dict(tool=mark['tool'], size=mark['size'], points=[list(p) for p in mark['points']])
+                               for mark in self.canvas.marks]) if self.area else None
+            self.plan_data = None
+            self.submit(f'/api/photocraft/workspaces/{self.document["id"]}/assistant',
+                        dict(revision=self.document['revision'], prompt=prompt, area=area), 'assistant')
+
     def plan_shortcut(self):
         if self.tool_stack.currentWidget() is self.assistant:
             self.assistant.plan()
@@ -1349,20 +1577,104 @@ class PhotoCraftPage(QWidget):
     def fill_open_menu(self):
         menu = self.open_menu
         menu.clear()
-        installed = bool((self.capabilities or {}).get('installed'))
-        action = menu.addAction(theme.icon('upload'), 'A photo or document on this PC…', self.choose_file)
-        action.setShortcut(QKeySequence('Ctrl+O'))
-        menu.addAction(theme.icon('images'), 'A picture from my library', self.open_picker)
-        recent = menu.addMenu(theme.icon('history'), 'Recent documents')
-        for item in self.recent[:12]:
-            recent.addAction(f'{readable(item["name"])}  ·  {when(item.get("updated"))}',
-                             lambda ident=item['id']: self.open_workspace(ident))
-        recent.setEnabled(bool(self.recent))
-        blank = menu.addMenu(theme.icon('plus'), 'New blank canvas')
-        for text, width, height in CANVAS_SIZES:
-            blank.addAction(text, lambda width=width, height=height: self.new_canvas(width, height))
-        for item in menu.actions():
-            item.setEnabled(installed and item.isEnabled())
+        menu.addAction(theme.icon('plus'), 'New project…', self.new_project).setShortcut(QKeySequence('Ctrl+N'))
+        menu.addAction(theme.icon('folder-open'), 'Open project file…', self.open_project_file).setShortcut(QKeySequence('Ctrl+O'))
+        menu.addAction(theme.icon('upload'), 'Start a project from an image…', self.choose_file)
+        menu.addAction(theme.icon('images'), 'Start from a library image…', self.open_picker)
+        menu.addSeparator()
+        active = self.document is not None
+        menu.addAction('Rename project…', self.rename_project).setEnabled(active)
+        menu.addAction('Save project file…', self.save_project_file).setEnabled(active)
+        menu.addAction('Reset to original canvas', lambda: self.operation(dict(action='goto', index=0))).setEnabled(active)
+        menu.addAction('Clear canvas (can undo)', lambda: self.operation(dict(action='clear'))).setEnabled(active)
+        menu.addSeparator()
+        menu.addAction('Close project', self.close_project).setEnabled(active)
+
+    def new_project(self):
+        if self.busy or not self.ready:
+            return
+        dialog = NewProjectDialog(self)
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            self.plan_data = None
+            self.submit('/api/photocraft/workspaces', dialog.values(), 'open')
+
+    def close_project(self):
+        if self.busy:
+            self.notify('Wait for the project to finish saving before closing it.', error=True)
+            return
+        self.plan_data, self.job = None, None
+        self.compare.setChecked(False)
+        self.picker.hide()
+        self.show_document(None)
+        if self.ready:
+            self.load_recent()
+
+    def rename_project(self):
+        if not self.document or self.busy:
+            return
+        name, okay = QInputDialog.getText(self, 'Rename project', 'Project name', text=self.document['name'])
+        if okay and name.strip():
+            self.pending = True
+            self.render()
+            def done(document):
+                self.pending = False
+                self.show_document(document)
+                self.load_recent()
+            def failed(error):
+                self.pending = False
+                self.notify(error, error=True)
+                self.render()
+            self.client.post(f'/api/photocraft/workspaces/{self.document["id"]}/rename', dict(name=name.strip()), done, failed)
+
+    def save_project_file(self):
+        if self.document is not None and not self.busy:
+            document = self.document
+            save_to(self, self.client, self.notify,
+                    f'/api/photocraft/workspaces/{document["id"]}/project?revision={document["revision"]}',
+                    document['name'], '.istudio', 'Save portable project')
+
+    def open_project_file(self):
+        if self.busy or not self.ready:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, 'Open an Image Studio project', '', 'Image Studio project (*.istudio)')
+        if path:
+            self.open_project_path(path)
+
+    def open_project_path(self, path):
+        path = Path(path)
+        try:
+            if path.suffix.lower() != '.istudio' or not 0 < path.stat().st_size <= 500_000_000:
+                raise ValueError('Choose an Image Studio project under 500 MB.')
+        except (OSError, ValueError) as exc:
+            self.notify(str(exc), error=True)
+            return
+        self.pending = True
+        self.render()
+        def prepared(data, error):
+            if error is not None:
+                self.pending = False
+                self.notify(str(error), error=True)
+                self.render()
+                return
+            def started(job):
+                self.pending = False
+                self.follow(job['id'], 'open', job)
+            def failed(error):
+                self.pending = False
+                self.notify(error, error=True)
+                self.render()
+            self.client.upload('/api/photocraft/projects/import', path.name, data, started, failed)
+        in_background(path.read_bytes, prepared)
+
+    def place_asset(self, asset, fit=False, as_canvas=False, x=None, y=None):
+        if self.document and not self.busy:
+            self.submit(f'/api/photocraft/workspaces/{self.document["id"]}/assets/{asset["id"]}/place',
+                         dict(revision=self.document['revision'], fit=fit, as_canvas=as_canvas, x=x, y=y), 'place')
+
+    def place_asset_at(self, ident, x, y):
+        asset = next((a for a in (self.document or {}).get('assets', []) if a['id'] == ident), None)
+        if asset:
+            self.place_asset(asset, x=x, y=y)
 
     def new_canvas(self, width, height):
         self.plan_data = None
@@ -1372,8 +1684,19 @@ class PhotoCraftPage(QWidget):
         if self.busy:
             return
         self.plan_data = None
-        self.client.get(f'/api/photocraft/workspaces/{ident}', self.show_document,
-                        lambda error: self.notify(error, error=True))
+        self.pending = True
+        self.render()
+
+        def opened(document):
+            self.pending = False
+            self.show_document(document)
+
+        def failed(error):
+            self.pending = False
+            self.notify(error, error=True)
+            self.render()
+
+        self.client.get(f'/api/photocraft/workspaces/{ident}', opened, failed)
 
     def choose_file(self):
         if self.busy or not self.ready:
@@ -1387,7 +1710,7 @@ class PhotoCraftPage(QWidget):
     def choose_layers(self):
         if not self.add_images.isEnabled():
             return
-        paths, _ = QFileDialog.getOpenFileNames(self, 'Add images as layers', '',
+        paths, _ = QFileDialog.getOpenFileNames(self, 'Import images into this project', '',
                                                 'Images (*.png *.jpg *.jpeg *.webp *.tif *.tiff *.bmp)')
         if paths:
             self.import_files(paths)
@@ -1413,11 +1736,11 @@ class PhotoCraftPage(QWidget):
             self.notify(str(exc), error=True)
             return
         document = None if new_document else self.document
-        route = (f'/api/photocraft/workspaces/{document["id"]}/layers?revision={document["revision"]}'
+        route = (f'/api/photocraft/workspaces/{document["id"]}/assets?revision={document["revision"]}'
                  if document else '/api/photocraft/workspaces/import')
         self.pending, self.job_kind = True, 'layers' if document else 'open'
         self.plan_data = None
-        self.say('Adding images as layers…')
+        self.say('Saving source images to the project…')
         self.render()
 
         def started(job):
@@ -1500,7 +1823,10 @@ class PhotoCraftPage(QWidget):
     def dropEvent(self, event):
         paths = [url.toLocalFile() for url in event.mimeData().urls() if url.isLocalFile()]
         if paths:
-            self.import_files(paths)
+            if len(paths) == 1 and Path(paths[0]).suffix.lower() == '.istudio':
+                self.open_project_path(paths[0])
+            else:
+                self.import_files(paths)
             event.acceptProposedAction()
 
     def export(self, kind):

@@ -198,13 +198,15 @@ test('PhotoCraft studio: plan, review, apply, tool panels and layout', async ({ 
     localStorage.removeItem('studio:photocraft-job');
   }, ID);
   await page.goto('/#photocraft');
+  await page.getByRole('button', { name: /harbour.png/ }).first().click();
   await expect(page.getByText('harbour.png').first()).toBeVisible();
   await expect(page.getByRole('navigation', { name: 'PhotoCraft tools' }).getByRole('button')).toHaveCount(8);
 
   await page
     .getByLabel('PhotoCraft instructions')
     .fill('Warm the sky a little and add “SUMMER” at the top. Keep the boats unchanged.');
-  await page.getByRole('button', { name: 'Plan', exact: true }).click();
+  await page.getByLabel('Review the plan before applying').check();
+  await page.getByRole('button', { name: 'Plan edit', exact: true }).click();
   await expect(page.getByText('I UNDERSTOOD 2 CHANGES')).toBeVisible();
   await expect(page.locator('.pc-preserve').getByText('Keep the boats unchanged')).toBeVisible();
   await expect(page.locator('.pc-region')).toHaveCount(1);
@@ -266,10 +268,12 @@ test('Marked prompt area: brush, lasso, erase, undo, zoom and plan invalidation'
     localStorage.removeItem('studio:photocraft-job');
   }, ID);
   await page.goto('/#photocraft');
+  await page.getByRole('button', { name: /harbour.png/ }).first().click();
   await expect(page.getByText('harbour.png').first()).toBeVisible();
   await page.getByRole('button', { name: 'Mark an area' }).click();
   await page.getByLabel('PhotoCraft instructions').fill('Make these spots brighter');
-  const planButton = page.getByRole('button', { name: 'Plan', exact: true });
+  await page.getByLabel('Review the plan before applying').check();
+  const planButton = page.getByRole('button', { name: 'Plan edit', exact: true });
   await expect(planButton).toBeDisabled();
   const overlay = page.getByLabel('Mark the edit area on the photo');
   async function stroke(points: number[][]) {

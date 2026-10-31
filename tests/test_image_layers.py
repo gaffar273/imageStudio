@@ -86,7 +86,7 @@ class PhotoCraftLayerTests(unittest.TestCase):
         self.assertEqual(len(reopened['state']['layers']), 3)
 
     def test_fits_large_overlay_and_move_resize_does_not_touch_background(self):
-        result = ws.add_layers(self.document['id'], self.document['revision'], [('wide.png', png((400, 80)))])
+        result = ws.add_layers(self.document['id'], self.document['revision'], [('wide.png', png((400, 80)))], fit=True)
         layer = result['state']['layers'][0]
         self.assertEqual(layer['bounds'], [0, 30, 100, 20])
         moved = ws.apply(
@@ -138,7 +138,8 @@ class PhotoCraftLayerTests(unittest.TestCase):
             )
             self.assertEqual(opened.status_code, 202, opened.text)
             document = opened.json()['workspace']
-            self.assertEqual(len(document['state']['layers']), 2)
+            self.assertEqual(len(document['state']['layers']), 1)
+            self.assertEqual(len(document['assets']), 2)
             result = client.post(
                 f'/api/photocraft/workspaces/{document["id"]}/layers',
                 params={'revision': document['revision']},
@@ -146,7 +147,8 @@ class PhotoCraftLayerTests(unittest.TestCase):
             )
             self.assertEqual(result.status_code, 202, result.text)
             self.assertEqual(result.json()['workspace']['id'], document['id'])
-            self.assertEqual(len(result.json()['workspace']['state']['layers']), 3)
+            self.assertEqual(len(result.json()['workspace']['state']['layers']), 2)
+            self.assertEqual(len(result.json()['workspace']['assets']), 3)
             stale = client.post(
                 f'/api/photocraft/workspaces/{document["id"]}/layers',
                 params={'revision': document['revision']},
@@ -239,7 +241,7 @@ class DesktopLayerTests(unittest.TestCase):
                 page.dropEvent(event)
                 self.assertEqual(
                     upload.call_args.args[0],
-                    f'/api/photocraft/workspaces/{document["id"]}/layers?revision={document["revision"]}',
+                    f'/api/photocraft/workspaces/{document["id"]}/assets?revision={document["revision"]}',
                 )
                 self.assertEqual(
                     [file[0] for file in upload.call_args.args[1]], ['foreground.png', 'logo.png']
@@ -259,9 +261,11 @@ class DesktopLayerTests(unittest.TestCase):
         page.poller.stop()
         page.ready, page.lost, page.sending = True, False, False
         page.configured(dict(CONFIG, krita=True))
+        project = dict(id='b' * 32, name='Layer project', assets=[])
+        page.project, page.home_mode = project, False
         with patch.object(page.client, 'bytes'):
             page.got_state(
-                dict(connected=True, state=KRITA_DOCUMENT, events=[], preview=False, preview_version=0)
+                dict(connected=True, state=KRITA_DOCUMENT, project=project, events=[], preview=False, preview_version=0)
             )
         self.assertTrue(page.add_images.isEnabled())
         with tempfile.TemporaryDirectory() as folder:
@@ -276,7 +280,7 @@ class DesktopLayerTests(unittest.TestCase):
             ):
                 self.assertTrue(page.take(mime))
                 replace.assert_not_called()
-                self.assertEqual(upload.call_args.args[0], '/api/krita/layers')
+                self.assertEqual(upload.call_args.args[0], f'/api/krita/projects/{project["id"]}/assets')
                 self.assertEqual(
                     [file[0] for file in upload.call_args.args[1]], ['foreground.png', 'logo.png']
                 )
@@ -321,7 +325,7 @@ class KritaPlacementTests(unittest.TestCase):
         qt = ModuleType('studio_test_krita.qt')
         for name in ['QByteArray', 'QPointF', 'Qt']:
             setattr(qt, name, getattr(QtCore, name))
-        for name in ['QColor', 'QImage', 'QPainter', 'QRadialGradient']:
+        for name in ['QColor', 'QImage', 'QImageReader', 'QPainter', 'QRadialGradient']:
             setattr(qt, name, getattr(QtGui, name))
         qt.ARGB32 = QtGui.QImage.Format.Format_ARGB32
         qt.GRAY8 = QtGui.QImage.Format.Format_Grayscale8
@@ -356,7 +360,7 @@ class KritaPlacementTests(unittest.TestCase):
                 patch.object(ops, 'settle'),
             ):
                 added = ops.place_images(
-                    doc, [dict(path=str(wide), name='Wide'), dict(path=str(logo), name='Logo')]
+                    doc, [dict(path=str(wide), name='Wide'), dict(path=str(logo), name='Logo')], fit=True
                 )
                 self.assertIs(children[0], background)
                 self.assertEqual([node.name for node in children[1:]], ['Wide', 'Logo'])
@@ -373,3 +377,12 @@ class KritaPlacementTests(unittest.TestCase):
                         doc, [dict(path=str(logo), name='Valid'), dict(path=str(invalid), name='Bad')]
                     )
                 self.assertEqual(len(children), 3)
+                original = ops.place_images(doc, [dict(path=str(wide), name='Original size')])[0]
+                self.assertEqual(original.image.width(), 400)
+                rotated = Path(folder) / 'phone.jpg'
+                photo = Image.new('RGB', (11, 7), 'red')
+                exif = photo.getexif()
+                exif[274] = 6
+                photo.save(rotated, exif=exif)
+                oriented = ops.place_images(doc, [dict(path=str(rotated), name='Phone photo')])[0]
+                self.assertEqual((oriented.image.width(), oriented.image.height()), (7, 11))

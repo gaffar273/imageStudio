@@ -1,5 +1,17 @@
 import { test, expect } from '@playwright/test';
 
+test.beforeEach(async ({ page }) => {
+  // UI checks do not require downloaded models and never submit an unmocked render.
+  await page.route('**/api/config', async (route) => {
+    const response = await route.fetch();
+    const config = await response.json();
+    config.local_models = true;
+    config.editing = true;
+    config.models = config.models.map((model: object) => ({ ...model, ready: true }));
+    return route.fulfill({ json: config });
+  });
+});
+
 test('desktop studio, navigation, favorites, saved settings and edit handoff', async ({ page }) => {
   // Keep preferences isolated and use a generated image for the reuse-settings check.
   let favorites: string[] = [];
@@ -21,7 +33,7 @@ test('desktop studio, navigation, favorites, saved settings and edit handoff', a
   });
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
-  await page.goto('/');
+  await page.goto('/#create');
   await expect(page.getByRole('button', { name: 'Generate image', exact: false })).toBeVisible();
   await expect(page.locator('.image-card').first()).toBeVisible();
   await page.screenshot({ path: '../docs/screenshots/react-studio-desktop.png', fullPage: true });
@@ -53,7 +65,7 @@ test('desktop studio, navigation, favorites, saved settings and edit handoff', a
   await page.getByRole('button', { name: 'Studio settings', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Generation models' })).toBeVisible();
   await page.getByRole('button', { name: 'Krita canvas', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Open Krita', exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: /Open Krita/ })).toBeVisible();
   await page.getByRole('button', { name: 'How to use Image Studio' }).click();
   await expect(page.getByRole('dialog', { name: 'Getting started' })).toBeVisible();
   await page.keyboard.press('Escape');
@@ -63,7 +75,7 @@ test('desktop studio, navigation, favorites, saved settings and edit handoff', a
 
 test('mobile layout has no horizontal overflow', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.goto('/');
+  await page.goto('/#create');
   await expect(page.locator('.prompt-panel')).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBeTruthy();
   await page.screenshot({ path: '../docs/screenshots/react-studio-mobile.png', fullPage: true });
@@ -95,7 +107,7 @@ test('browser shows render progress, cancellation, and server errors', async ({ 
     stopped = true;
     return route.fulfill({ json: { state: 'cancelled' } });
   });
-  await page.goto('/');
+  await page.goto('/#create');
   await page.getByRole('textbox', { name: 'Image prompt' }).fill('A small cabin');
   await page.getByRole('button', { name: /Generate image/ }).click();
   await expect(page.getByText('Rendering 2 of 4')).toBeVisible();
@@ -108,10 +120,12 @@ test('browser shows render progress, cancellation, and server errors', async ({ 
   await expect(page.getByRole('alert')).toContainText('The studio is already rendering.');
 });
 
-test('Krita upload, library handoff, instructions and connection states', async ({ page }) => {
+test('Krita project home, canvas capture, instructions and connection states', async ({ page }) => {
   const commands: Record<string, string>[] = [];
   let connected = true;
-  let document: object | null = {
+  let managed = false;
+  const project = { id: 'e'.repeat(32), name: 'Captured canvas', assets: [], width: 1024, height: 1024 };
+  const document = {
     name: 'Untitled',
     width: 1024,
     height: 1024,
@@ -123,43 +137,31 @@ test('Krita upload, library handoff, instructions and connection states', async 
       return route.fulfill({ json: { message: 'Sent to Krita.' } });
     }
     return route.fulfill({
-      json: { connected, state: document, preview: false, preview_version: 0, events: [] },
+      json: { connected, state: document, project: managed ? project : null, preview: false, preview_version: 0, events: [] },
     });
   });
-  await page.goto('/#krita');
-  await expect(page.getByRole('heading', { name: 'Untitled', exact: true })).toBeVisible();
-  await expect(page.getByText('Running locally', { exact: true })).toHaveCount(0);
-  await page.getByLabel('Upload image to Krita').setInputFiles({
-    name: 'test.png',
-    mimeType: 'image/png',
-    buffer: Buffer.from(
-      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j7ioAAAAASUVORK5CYII=',
-      'base64',
-    ),
+  await page.route('**/api/krita/projects**', (route) => {
+    if (route.request().method() === 'GET') return route.fulfill({ json: { projects: [] } });
+    const body = route.request().postDataJSON();
+    expect(body.use_current).toBe(true);
+    managed = true;
+    return route.fulfill({ json: { project, message: 'Project saved.' } });
   });
-  await expect.poll(() => commands.length).toBe(1);
-  expect(commands[0].action).toBe('import');
-  expect(commands[0].image).toMatch(/^data:image\/png;base64,/);
-  await page.getByRole('button', { name: 'From library', exact: true }).click();
-  await expect(page.locator('.krita-library-picker')).toBeVisible();
-  await page.getByRole('textbox', { name: 'Search library images' }).fill('zz-no-matching-images-zz');
-  await expect(page.getByText('No images match your search.')).toBeVisible();
-  await page.getByRole('textbox', { name: 'Search library images' }).fill('');
-  await page.locator('.krita-picker-grid button').first().click();
-  await expect(page.locator('.krita-library-picker')).not.toBeVisible();
-  expect(commands[1].action).toBe('open');
-  expect(commands[1].image).toMatch(/\.png$/);
+  await page.goto('/#krita');
+  await expect(page.getByRole('heading', { name: 'Krita projects', exact: true })).toBeVisible();
+  await expect(page.getByText('Running locally', { exact: true })).toHaveCount(0);
+  page.once('dialog', (dialog) => dialog.accept('Captured canvas'));
+  await page.getByRole('button', { name: 'Save the open Krita canvas as a project' }).click();
+  await expect(page.getByRole('heading', { name: 'Untitled', exact: true })).toBeVisible();
   await page.getByRole('textbox', { name: 'Krita instruction' }).fill('Warm the lighting');
   await page.getByRole('textbox', { name: 'Krita instruction' }).press('Control+Enter');
-  await expect.poll(() => commands.length).toBe(3);
-  expect(commands[2]).toMatchObject({ action: 'prompt', text: 'Warm the lighting' });
+  await expect.poll(() => commands.length).toBe(1);
+  expect(commands[0]).toMatchObject({ action: 'prompt', text: 'Warm the lighting' });
   await expect(page.getByRole('textbox', { name: 'Krita instruction' })).toBeEmpty();
   await page.screenshot({ path: '../docs/screenshots/krita-workspace-desktop.png', fullPage: true });
-  document = null;
-  await expect(page.getByRole('heading', { name: 'Start with an image' })).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Save to library', exact: true })).toBeDisabled();
   connected = false;
   await expect(page.getByText('Open Krita to connect', { exact: true })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Save to library', exact: true })).toBeDisabled();
   await expect(page.getByRole('button', { name: /New blank canvas/ })).toBeDisabled();
   await expect(page.getByRole('button', { name: 'Upload image', exact: true }).first()).toBeEnabled();
   await page.setViewportSize({ width: 390, height: 844 });

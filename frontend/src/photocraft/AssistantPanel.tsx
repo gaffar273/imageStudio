@@ -46,6 +46,8 @@ interface Props {
   brain: boolean;
   plan: Plan | null;
   onPlan: (prompt: string) => void;
+  reviewFirst?: boolean;
+  onReviewFirst?: (value: boolean) => void;
   onApply: (partial: boolean) => void;
   onDiscard: () => void;
   onHighlight: (requirement: number | null) => void;
@@ -133,6 +135,7 @@ export function AssistantPanel({
   brain,
   plan,
   onPlan,
+  reviewFirst = false, onReviewFirst,
   onApply,
   onDiscard,
   onHighlight,
@@ -262,10 +265,12 @@ export function AssistantPanel({
             onClick={() => onPlan(prompt)}
           >
             {busy ? <LoaderCircle size={15} className="spin" /> : <Send size={15} />}
-            Plan
+            {reviewFirst ? 'Plan edit' : 'Apply edit'}
           </button>
         </span>
       </label>
+      {onReviewFirst && <label className="pc-check"><input type="checkbox" checked={reviewFirst}
+        onChange={(event) => onReviewFirst(event.target.checked)} />Review the plan before applying</label>}
       {!plan && (
         <div className="pc-examples">
           <span className="eyebrow">TRY</span>

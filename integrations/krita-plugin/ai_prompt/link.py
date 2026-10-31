@@ -8,6 +8,7 @@ from . import ops
 from .client import Poller, log_error, sender
 from .qt import QTimer, encode, raw_bytes
 from .runner import Controller, b64, save_to_library
+from .projects import Manager
 
 PREVIEW = 1280          # longest side of the picture sent to the browser
 _controller = None
@@ -28,6 +29,7 @@ class LinkExtension(Extension):
         self.last_state = None
         self.last_look = None
         self.viewer = False
+        self.projects = Manager(self, lambda event: controller().publish(event), lambda: controller().run is not None)
 
     def setup(self):
         global extension
@@ -73,6 +75,7 @@ class LinkExtension(Extension):
 
     def publish(self, force=False):
         """Send what is open when it changes, and a preview while the browser watches."""
+        self.projects.auto_save()
         if not self.poller or not self.poller.connected:
             return
         try:
@@ -83,7 +86,10 @@ class LinkExtension(Extension):
     def send_state(self, force):
         doc = ops.document()
         state = ops.state(doc)
-        body = {}
+        if state is not None:
+            path = os.path.abspath(doc.fileName()) if doc.fileName() else ''
+            state['save_error'] = self.projects.errors.get(path)
+        body = {'capabilities': {'projects': True, 'image_layers': True}}
         if force or state != self.last_state:
             body['state'] = state
             self.last_state = state
@@ -103,6 +109,8 @@ class LinkExtension(Extension):
             try:
                 if kind == 'prompt':
                     controller().submit(command.get('text', ''), source='browser')
+                elif kind and kind.startswith('project_'):
+                    self.projects.handle(command)
                 elif kind == 'open':
                     self.open(command['path'])
                 elif kind == 'place':
@@ -132,21 +140,25 @@ class LinkExtension(Extension):
             except Exception as exc:  # Reported to the browser instead of breaking the link.
                 log_error(f'command {kind}')
                 controller().publish(dict(run=command.get('id'), kind='failed', text=f'{kind}: {exc}'))
-            self.publish(force=True)
+            if not (kind and kind.startswith('project_')):
+                self.publish(force=True)
 
-    def open(self, path):
+    def open(self, path, normalize=True):
         app = Krita.instance()
         if not os.path.exists(path):
             raise ops.StepError(f'{path} does not exist.')
         doc = app.openDocument(path)
+        if doc is None:
+            raise ops.StepError('Krita could not open this document.')
         window = app.activeWindow() or (app.windows()[0] if app.windows() else None)
         if window is None:
             window = app.openWindow()
             window.qwindow().show()
         window.addView(doc)
         # The AI steps exchange 8-bit RGB pictures.
-        if (doc.colorModel(), doc.colorDepth()) != ('RGBA', 'U8'):
+        if normalize and (doc.colorModel(), doc.colorDepth()) != ('RGBA', 'U8'):
             doc.setColorSpace(*ops.RGB8)
         window.qwindow().raise_()
         window.qwindow().activateWindow()
         controller().history = []
+        return doc

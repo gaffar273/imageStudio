@@ -46,7 +46,8 @@ class Sender:
         while True:
             path, body = self.queue.get()
             # Only the newest state matters; skip older ones still waiting.
-            if path == '/krita/state' and any(item[0] == path for item in list(self.queue.queue)):
+            if path == '/krita/state' and any(item[0] == path and set(body).issubset(item[1])
+                                              for item in list(self.queue.queue)):
                 continue
             try:
                 call(path, body, timeout=15)

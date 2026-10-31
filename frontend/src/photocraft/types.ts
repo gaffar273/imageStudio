@@ -64,6 +64,8 @@ export interface CraftDocument {
   can_redo: boolean;
   desktop?: object;
   state: DocState;
+  assets?: import('./Projects').ProjectImage[];
+  saved?: boolean;
 }
 
 export interface Field {

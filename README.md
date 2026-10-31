@@ -8,7 +8,7 @@ Double-click **Start Image Studio app.bat**. It opens Image Studio as a native Q
 
 - Every screen is native, in a light theme: **Create**, **Edit** and **Library**, the apps **PhotoCraft** and **Krita**, and **Settings** (Providers, Models, Personalization and This PC). Create has the same form as the web version (model, format, photo style, fine-tuning, sketch guide), shows the render's progress with a Stop button, and remembers your last settings. Ctrl + Enter generates. In a picture's details, **Use these settings** loads how it was made back into Create.
 - **Edit image** takes a photo you drop on it, paste (Ctrl + V), choose from a file, or pick from your recent creations; **Edit image** in a picture's details opens it there too. PhotoCraft changes light and color across the whole photo and saves a layered PSD; AI content editing (FLUX.1 Kontext) changes what is in the picture, and can be limited to an area you paint (Ctrl + Z takes back a stroke). Before and After compare the result with the photo it came from, and **Keep editing** carries on from the result. Ctrl + Enter applies the edit.
-- **PhotoCraft studio** is native too, with everything described in [PhotoCraft studio](#photocraft-studio) below: the Assistant (describe an edit, optionally only inside an area you mark with a brush or lasso, review the plan, apply it and see the result check), the Adjust, Looks, Crop, Select, Text, Filters and All tools panels, layers and history, Compare (drag the split), zoom, and Export to a file you choose. **Open** opens a photo or layered document from the PC (or drop one on the screen), a picture from your library (a PhotoCraft edit opens with its layers), a recent document, or a new blank canvas. **Open in PhotoCraft** on Edit brings the photo on screen along. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter plans, Ctrl + O opens. In a narrow window the tool panel and the layers take turns (the layers button switches).
+- **PhotoCraft studio** opens on your project home. Create a named project or resume saved work, import source images, then explicitly place and arrange them. The Assistant applies a described edit in one action; **Review the plan before applying** is optional. It also has Adjust, Looks, Crop, Select, Text, Filters, All tools, layers and history, Compare, zoom and layered exports. Ctrl + Z / Ctrl + Y undo and redo (while marking an area, Ctrl + Z takes back a mark), Ctrl + Enter runs the Assistant, Ctrl + N creates a project, Ctrl + O opens a project file and Ctrl + S saves a portable copy. In a narrow window the tool panel and the layers take turns.
 - **Settings → Providers** connects cloud services with your own API key: OpenAI, Google Gemini, fal.ai and Replicate create pictures (their models appear in Create's model list, under "Cloud"), OpenAI, Gemini and fal.ai edit photos (in Edit's tool list), and Anthropic, OpenRouter, Ollama, LM Studio or any OpenAI-compatible server can run the editing assistant that plans PhotoCraft edits. **Test connection** checks the key and lists the models it can reach; model names are editable, since providers rename them. Keys are stored in `credentials.json` next to the settings, encrypted for your Windows account (DPAPI; elsewhere readable by you only), never in `settings.json`, and an environment variable such as `OPENAI_API_KEY` takes priority. Cloud pictures are saved to the library like local ones.
 - **Settings → This PC** shows which graphics card will be used, whether the local models will run on it, the engine's state, and the models and library folders.
 - **Krita canvas** opens a picture in Krita (from a file, a drop, Ctrl + V or your library) or a blank canvas, shows Krita's live canvas, layers and activity, and sends typed edits to it (Ctrl + Enter), with Undo, Stop and Save to library. Krita is found as the portable copy in the models folder, a normal installation, or `IMAGE_STUDIO_KRITA`; without it the screen links to krita.org.
@@ -167,15 +167,26 @@ the tool rail:
 - **Inspector**: layers (visibility, opacity, blend mode, rename, delete, smart filters) and a clickable
   revision history. **Export** gives PSD, native PCraft, TIFF, PNG, JPEG or WebP.
 
-To combine pictures, open your background, then choose **Add images…** in PhotoCraft or
-**Add images as layers…** in Krita. Select several files together, or drop them onto an open canvas.
-Each becomes a named layer above the background, centered and reduced to fit if needed; transparency
-is preserved. Imports accept up to 16 images totaling 100 MB. In PhotoCraft, select a layer and use
-**Move / resize…** in the Inspector to position it; the whole import can be undone, and PSD/PCraft
-exports keep the layers. In Krita, move and resize the imported layers with Krita's tools. **Open**
-still starts a separate document. PhotoCraft can also open several files together, using the first
-as the background. After updating an older installation, close Krita and reopen it from Image Studio
-so its AI panel receives the new layer-import command.
+Both **PhotoCraft and Krita** have a project home, named projects, New/Open/Close controls and a
+**Project images** bin. Start with a blank canvas or an image. **Import images** saves originals in
+the bin without changing the canvas. Import up to 16 images totaling 100 MB at a time. Then choose
+**Place at original size**, explicitly **Fit inside canvas**, or **Use as new canvas**. You can also
+drag an image from the bin onto the canvas. Placement creates a separate layer with transparency;
+select an image and drag to move it or drag a corner to resize it.
+
+**Clear canvas** gives you a fresh canvas while retaining your source images. PhotoCraft can undo
+the clear; Krita saves a native checkpoint and offers **Restore previous canvas**. **New project**
+starts a separate project. **Close project / Projects** returns to the home, where your previous
+work remains available. PhotoCraft stores revisions after each edit; Krita saves native `.kra`
+documents after project actions and autosaves modified managed documents every five seconds.
+Krita save errors stay visible and a failed save does not close the document. Native layers, masks
+and document color depth remain editable. Save a portable **`.istudio` project file** to keep the
+document, source images and revision/checkpoint history together for backup or another computer.
+Image exports are separate from project files.
+
+Existing PhotoCraft cache workspaces migrate to the durable project folder on first open, keeping
+the old copy. After updating, close Krita and reopen it from Image Studio once so it loads the new
+project plugin. You can capture an already-open Krita canvas with **Save the open canvas as a project**.
 
 Every change lands on its own named layer or smart filter, and the original pixels are never
 overwritten. Small blemishes are removed with content-aware fill. Larger objects, and requests for new

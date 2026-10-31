@@ -365,12 +365,16 @@ class AssistantPanel(Panel):
         foot = QHBoxLayout()
         self.planner = label('', 'small', wrap=True)  # a long model name must not widen the panel
         foot.addWidget(self.planner, 1)
-        self.plan_button = QPushButton(theme.icon('send', theme.ON_ACCENT), 'Plan')
+        self.plan_button = QPushButton(theme.icon('send', theme.ON_ACCENT), 'Apply edit')
         self.plan_button.setToolTip('Ctrl + Enter')
         self.plan_button.setProperty('kind', 'primary')
         self.plan_button.clicked.connect(self.plan)
         foot.addWidget(self.plan_button)
         self.column.addLayout(foot)
+        self.review_first = QCheckBox('Review the plan before applying')
+        self.review_first.setToolTip('Leave off to describe an edit and apply it in one action. Questions still ask for your choice.')
+        self.review_first.toggled.connect(lambda checked: self.plan_button.setText('Plan edit' if checked else 'Apply edit'))
+        self.column.addWidget(self.review_first)
 
         self.examples = Box()
         examples = Flow()
@@ -416,7 +420,10 @@ class AssistantPanel(Panel):
 
     def plan(self):
         if self.can_plan():
-            self.studio.plan(self.prompt.toPlainText())
+            if self.review_first.isChecked():
+                self.studio.plan(self.prompt.toPlainText())
+            else:
+                self.studio.assistant_edit(self.prompt.toPlainText())
 
     def sync(self):
         super().sync()
@@ -448,7 +455,9 @@ class AssistantPanel(Panel):
                              'Planner not installed' if local else f'{name} is not reachable')
         self.planner.setToolTip(f'{name} · change it in Settings → Providers')
         self.plan_button.setEnabled(self.can_plan())
-        self.plan_button.setText('Planning…' if studio.busy and studio.job_kind == 'plan' else 'Plan')
+        self.review_first.setEnabled(free)
+        self.plan_button.setText('Working…' if studio.busy and studio.job_kind in {'plan', 'assistant'} else (
+            'Plan edit' if self.review_first.isChecked() else 'Apply edit'))
         # Examples help with a fresh photo; after an edit its result and Less / More come first.
         self.examples.setVisible(studio.plan_data is None and not (studio.document and studio.document['cursor'] > 0))
         document = studio.document

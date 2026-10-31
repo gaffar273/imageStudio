@@ -62,7 +62,7 @@ def submit(run):
 
 @router.get('/health')
 def health():
-    return dict(ok=True, title='Local Image Studio', version='2.0.1')
+    return dict(ok=True, title='Local Image Studio', version='2.0.2')
 
 
 @router.get('/config')
@@ -390,13 +390,16 @@ def personal_lora(request: PersonalLoraRequest):
 
 @router.get('/krita')
 def krita():
+    from image_studio.services import krita_projects
     bridge.link.watching()
     return dict(
         connected=bridge.link.connected,
         state=bridge.link.state,
-        events=list(bridge.link.events)[-30:],
+        events=[event for event in bridge.link.events if not event.get('silent')][-30:],
         preview_version=bridge.link.preview_version,
         preview=bool(bridge.link.preview),
+        project=krita_projects.current(bridge.link.state),
+        capabilities=bridge.link.capabilities,
     )
 
 

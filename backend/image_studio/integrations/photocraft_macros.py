@@ -235,13 +235,15 @@ def local_filter(engine, folder, params, context):
         for layer in copies:
             if area_of(layer['name']) == area and merge_camera_raw(engine, layer, params.get('params', {}),
                                                                    params['label']):
-                engine.call('engine.execute', {'command': 'select.deselect', 'params': {}})
+                if inspect(engine).get('hasSelection'):
+                    ex(engine, 'select.deselect')
                 return {'layer': layer['id'], 'merged': True}
     copy = fresh_copy(engine, state, photo, copies)
     ex(engine, 'layer.select', {'layer': copy})
     ex(engine, 'layer.layerMask.revealSelection')
     ex(engine, 'layer.renameLayer', {'layer': copy, 'name': params['label'][:80]})
-    ex(engine, 'select.deselect')
+    if inspect(engine).get('hasSelection'):
+        ex(engine, 'select.deselect')
     ex(engine, params['command'], params.get('params', {}))
     if photo.get('hasMask') and any(layer['name'] == 'Backdrop' for layer in state['layers']):
         ex(engine, 'layer.setProps', {'layer': copy, 'clipped': True})

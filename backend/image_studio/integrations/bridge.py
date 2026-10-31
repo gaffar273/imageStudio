@@ -89,6 +89,7 @@ class Link:
         self.krita_seen = 0.0
         self.viewer_seen = 0.0
         self.state = None
+        self.capabilities = {}
         self.preview = None  # JPEG bytes of the open picture
         self.version = 0  # bumped whenever state, preview or events change
         self.preview_version = 0  # bumped when the preview changes
@@ -130,8 +131,10 @@ class Link:
     def viewer(self):
         return time.monotonic() - self.viewer_seen < self.VIEWER
 
-    def update(self, state=_UNCHANGED, preview=None):
+    def update(self, state=_UNCHANGED, preview=None, capabilities=None):
         with self.changed:
+            if capabilities is not None:
+                self.capabilities = capabilities
             if state is not _UNCHANGED:
                 self.state = state
                 if state is None:
@@ -147,6 +150,7 @@ class Link:
         with self.changed:
             self.events.append(item)
             self.version += 1
+            self.changed.notify_all()
 
     def run_events(self, run=None):
         """Events of one run (the latest when `run` is None), oldest first."""
@@ -218,7 +222,8 @@ def start(handlers, stop):
                 return self.reply(400, dict(error='The request is not valid JSON.'))
             if self.path == '/krita/state':
                 preview = request.get('preview')
-                link.update(request.get('state', _UNCHANGED), base64.b64decode(preview) if preview else None)
+                link.update(request.get('state', _UNCHANGED), base64.b64decode(preview) if preview else None,
+                            request.get('capabilities'))
                 return self.reply(200, dict(ok=True, viewer=link.viewer))
             if self.path == '/krita/event':
                 link.event(request)
