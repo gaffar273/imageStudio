@@ -134,9 +134,14 @@ def in_background(work, done):
 
     def run():
         try:
-            relay.finished.emit(work(), None)
+            result, error = work(), None
         except Exception as exc:  # noqa: BLE001 - reported to the caller, never lost in a thread
-            relay.finished.emit(None, exc)
+            result, error = None, exc
+        try:
+            relay.finished.emit(result, error)
+        except RuntimeError:
+            # Qt may already have shut down while a network or hardware check was finishing.
+            _running.discard(relay)
 
     threading.Thread(target=run, daemon=True).start()
 

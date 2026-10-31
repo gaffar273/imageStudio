@@ -81,13 +81,13 @@ function load(): Promise<Release> {
 export function useRelease(): Release {
   const [release, setRelease] = useState<Release>(() => cached() ?? { state: 'loading' })
   useEffect(() => {
-    if (release.state !== 'loading') return
     let live = true
-    load().then((r) => live && setRelease(r))
+    // Cached data paints immediately, then refreshes so a just-published installer is picked up.
+    load().then((r) => live && setRelease((previous) => r.state === 'unknown' && previous.state === 'ready' ? previous : r))
     return () => {
       live = false
     }
-  }, [release.state])
+  }, [])
   return release
 }
 

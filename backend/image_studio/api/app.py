@@ -13,6 +13,7 @@ from image_studio.services import workflows, assistant
 from image_studio.integrations import bridge
 from image_studio.core.engine import CLOUD_ONLY, explain
 from image_studio.services.runtime import render_session
+from image_studio.core.version import current
 
 
 def editor_handler(name):
@@ -46,7 +47,7 @@ async def lifespan(app):
     server.server_close()
 
 
-app = FastAPI(title='Local Image Studio', version='2.0.2', lifespan=lifespan)
+app = FastAPI(title='Local Image Studio', version=current(), lifespan=lifespan)
 app.include_router(krita_projects_router)
 
 

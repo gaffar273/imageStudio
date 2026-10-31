@@ -35,6 +35,7 @@ from image_studio.desktop.providers_page import ProvidersPage
 from image_studio.desktop.settings_page import SettingsPage
 from image_studio.desktop.system_page import SystemPage
 from image_studio.desktop.theme import label
+from image_studio.desktop.updates import UpdateController
 
 # (id, label, icon), in the sidebar's three groups
 SCREENS = [
@@ -66,6 +67,7 @@ class MainWindow(QMainWindow):
         self.engine = Engine(self.client, self)
         self.engine.changed.connect(self.engine_changed)
         self.job_running = False
+        self.updater = UpdateController(self, lambda: self.settings, self.busy_for_update)
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -78,7 +80,7 @@ class MainWindow(QMainWindow):
         self.toast = Toast(central)
 
         self.library = LibraryPage(self.client, self.notify)
-        self.system = SystemPage(self.client, self.engine, self.notify)
+        self.system = SystemPage(self.client, self.engine, self.notify, self.updater)
         self.providers = ProvidersPage(self.notify, self.providers_changed)
         self.create = CreatePage(
             self.client, self.library, self.notify, lambda: self.settings, lambda: self.navigate('library'),
@@ -278,6 +280,12 @@ class MainWindow(QMainWindow):
     def notify(self, text, error=False):
         self.toast.show_message(text, error)
 
+    def busy_for_update(self):
+        return bool(self.job_running or self.create.busy or self.edit.busy or self.edit.canvas.drawing
+                    or self.photocraft.busy or self.krita.sending
+                    or self.studio_settings.installer.running or self.photocraft.canvas.transform
+                    or self.photocraft.canvas.draft or self.krita.preview.transform)
+
     def engine_changed(self, state, message):
         colors = {'ready': theme.SUCCESS, 'starting': theme.WARN, 'setup': theme.WARN}
         cloud = paths.INSTALLED and engine_env.kind() == 'cloud'  # no PyTorch: cloud providers only
@@ -396,6 +404,7 @@ def build():
 def main():
     app, window = build()
     window.show()
+    window.updater.start()
     window.engine.start()
     sys.exit(app.exec())
 

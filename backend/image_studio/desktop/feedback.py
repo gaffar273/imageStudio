@@ -6,14 +6,13 @@ opens in the browser, where the person sees everything before submitting it, and
 picture only if they choose to.
 """
 
-import json
-import re
 from urllib.parse import urlencode
 
 from PySide6.QtCore import QUrl
 from PySide6.QtGui import QDesktopServices
 
 from image_studio.core import paths
+from image_studio.core.version import current
 
 ISSUES = 'https://github.com/gaffar273/imageStudio/issues/new'
 PUBLIC = 'This opens a public GitHub issue in your browser. You see it before it is sent and can change anything.'
@@ -21,15 +20,7 @@ PUBLIC = 'This opens a public GitHub issue in your browser. You see it before it
 
 def version():
     """'2.0.0' in an installed copy (build.json); '2.0.0 (source)' when run from the repository."""
-    try:
-        return json.loads(paths.BUILD_FILE.read_text(encoding='utf-8'))['version']
-    except (OSError, ValueError, KeyError):
-        pass
-    try:
-        text = (paths.ROOT / 'pyproject.toml').read_text(encoding='utf-8')
-        return re.search(r'^version\s*=\s*"([^"]+)"', text, re.MULTILINE).group(1) + ' (source)'
-    except (OSError, AttributeError):
-        return 'unknown'
+    return current(source_label=True)
 
 
 def footer():

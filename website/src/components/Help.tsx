@@ -17,7 +17,10 @@ const faq: { q: string; a: ReactNode }[] = [
         <a href={links.releases} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
           GitHub Releases
         </a>
-        , and the download buttons on this page always point to the newest one. To get an email when one comes out,
+        , and the download buttons on this page follow the newest release. From version 2.0.3, the desktop app checks
+        at startup and every six hours and shows a <strong>Download update / Later</strong> popup. You can also use{' '}
+        <strong>Settings → This PC → Check for updates</strong>. Choosing Later defers the reminder for one day.
+        If you have an older version, install the latest version once to get these notifications. To get an email,
         watch the repository: <strong>Watch</strong>, then <strong>Custom</strong>, then <strong>Releases</strong>.
       </>
     ),

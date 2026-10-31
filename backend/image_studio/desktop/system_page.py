@@ -21,6 +21,7 @@ from image_studio.desktop import feedback, theme
 from image_studio.desktop.controls import scroll_page
 from image_studio.desktop.engine import in_background
 from image_studio.desktop.theme import label
+from image_studio.desktop.updates import UpdatePanel
 
 TIERS = {
     'great': ('Great for local AI', ''),
@@ -53,13 +54,19 @@ def open_folder(path):
 
 
 class SystemPage(QWidget):
-    def __init__(self, client, engine, notify):
+    def __init__(self, client, engine, notify, updater=None):
         super().__init__()
         self.client, self.engine, self.notify = client, engine, notify
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll, layout = scroll_page('This PC')
         outer.addWidget(scroll)
+
+        if updater is not None:
+            frame, box = card()
+            self.updates = UpdatePanel(updater)
+            box.addWidget(self.updates)
+            layout.addWidget(frame)
 
         frame, box = card()
         top = QHBoxLayout()

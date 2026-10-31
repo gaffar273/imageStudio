@@ -24,6 +24,7 @@ from image_studio.services.runtime import render_session
 from image_studio.services import workflows, library, assistant, search, repair, faces, memory, personal
 from image_studio.services import brain, cloud, segment, image_imports
 from image_studio.core import providers
+from image_studio.core.version import current
 from image_studio.services.jobs import store, BusyError
 from image_studio.integrations import bridge, photocraft
 
@@ -62,7 +63,7 @@ def submit(run):
 
 @router.get('/health')
 def health():
-    return dict(ok=True, title='Local Image Studio', version='2.0.2')
+    return dict(ok=True, title='Local Image Studio', version=current())
 
 
 @router.get('/config')

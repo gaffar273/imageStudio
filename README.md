@@ -23,6 +23,14 @@ Run **ImageStudio-<version>-Setup.exe**. It installs for your user only (no admi
 
 The installer is not code-signed yet, so Windows SmartScreen asks once before it runs (**More info**, then **Run anyway**). Uninstalling removes the app and the engine's libraries. Your models, pictures and settings stay.
 
+From **2.0.3**, the desktop app checks GitHub for a newer stable version at startup and every six hours.
+An update popup offers **Download update**, **Release notes**, and **Later**. Download opens the official
+installer in your browser; close Image Studio and run it when you are ready. Later defers that version's
+reminder for a day. Check manually or turn automatic checks off in **Settings → This PC → App updates**.
+Checks work before the image engine is installed, stay quiet when offline, and defer automatic popups
+while an edit or installation is running or the app is in the background. Microsoft Store builds use
+Store updates. Versions 2.0.2 and earlier need one manual upgrade to receive this feature.
+
 ### Building the installer
 
 ```powershell
