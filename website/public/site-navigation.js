@@ -28,8 +28,8 @@ class AgsNavigation extends HTMLElement {
         <details><summary>Products<span class="chevron" aria-hidden="true"></span></summary>
           <div class="panel"><div class="entries"></div><a class="all" href="/#products">All products</a></div>
         </details>
-        <a class="support" href="/#support">Support</a>
-        <a class="download" href="/#downloads">Downloads</a>
+        <a class="support" href="/support/">Support</a>
+        <a class="download" href="/downloads/">Downloads</a>
       </nav>`
     this.menu = root.querySelector('details')
     catalog.then(products => {

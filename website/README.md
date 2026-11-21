@@ -4,7 +4,9 @@ The AGS Labs product catalog lives at https://agslabs.tech. Each product has its
 
 | Page | URL |
 | --- | --- |
-| Catalog | `/` |
+| Studio homepage | `/` |
+| Downloads | `/downloads/` |
+| Support | `/support/` |
 | Image Studio | `/product/image-studio` |
 | GlideYT | `/product/glideYT` |
 | Image Studio privacy | `/privacy/` |

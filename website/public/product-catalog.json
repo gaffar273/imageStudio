@@ -8,12 +8,14 @@
     "repository": "https://github.com/gaffar273/imageStudio",
     "image": "/media/app-create.webp",
     "alt": "Image Studio’s Create workspace with a generated coastal landscape",
-    "theme": "studio", "walkthrough": "#systematic",
+    "theme": "studio",
+    "walkthrough": "#systematic",
     "features": [
       "Local image generation",
       "Layer-based editing",
       "Searchable library"
-    ]
+    ],
+    "summary": "Turn a sentence into a picture, then edit it layer by layer on your PC."
   },
   {
     "slug": "glideYT",
@@ -24,11 +26,13 @@
     "repository": "https://github.com/gaffar273/GlideYT",
     "image": "/media/glide-remote.png",
     "alt": "GlideYT on Android showing the search, playback and volume controls",
-    "theme": "glide", "walkthrough": "#tour",
+    "theme": "glide",
+    "walkthrough": "#tour",
     "features": [
       "Wi-Fi pairing",
       "YouTube search",
       "Playback remote"
-    ]
+    ],
+    "summary": "Use your Android phone as a YouTube remote for your Windows laptop."
   }
 ]

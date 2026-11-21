@@ -1,9 +1,27 @@
 {
   "redirects": [
-    { "source": "/glideYT", "destination": "/product/glideYT", "permanent": true }
+    {
+      "source": "/glideYT",
+      "destination": "/product/glideYT",
+      "permanent": true
+    }
   ],
   "rewrites": [
-    { "source": "/product/:slug", "destination": "/product/:slug/index.html" },
-    { "source": "/troubleshooting/windows", "destination": "/troubleshooting/windows/index.html" }
+    {
+      "source": "/product/:slug",
+      "destination": "/product/:slug/index.html"
+    },
+    {
+      "source": "/troubleshooting/windows",
+      "destination": "/troubleshooting/windows/index.html"
+    },
+    {
+      "source": "/downloads",
+      "destination": "/downloads/index.html"
+    },
+    {
+      "source": "/support",
+      "destination": "/support/index.html"
+    }
   ]
 }

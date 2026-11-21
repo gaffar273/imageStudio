@@ -3,11 +3,11 @@ import { defineConfig, type Connect } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const productPages = ['product/image-studio', 'product/glideYT']
-const serveProductPage: Connect.NextHandleFunction = (req, _res, next) => {
+const pages = ['product/image-studio', 'product/glideYT', 'downloads', 'support']
+const servePage: Connect.NextHandleFunction = (req, _res, next) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname.replace(/^\/|\/$/g, '')
-  if (productPages.includes(path)) req.url = '/' + path + '/index.html' + url.search
+  if (pages.includes(path)) req.url = '/' + path + '/index.html' + url.search
   next()
 }
 
@@ -16,13 +16,13 @@ export default defineConfig({
     react(),
     tailwindcss(),
     {
-      name: 'product-pages',
-      configureServer(server) { server.middlewares.use(serveProductPage) },
-      configurePreviewServer(server) { server.middlewares.use(serveProductPage) },
+      name: 'site-pages',
+      configureServer(server) { server.middlewares.use(servePage) },
+      configurePreviewServer(server) { server.middlewares.use(servePage) },
     },
   ],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   build: {
-    rolldownOptions: { input: ['index.html', ...productPages.map(path => path + '/index.html')] },
+    rolldownOptions: { input: ['index.html', ...pages.map(path => path + '/index.html')] },
   },
 })

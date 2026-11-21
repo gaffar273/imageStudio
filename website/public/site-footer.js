@@ -3,10 +3,9 @@ const glideRepo = 'https://github.com/gaffar273/GlideYT'
 const views = {
   studio: {
     name:'AGS Labs', description:'Independent software for the devices you use every day.',
-    heading:'Explore the', accent:'product library.',
-    actions:[['Browse products','/#products'],['Downloads','/#downloads']],
-    index:[['Inside the lab','/#studio'],['Products','/#products'],['Downloads','/#downloads'],['Support','/#support']],
-    resources:[['Windows installation help','/troubleshooting/windows/'],['Product guides and support','/#support'],['Image Studio privacy','/privacy/']],
+    heading:'', accent:'', actions:[],
+    index:[['Inside the lab','/#studio'],['Products','/#products'],['Downloads','/downloads/'],['Support','/support/']],
+    resources:[['Windows installation help','/troubleshooting/windows/'],['Image Studio privacy','/privacy/']],
   },
   image: {
     name:'Image Studio', description:'A desktop app for making and editing pictures with models that run on your own graphics card.',
@@ -34,11 +33,12 @@ class AgsFooter extends HTMLElement {
     const root = this.attachShadow({mode:'open'})
     const prints = ['seaside','fox','umbrella','chef','lake','shelter','lighthouse']
     const icon = variant==='image' ? '/image-studio-icon.svg' : variant==='glide' ? '/media/glide-mark.png' : '/labs-icon.svg'
+    const showInvitation = variant === 'image' || variant === 'glide'
     root.innerHTML = `
       <link rel="stylesheet" href="/site-footer.css">
-      <footer><div class="prints" aria-hidden="true">${prints.map((id,i)=>'<img loading="lazy" alt="" style="rotate:'+((i%2?1:-1)*(2+i%3))+'deg" src="/media/gallery-'+id+'.webp">').join('')}</div>
+      <footer>${showInvitation ? `<div class="prints" aria-hidden="true">${prints.map((id,i)=>'<img loading="lazy" alt="" style="rotate:'+((i%2?1:-1)*(2+i%3))+'deg" src="/media/gallery-'+id+'.webp">').join('')}</div>
         <div class="invitation"><h2>${view.heading} <em>${view.accent}</em></h2>
-          <div class="actions"><slot name="actions">${links(view.actions)}</slot></div></div>
+          <div class="actions"><slot name="actions">${links(view.actions)}</slot></div></div>` : ''}
         <div class="columns"><div><div class="identity"><img class="${variant}" src="${icon}" alt="">${view.name}</div><p>${view.description}</p></div>
         <div><h3>${variant==='studio'?'Studio':'On this page'}</h3>${links(view.index)}</div>
         <div><h3>${variant==='studio'?'Resources':'Project'}</h3>${links(view.resources)}</div></div>
