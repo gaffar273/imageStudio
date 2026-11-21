@@ -264,7 +264,7 @@ function FindView() {
   return (
     <div>
       <div className="relative overflow-hidden rounded-[20px] shadow-card" style={{ aspectRatio: '1216 / 832' }}>
-        <img src="media/demo-plan.webp" alt="A grey cat on a red suitcase and a brown dog under a chair" className="h-full w-full object-cover" />
+        <img src="/media/demo-plan.webp" alt="A grey cat on a red suitcase and a brown dog under a chair" className="h-full w-full object-cover" />
         {foreground.map((b, i) => (
           <Box key={i} at={b} className={tones.c1.box} delay={0.15 + i * 0.12} />
         ))}
@@ -363,8 +363,8 @@ function ApplyView() {
               linesStyle={{ width: 2, background: '#fff', boxShadow: '0 0 8px rgba(0,0,0,.2)' }}
             />
           }
-          itemOne={<ReactCompareSliderImage src="media/demo-plan-before.webp" alt="Before the edit" />}
-          itemTwo={<ReactCompareSliderImage src="media/demo-plan-after.webp" alt="After the edit" />}
+          itemOne={<ReactCompareSliderImage src="/media/demo-plan-before.webp" alt="Before the edit" />}
+          itemTwo={<ReactCompareSliderImage src="/media/demo-plan-after.webp" alt="After the edit" />}
         />
         <span className="pointer-events-none absolute bottom-3 left-3 z-10 rounded-full bg-white/90 px-3 py-1 text-[12.5px] font-medium text-ink">Before</span>
         <span className="pointer-events-none absolute right-3 bottom-3 z-10 rounded-full bg-ink/80 px-3 py-1 text-[12.5px] font-medium text-white">After</span>
@@ -400,7 +400,7 @@ function CheckView() {
       <figure>
         <div className="relative overflow-hidden rounded-[20px] shadow-card" style={{ aspectRatio: '1216 / 684' }}>
           <img
-            src="media/demo-plan-changed.webp"
+            src="/media/demo-plan-changed.webp"
             alt="The edited picture with unchanged pixels in grey: the cat, the suitcase and the chair are grey"
             className="h-full w-full object-cover"
           />

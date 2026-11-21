@@ -23,7 +23,7 @@ export function Gallery() {
       aria-label={`Enlarge: ${p.prompt}`}
     >
       <img
-        src={`media/gallery-${p.id}.webp`}
+        src={`/media/gallery-${p.id}.webp`}
         alt={p.prompt}
         loading="lazy"
         decoding="async"
@@ -70,7 +70,7 @@ export function Gallery() {
         plugins={[Captions]}
         captions={{ descriptionTextAlign: 'center' }}
         slides={pictures.map((p) => ({
-          src: `media/gallery-${p.id}.webp`,
+          src: `/media/gallery-${p.id}.webp`,
           width: p.w,
           height: p.h,
           alt: p.prompt,

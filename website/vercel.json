@@ -1,0 +1,9 @@
+{
+  "redirects": [
+    { "source": "/glideYT", "destination": "/product/glideYT", "permanent": true }
+  ],
+  "rewrites": [
+    { "source": "/product/:slug", "destination": "/product/:slug/index.html" },
+    { "source": "/troubleshooting/windows", "destination": "/troubleshooting/windows/index.html" }
+  ]
+}

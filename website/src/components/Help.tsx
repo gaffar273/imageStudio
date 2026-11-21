@@ -29,15 +29,7 @@ const faq: { q: string; a: ReactNode }[] = [
     q: 'Edge says the installer “isn’t commonly downloaded”. Is that expected?',
     a: (
       <>
-        Yes. Microsoft SmartScreen warns about any installer that is new and not code-signed yet, until enough people
-        have downloaded it. In Edge, open the <strong>⋯</strong> menu next to the download, choose <strong>Keep</strong>,
-        then <strong>Show more</strong> and <strong>Keep anyway</strong>. When you run it and Windows says “Windows
-        protected your PC”, choose <strong>More info</strong>, then <strong>Run anyway</strong>. It installs for your
-        user only. You can check the file against the SHA-256 in the{' '}
-        <a href={links.latest} target="_blank" rel="noreferrer" className="text-accent underline-offset-2 hover:underline">
-          release notes
-        </a>
-        .
+        Check the filename and release hash. The <a href="/troubleshooting/windows/" className="text-accent underline">Windows troubleshooting guide</a> covers Edge download warnings, SmartScreen prompts, Smart App Control blocks and Defender detections.
       </>
     ),
   },

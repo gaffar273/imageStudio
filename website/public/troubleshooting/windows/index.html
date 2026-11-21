@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Windows installation troubleshooting | AGS Labs</title>
+  <meta name="description" content="Identify Edge and Windows 11 security warnings, verify your AGS Labs installer and get help.">
+  <link rel="canonical" href="https://agslabs.tech/troubleshooting/windows">
+  <link rel="icon" href="/labs-icon.svg">
+  <style>
+    *{box-sizing:border-box}body{margin:0;background:#f7f6f2;color:#20372d;font:1rem/1.6 system-ui,sans-serif}main,header,footer{width:min(100% - 2.5rem,56rem);margin:auto}header,footer{padding:1.3rem 0;border-bottom:1px solid #cbd3c7}header,nav{display:flex;align-items:center;justify-content:space-between;gap:1rem}header a:first-child{display:flex;gap:.6rem;align-items:center;text-decoration:none;font-weight:700}h1{font:500 clamp(2.7rem,7vw,5rem)/1.02 Georgia,serif;letter-spacing:-.055em;margin:.5em 0 .25em}h2{font-size:1.4rem;letter-spacing:-.03em;margin:0}section{padding:1.65rem 0;border-top:1px solid #cbd3c7}a{color:#17533e;text-underline-offset:.2em}p{max-width:74ch}main>p{margin:0 0 2.5rem}code{display:block;overflow:auto;padding:1rem;border-radius:10px;background:#e5ebe3}footer{border-top:1px solid #cbd3c7;border-bottom:0}header img{width:32px}
+  </style>
+</head>
+<body>
+  <header><a href="/"><img src="/labs-icon.svg" alt="">AGS Labs</a><nav aria-label="Main"><a href="/#products">Products</a><a href="#contact">Contact</a></nav></header>
+  <main><h1>Windows installation troubleshooting</h1><p>Choose the message that matches what you see when downloading or opening an AGS Labs installer on Windows 11.</p>
+    <section><h2>Edge says the file isn’t commonly downloaded</h2><p>Open Downloads in Edge with <kbd>Ctrl</kbd> + <kbd>J</kbd> and read the full message. A new installer can have little download history. Start from the product’s official release page and match the filename and version. When Edge offers <strong>Keep</strong> for an uncommon download, save the file and check its hash before opening it.</p><p><a href="https://github.com/gaffar273/GlideYT/releases/latest">GlideYT release</a> · <a href="https://github.com/gaffar273/imageStudio/releases/latest">Image Studio release</a></p></section>
+    <section><h2>Check the installer you downloaded</h2><p>Open the folder containing the installer, right-click an empty area and choose <strong>Open in Terminal</strong>. In PowerShell, run the command below. For Image Studio, substitute its actual installer filename.</p><code>Get-FileHash -Algorithm SHA256 ".\GlideYT-Setup.exe"</code><p>Compare all 64 characters with the SHA-256 value for that asset on GitHub. A match confirms you received the published file. If they differ, discard the file and download it again from the official release.</p></section>
+    <section><h2>SmartScreen says “Windows protected your PC”</h2><p>Choose <strong>More info</strong> to see the filename and publisher. The current GlideYT Windows installer is unsigned, so Windows can display “Unknown publisher.” If you trust the source, have checked the hash, and Windows offers <strong>Run anyway</strong>, that choice applies to this launch. Managed PCs may require IT approval.</p><p><a href="https://learn.microsoft.com/windows/apps/package-and-deploy/smartscreen-reputation">Microsoft’s guide to SmartScreen reputation</a></p></section>
+    <section><h2>Smart App Control blocked the installer</h2><p>Open <strong>Windows Security → App &amp; browser control → Smart App Control settings</strong> to confirm which protection produced the block. Smart App Control has no per-app exception. Keep it enabled and report the block to AGS Labs with the release version. On a work or school device, contact your administrator for an approved installation.</p><p><a href="https://support.microsoft.com/en-us/windows/security/threat-malware-protection/smart-app-control-frequently-asked-questions">Microsoft’s Smart App Control FAQ</a></p></section>
+    <section><h2>Defender reports a threat, or Edge marks the file unsafe</h2><p>Stop the installation and leave any quarantined file in place. Open <strong>Windows Security → Virus &amp; threat protection → Protection history</strong> for the detection name. Include it and the release URL in your report so we can investigate the specific file.</p></section>
+    <section id="contact"><h2>Contact product support</h2><p>Include the app version, Windows version, exact warning and whether it appeared in Edge, when opening the file, or during setup. Remove personal details from screenshots.</p><p><a href="https://github.com/gaffar273/GlideYT/issues">GlideYT support</a> · <a href="https://github.com/gaffar273/imageStudio/issues">Image Studio support</a></p></section>
+  </main><footer><a href="/#products">Back to all products</a></footer>
+</body></html>

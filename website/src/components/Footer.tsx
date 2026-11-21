@@ -17,7 +17,7 @@ export function Footer() {
           {strip.map((p, i) => (
             <img
               key={p.id}
-              src={`media/gallery-${p.id}.webp`}
+              src={`/media/gallery-${p.id}.webp`}
               alt=""
               loading="lazy"
               style={{ rotate: `${(i % 2 ? 1 : -1) * (2 + (i % 3))}deg` }}

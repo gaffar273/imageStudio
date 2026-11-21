@@ -169,7 +169,7 @@ function Print({
       className={cn('absolute rounded-[6px] bg-white p-2 pb-7 shadow-float', className)}
     >
       <img
-        src={`media/gallery-${picture.id}.webp`}
+        src={`/media/gallery-${picture.id}.webp`}
         alt=""
         className="aspect-square w-full rounded-[3px] object-cover"
         decoding="async"
@@ -285,7 +285,7 @@ function DevelopCard() {
       <div className="relative mt-2.5 aspect-[3/2] overflow-hidden rounded-[22px] bg-[#ece9e2] sm:mt-3">
         <motion.img
           key={picture.id}
-          src={`media/gallery-${picture.id}.webp`}
+          src={`/media/gallery-${picture.id}.webp`}
           alt={picture.prompt}
           style={{ filter, scale }}
           className="absolute inset-0 h-full w-full object-cover"

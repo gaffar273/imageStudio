@@ -1,0 +1,58 @@
+.labs-shell {
+  --forest: #203a32;
+  --border: #d9ddd2;
+  max-width: 1260px;
+  margin: 0 auto;
+  padding: 0 clamp(20px, 5vw, 76px);
+  color: #1c2a24;
+}
+.labs-shell a { text-underline-offset: .23em; }
+.labs-shell a:hover { text-decoration: underline; }
+.labs-header, .labs-footer { display: flex; align-items: center; justify-content: space-between; gap: 1rem; }
+.labs-header { min-height: 78px; border-bottom: 1px solid var(--border); }
+.labs-brand { display: inline-flex; align-items: center; gap: .62rem; font-size: 1.27rem; font-weight: 650; letter-spacing: -.05em; }
+.labs-header nav, .inline-links, .support-links, .download-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 1.35rem; }
+.labs-header nav, .inline-links, .support-links { font-size: .94rem; font-weight: 550; }
+.glide-hero h1 { font-size: clamp(3.2rem,6.9vw,6.6rem); line-height: .96; letter-spacing: -.067em; font-weight: 550; }
+.glide-lead em { font-family: var(--font-serif); font-weight: 400; letter-spacing: -.03em; }
+.glide-copy > p:not(.glide-lead) { max-width: 35ch; color: #45564d; line-height: 1.55; font-size: clamp(1.04rem,1.55vw,1.25rem); }
+.platform { font-size: .88rem; color: #55665c; }
+.labs-support h2, .glide-section h2 { font-size: clamp(2rem,3.1vw,3.2rem); font-weight: 550; line-height: 1.1; letter-spacing: -.055em; }
+.glide-section p, .labs-support p { color: #47564c; line-height: 1.62; }
+.labs-btn { display: inline-flex; align-items: center; justify-content: center; gap: .55rem; background: var(--forest); color: white; min-height: 44px; padding: .65rem 1.15rem; border-radius: 100px; font-size: .94rem; font-weight: 550; }
+.labs-shell .labs-btn:hover { background: #304e42; text-decoration: none; }
+.labs-btn.secondary { color: var(--forest); background: transparent; box-shadow: inset 0 0 0 1px #9aa89e; }
+.labs-shell .labs-btn.secondary:hover { background: #e9ede4; }
+.labs-support { margin: 3.5rem 0; padding: 2.5rem 0; display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1.4rem; border-top: 1px solid var(--border); }
+.labs-support p, .glide-section h2 + p { margin-top: .65rem; }
+.support-links a, .inline-links a, .catalog-back, .steps a, .glide-help p a { text-decoration: underline; }
+.labs-footer { padding: 1.4rem 0; border-top: 1px solid var(--border); font-size: .88rem; color: #48594e; }
+.labs-skip { position: absolute; top: .5rem; left: .5rem; z-index: 10; transform: translateY(-160%); background: white; padding: .65rem; }
+.labs-skip:focus { transform: none; }
+.glide-hero { padding: clamp(2.5rem,5vw,5rem) 0; display: grid; grid-template-columns: 1.25fr 1fr; align-items: center; gap: 4%; }
+.catalog-back { font-size: .9rem; }
+.glide-hero h1 { margin: 1.65rem 0 .5rem; }
+.glide-lead { font-size: clamp(1.8rem,3.6vw,3.4rem); letter-spacing: -.055em; line-height: 1.1; margin-bottom: 1.2rem; }
+.download-actions { margin: 1.75rem 0 1.15rem; gap: .6rem; }
+.inline-links { font-weight: 450; gap: 1rem; }
+.phone-stage { border-radius: 24px; margin: 0; min-height: 350px; height: clamp(350px,38vw,460px); overflow: hidden; display: grid; place-items: center; background: radial-gradient(ellipse at 20% 10%,#fce6cf,transparent 65%),#e5b5ad; }
+.phone-stage img { border: 6px solid #21372e; border-radius: 25px; width: auto; height: 88%; transform: rotate(5deg); box-shadow: 8px 15px 24px #35272036; }
+.glide-section { display: grid; grid-template-columns: 1fr 1.35fr; gap: 2rem; border-top: 1px solid var(--border); padding: clamp(2.5rem,5vw,4.6rem) 0; }
+.steps { counter-reset: setup; }
+.steps li { counter-increment: setup; display: flex; gap: 1rem; margin-bottom: 1.45rem; }
+.steps li::before { content: counter(setup); flex: none; width: 1.8rem; height: 1.8rem; display: grid; place-items: center; border-radius: 50%; background: #e1e9da; color: var(--forest); font-size: .9rem; }
+.steps h3, .glide-help summary { font-size: 1.12rem; font-weight: 600; margin-bottom: .4rem; }
+.glide-help details { border-bottom: 1px solid var(--border); padding: .8rem 0; }
+.glide-help summary { cursor: pointer; }
+.glide-help > p { margin: 1.4rem 0 1rem; }
+@media (max-width: 700px) {
+  .glide-hero, .glide-section { grid-template-columns: 1fr; }
+
+  .labs-header { min-height: 65px; }
+  .labs-header nav { gap: .8rem; font-size: .88rem; }
+
+  .glide-hero { gap: 2.2rem; }
+  .phone-stage { min-height: 0; height: 300px; }
+  .labs-support { margin: 2rem 0; }
+}
+

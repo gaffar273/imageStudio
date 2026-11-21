@@ -28,7 +28,7 @@ export function Nav({ active }: { active: string }) {
             : 'max-w-[1180px] border-transparent bg-transparent',
         )}
       >
-        <a href="#top" aria-label="Image Studio, back to top" className="mr-auto shrink-0">
+        <a href="/#products" aria-label="Back to AGS Labs products" className="mr-auto shrink-0">
           <Logo org={ORG.name} />
         </a>
         <div className="hidden items-center lg:flex">

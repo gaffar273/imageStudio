@@ -116,7 +116,7 @@ export function Tour() {
               </div>
               {/* On small screens each step shows its own screenshot */}
               <AppWindow className="mt-6 lg:hidden">
-                <img src={`media/app-${s.id}.webp`} alt={`The ${s.title} screen`} loading="lazy" className="block w-full" />
+                <img src={`/media/app-${s.id}.webp`} alt={`The ${s.title} screen`} loading="lazy" className="block w-full" />
               </AppWindow>
             </div>
           ))}
@@ -129,7 +129,7 @@ export function Tour() {
                 <AnimatePresence initial={false}>
                   <motion.img
                     key={screens[active].id}
-                    src={`media/app-${screens[active].id}.webp`}
+                    src={`/media/app-${screens[active].id}.webp`}
                     alt={`The ${screens[active].title} screen`}
                     initial={{ opacity: 0, scale: 1.01 }}
                     animate={{ opacity: 1, scale: 1 }}

@@ -198,8 +198,8 @@ function Compare({ demo }: { demo: Demo }) {
             linesStyle={{ width: 2, background: '#fff', boxShadow: '0 0 8px rgba(0,0,0,.2)' }}
           />
         }
-        itemOne={<ReactCompareSliderImage src={`media/demo-${demo.id}-before.webp`} alt="Before the edit" />}
-        itemTwo={<ReactCompareSliderImage src={`media/demo-${demo.id}-after.webp`} alt="After the edit" />}
+        itemOne={<ReactCompareSliderImage src={`/media/demo-${demo.id}-before.webp`} alt="Before the edit" />}
+        itemTwo={<ReactCompareSliderImage src={`/media/demo-${demo.id}-after.webp`} alt="After the edit" />}
       />
       <span className="pointer-events-none absolute top-3 left-3 z-10 rounded-full bg-white/90 px-3 py-1 text-[12.5px] font-medium text-ink backdrop-blur">
         Before

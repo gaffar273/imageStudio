@@ -203,7 +203,7 @@ function LayersVisual() {
             )}
           >
             {i === layers.length - 1 && (
-              <img src="media/demo-plan-after.webp" alt="" className="absolute inset-0 h-full w-full rounded-xl object-cover opacity-90" />
+              <img src="/media/demo-plan-after.webp" alt="" className="absolute inset-0 h-full w-full rounded-xl object-cover opacity-90" />
             )}
             <span className="relative flex items-center gap-1.5 rounded-md bg-white/90 px-2 py-1 text-[11px] font-medium shadow-sm">
               <Eye className="size-3 text-muted" /> {l.name}
