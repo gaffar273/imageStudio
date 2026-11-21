@@ -1,9 +1,19 @@
-:host{position:fixed;z-index:55;inset:14px 12px auto;display:block;pointer-events:none;font:500 15px/1.25 var(--font-sans,system-ui),sans-serif;color:#17171b}
-*{box-sizing:border-box}nav{max-width:1060px;margin:auto;border:1px solid #deddd6;border-radius:100px;background:rgba(255,255,255,.91);box-shadow:0 5px 24px -14px #26283955;backdrop-filter:blur(18px);display:flex;align-items:center;gap:6px;padding:6px 7px 6px 13px;pointer-events:auto}
-a,summary{color:inherit;text-decoration:none;cursor:pointer}a:focus-visible,summary:focus-visible{outline:2px solid #2563eb;outline-offset:2px}
-.brand{display:flex;align-items:center;gap:9px;margin-right:auto;font-size:17px;font-weight:650;letter-spacing:-.045em;white-space:nowrap}.brand img{display:block}
-.pages{display:flex;align-items:center;gap:2px}.pages a,.panel a{display:block;padding:10px 14px;border-radius:22px}.pages a:hover,.panel a:hover,a[aria-current=page]{background:#f0efea}
-details{position:relative}summary{display:flex;align-items:center;justify-content:center;gap:9px;list-style:none;border-radius:25px;min-height:40px;padding:0 17px}summary::-webkit-details-marker{display:none}.downloads summary{background:#151518;color:#fff}.downloads summary span{font:18px/1 sans-serif;transform:translateY(-2px)}
-.panel{position:absolute;right:0;top:calc(100% + 12px);border:1px solid #e4e3dc;padding:6px;border-radius:17px;min-width:205px;background:white;box-shadow:0 18px 48px -18px #20223255}.panel a{border-radius:10px}
-.mobile{display:none}.mobile summary{display:grid;align-content:center;gap:3px;padding:0;width:40px;background:#f1f0eb}.mobile i{height:2px;width:15px;background:currentColor;border-radius:2px}
-@media(max-width:740px){:host{top:9px;inset-inline:8px}.pages{display:none}.mobile{display:block}.downloads .panel{right:-42px}.brand{font-size:16px}}
+:host {
+  position:fixed; z-index:55; inset:14px 12px auto; display:block; pointer-events:none;
+  font:500 15px/1.25 var(--font-sans,system-ui),sans-serif; color:#17171b;
+}
+* { box-sizing:border-box; }
+nav { display:flex; align-items:center; gap:5px; max-width:1120px; margin:auto; padding:6px 7px 6px 13px; pointer-events:auto;
+  background:rgba(255,255,255,.94); backdrop-filter:blur(18px); border:1px solid #dcdcd8; border-radius:40px; box-shadow:0 6px 26px -16px #22243650; }
+a,summary { color:inherit; text-decoration:none; cursor:pointer; }
+a:focus-visible,summary:focus-visible { outline:2px solid #2563eb; outline-offset:2px; }
+.brand,.support,.download,summary { display:inline-flex; align-items:center; justify-content:center; height:40px; line-height:1; border-radius:22px; white-space:nowrap; }
+.brand { margin-right:auto; gap:9px; font-size:18px; font-weight:650; letter-spacing:-.045em; }
+.brand img { display:block; }.support,.download,summary { padding:0 16px; }.download { color:white; background:#151518; }
+.download:hover { background:#333338; }.support:hover,summary:hover,details[open] summary { background:#f0efeb; }
+details { position:relative; }summary { gap:8px; list-style:none; }summary::-webkit-details-marker { display:none; }
+.chevron { width:7px; height:7px; display:block; border:solid currentColor; border-width:0 1.6px 1.6px 0; transform:translateY(-2px) rotate(45deg); }details[open] .chevron { transform:translateY(2px) rotate(225deg); }
+.panel { position:absolute; right:0; top:calc(100% + 12px); padding:6px; min-width:216px; background:white; border:1px solid #dcdcd8; border-radius:17px; box-shadow:0 20px 42px -18px #26263955; }
+.panel a { display:block; padding:10px 13px; border-radius:11px; }.panel small { display:block; margin-top:4px; font-size:12px; color:#61616a; }
+.panel a:hover,.panel a[aria-current=page] { background:#f1f3fa; }.all { font-size:14px; color:#2452ad; }.entries:not(:empty) { border-bottom:1px solid #ecebe6; padding-bottom:4px; margin-bottom:4px; }
+@media(max-width:560px) { :host { inset:8px 6px auto; }.support { display:none; }.brand { font-size:16px; gap:5px; }.brand img { width:27px;height:27px; }.download,summary { padding:0 11px; font-size:14px; }.panel { right:-52px; } }

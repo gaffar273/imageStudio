@@ -1,0 +1,34 @@
+[
+  {
+    "slug": "image-studio",
+    "name": "Image Studio",
+    "platform": "Windows desktop",
+    "category": "Creative software",
+    "description": "Generate a picture from a prompt, then retouch it on real layers. Keep the prompts, models and finished images together on your PC.",
+    "repository": "https://github.com/gaffar273/imageStudio",
+    "image": "/media/app-create.webp",
+    "alt": "Image Studio’s Create workspace with a generated coastal landscape",
+    "theme": "studio", "walkthrough": "#systematic",
+    "features": [
+      "Local image generation",
+      "Layer-based editing",
+      "Searchable library"
+    ]
+  },
+  {
+    "slug": "glideYT",
+    "name": "GlideYT",
+    "platform": "Windows + Android",
+    "category": "Connected devices",
+    "description": "Leave the video on the big screen. Find what to watch, pause playback and skip ahead from your Android phone over home Wi-Fi.",
+    "repository": "https://github.com/gaffar273/GlideYT",
+    "image": "/media/glide-remote.png",
+    "alt": "GlideYT on Android showing the search, playback and volume controls",
+    "theme": "glide", "walkthrough": "#tour",
+    "features": [
+      "Wi-Fi pairing",
+      "YouTube search",
+      "Playback remote"
+    ]
+  }
+]

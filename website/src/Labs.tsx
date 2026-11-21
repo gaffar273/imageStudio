@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react'
+import { createElement, type ReactNode } from 'react'
 import { Em } from './components/ui'
-import { products } from './products'
+
 import './index.css'
 import './labs.css'
 
@@ -19,8 +19,6 @@ export function LandingHero({ label, title, accent, lead, actions, note, childre
   </section>
 }
 
-export function LabsFooter() {
-  return <footer className="landing-footer"><a href="/"><img src="/labs-icon.svg" alt="" width="26" height="26"/> AGS Labs</a>
-    <div>{products.map(p => <a key={p.slug} href={'/product/' + p.slug}>{p.name}</a>)}<a href="/troubleshooting/windows/">Installation help</a></div>
-  </footer>
+export function LabsFooter({variant='studio'}: {variant?: 'studio' | 'glide'}) {
+  return createElement('ags-footer', {variant})
 }

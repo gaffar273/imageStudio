@@ -3,6 +3,7 @@ import { BookOpen, Download, Laptop, MonitorPlay, ScanLine, Search, Smartphone, 
 import { Button, Em, GitHubIcon } from './components/ui'
 import { LandingHero, LabsFooter } from './Labs'
 import { RemoteDemo } from './RemoteDemo'
+import { GlideTour } from './GlideTour'
 import { glideRepository, glideDownloads } from './products'
 
 const steps = [
@@ -26,12 +27,13 @@ function Glide() {
       actions={<><Button variant="primary" size="lg" href={glideDownloads.windows}><Download size={18}/> Download for Windows</Button>
         <Button size="lg" href={glideDownloads.android}><Smartphone size={18}/> Android APK</Button></>}
       note={<><a href="#guide">Setup guide</a><span> · </span><a href={glideRepository + '/releases'}>Release notes</a></>}>
-      <div className="demo-heading"><span>Try the remote</span><p>Press play or scrub the timeline on the phone.</p></div>
+      <div className="demo-heading"><span>Try the remote</span><p>Choose a scene below, then use the phone to play, pause or scrub the laptop preview.</p></div>
       <RemoteDemo/>
     </LandingHero>
     <section className="landing-section"><div className="section-head"><h2>One phone. <Em>One laptop.</Em></h2></div>
       <div className="feature-grid">{controls.map(c=><article key={c.title}><span className="feature-icon"><c.icon/></span><h3>{c.title}</h3><p>{c.text}</p></article>)}</div>
     </section>
+    <GlideTour/>
     <section id="guide" className="tinted-section"><div className="landing-section"><div className="section-head"><BookOpen/><h2>From install <Em>to first play.</Em></h2></div>
       <ol className="guide-grid">{steps.map(([title,body],i)=><li key={title}><span className="step-number">{i+1}</span><h3>{title}</h3><p>{body}</p></li>)}</ol>
     </div></section>
@@ -46,6 +48,6 @@ function Glide() {
       <details><summary>YouTube opens but playback won’t start</summary><p>Click Play on the laptop once so the browser can expose its media controls. For playlist, speed or quality controls while YouTube is in the background, follow the <a href={glideRepository + '#background-controls'}>background controls guide</a>.</p></details>
       <details><summary>Android can’t update my test installation</summary><p>Uninstall the earlier test APK, install the public release, then pair again. Public releases use the AGS Labs signing key.</p></details>
       </div></div></section>
-    </main><LabsFooter/></>
+    </main><LabsFooter variant="glide"/></>
 }
 createRoot(document.getElementById('root')!).render(<Glide />)
