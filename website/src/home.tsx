@@ -28,14 +28,14 @@ function Home() {
     <a className="page-skip" href="#studio">Skip to studio introduction</a>
     <main className="studio-home">
       <header className="studio-cover">
-        <div className="cover-type">
-          <h1>AGS <em>Labs.</em></h1>
-          <div className="cover-intro">
-            <p>An independent software studio for the devices you already own.</p>
-            <a href="#products">Explore our work</a>
+        <img className="cover-art" src="/media/studio-emblem.webp" alt="" width="1536" height="1024" fetchPriority="high" />
+        <div className="cover-inner">
+          <div className="cover-type">
+            <h1>Independent <em>software studio.</em></h1>
+            <p>We’re AGS Labs. We build tools for making pictures on your PC and connecting the screens around you.</p>
+            <a className="cover-action" href="#products">Explore our products</a>
           </div>
         </div>
-        <img className="cover-art" src="/media/studio-workbench.webp" alt="A cobalt-blue workbench with drafting tools, a keyboard and a machined orange dial" width="1536" height="1024" fetchPriority="high" />
       </header>
 
       <div id="studio" className="studio-letter">
