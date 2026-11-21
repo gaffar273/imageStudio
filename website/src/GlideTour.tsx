@@ -4,9 +4,9 @@ import { Em } from './components/ui'
 import './glide-tour.css'
 
 const views = [
-  { name:'Search', icon:Search, title:'Choose the next video on your phone.', body:'Enter a title in Search YouTube. Browsing results leaves the current video playing on the laptop. Tap the result you want to open it there.', region:'search' },
-  { name:'Playback', icon:MonitorPlay, title:'See what is playing across the room.', body:'The remote shows the title, playing state and timeline. Pause for a moment, resume, or skip ten seconds in either direction.', region:'playback' },
-  { name:'Player settings', icon:SlidersHorizontal, title:'Adjust the player from your seat.', body:'Volume, speed and quality controls live below the timeline. For controls in a hidden browser tab, choose Connect background controls on Windows and approve the browser prompt.', region:'settings' },
+  { name:'Search', icon:Search, title:'Choose the next video on your phone.', body:'Search for a title while your video plays. Tap Now playing at the bottom of the results, tap the same video, or use Android Back to return to the player at its current position.', region:'search' },
+  { name:'Playback', icon:MonitorPlay, title:'See what is playing across the room.', body:'Drag the timeline to preview a timestamp. Lift your finger to seek on the laptop, or use the ten-second buttons to skip forward or back.', region:'playback' },
+  { name:'Player settings', icon:SlidersHorizontal, title:'Adjust the player from your seat.', body:'Speed, quality and volume sit below the playback controls. The disconnect button is above Search. For controls in a hidden browser tab, choose Connect background controls on Windows and approve the browser prompt.', region:'settings' },
 ]
 
 export function GlideTour() {
