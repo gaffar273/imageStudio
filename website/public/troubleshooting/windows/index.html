@@ -9,10 +9,12 @@
   <link rel="icon" href="/labs-icon.svg">
   <style>
     *{box-sizing:border-box}body{margin:0;background:#f7f6f2;color:#20372d;font:1rem/1.6 system-ui,sans-serif}main,header,footer{width:min(100% - 2.5rem,56rem);margin:auto}header,footer{padding:1.3rem 0;border-bottom:1px solid #cbd3c7}header,nav{display:flex;align-items:center;justify-content:space-between;gap:1rem}header a:first-child{display:flex;gap:.6rem;align-items:center;text-decoration:none;font-weight:700}h1{font:500 clamp(2.7rem,7vw,5rem)/1.02 Georgia,serif;letter-spacing:-.055em;margin:.5em 0 .25em}h2{font-size:1.4rem;letter-spacing:-.03em;margin:0}section{padding:1.65rem 0;border-top:1px solid #cbd3c7}a{color:#17533e;text-underline-offset:.2em}p{max-width:74ch}main>p{margin:0 0 2.5rem}code{display:block;overflow:auto;padding:1rem;border-radius:10px;background:#e5ebe3}footer{border-top:1px solid #cbd3c7;border-bottom:0}header img{width:32px}
-  </style>
+  body main{padding-top:90px}html{scroll-padding-top:80px}</style>
 </head>
 <body>
-  <header><a href="/"><img src="/labs-icon.svg" alt="">AGS Labs</a><nav aria-label="Main"><a href="/#products">Products</a><a href="#contact">Contact</a></nav></header>
+  <ags-navigation></ags-navigation>
+  <script type="module" src="/site-navigation.js"></script>
+
   <main><h1>Windows installation troubleshooting</h1><p>Choose the message that matches what you see when downloading or opening an AGS Labs installer on Windows 11.</p>
     <section><h2>Edge says the file isn’t commonly downloaded</h2><p>Open Downloads in Edge with <kbd>Ctrl</kbd> + <kbd>J</kbd> and read the full message. A new installer can have little download history. Start from the product’s official release page and match the filename and version. When Edge offers <strong>Keep</strong> for an uncommon download, save the file and check its hash before opening it.</p><p><a href="https://github.com/gaffar273/GlideYT/releases/latest">GlideYT release</a> · <a href="https://github.com/gaffar273/imageStudio/releases/latest">Image Studio release</a></p></section>
     <section><h2>Check the installer you downloaded</h2><p>Open the folder containing the installer, right-click an empty area and choose <strong>Open in Terminal</strong>. In PowerShell, run the command below. For Image Studio, substitute its actual installer filename.</p><code>Get-FileHash -Algorithm SHA256 ".\GlideYT-Setup.exe"</code><p>Compare all 64 characters with the SHA-256 value for that asset on GitHub. A match confirms you received the published file. If they differ, discard the file and download it again from the official release.</p></section>
