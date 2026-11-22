@@ -22,7 +22,7 @@
     "name": "GlideYT",
     "platform": "Windows + Android",
     "category": "Connected devices",
-    "description": "Leave the video on the big screen. Find what to watch, pause playback and skip ahead from your Android phone over home Wi-Fi.",
+    "description": "Leave the video on the big screen. Search YouTube or choose a recommended video on Android, then control playback on your laptop over home Wi-Fi.",
     "repository": "https://github.com/gaffar273/GlideYT",
     "image": "/media/glide-remote.png",
     "alt": "GlideYT on Android showing the search, playback and volume controls",
