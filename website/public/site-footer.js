@@ -17,7 +17,7 @@ const views = {
   glide: {
     name:'GlideYT', description:'A phone remote for YouTube on your Windows laptop.',
     heading:'Your laptop,', accent:'within reach.',
-    actions:[['Download for Windows','/downloads/glideyt/586037dc0cba/GlideYT-Setup.exe'],['Android APK',glideRepo+'/releases/latest/download/GlideYT-Android.apk']],
+    actions:[['Download for Windows','/downloads/glideyt/2c0d85b9da9d/GlideYT-Setup.exe'],['Android APK',glideRepo+'/releases/latest/download/GlideYT-Android.apk']],
     index:[['Remote tour','#tour'],['Setup guide','#guide'],['Downloads','#download'],['Help','#support']],
     resources:[['Source code',glideRepo],['Release notes',glideRepo+'/releases'],['Report a problem',glideRepo+'/issues'],['Windows installation help','/troubleshooting/windows/']],
   },
