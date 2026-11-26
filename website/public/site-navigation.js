@@ -6,17 +6,34 @@ const catalog = fetch('/product-catalog.json').then(response => {
 }).catch(() => [])
 
 class AgsNavigation extends HTMLElement {
+  openedOnHover = false
+
   connectedCallback() {
     if (!this.shadowRoot) this.render()
     document.addEventListener('pointerdown', this.onOutside)
+    document.addEventListener('keydown', this.onKeydown)
   }
 
   disconnectedCallback() {
     document.removeEventListener('pointerdown', this.onOutside)
+    document.removeEventListener('keydown', this.onKeydown)
+  }
+
+  setMenuOpen(open, openedOnHover = false) {
+    this.menu.open = open
+    this.panel.inert = !open
+    this.openedOnHover = openedOnHover
   }
 
   onOutside = event => {
-    if (!event.composedPath().includes(this)) this.menu.open = false
+    if (!event.composedPath().includes(this)) this.setMenuOpen(false)
+  }
+
+  onKeydown = event => {
+    if (event.key !== 'Escape' || !this.menu.open) return
+    const restoreFocus = this.menu.contains(this.shadowRoot.activeElement)
+    this.setMenuOpen(false)
+    if (restoreFocus) this.summary.focus()
   }
 
   render() {
@@ -26,12 +43,31 @@ class AgsNavigation extends HTMLElement {
       <nav aria-label="Main navigation">
         <a class="brand" href="/" aria-label="AGS Labs home"><img src="/labs-icon.svg" alt="" width="32" height="32">AGS Labs</a>
         <details><summary>Products<span class="chevron" aria-hidden="true"></span></summary>
-          <div class="panel"><div class="entries"></div><a class="all" href="/#products">All products</a></div>
+          <div class="panel" inert><div class="entries"></div><a class="all" href="/#products">All products</a></div>
         </details>
         <a class="support" href="/support/">Support</a>
         <a class="download" href="/downloads/">Downloads</a>
       </nav>`
     this.menu = root.querySelector('details')
+    this.summary = this.menu.querySelector('summary')
+    this.panel = root.querySelector('.panel')
+
+    this.menu.addEventListener('pointerenter', event => {
+      if (event.pointerType !== 'mouse' || this.menu.open) return
+      this.setMenuOpen(true, true)
+    })
+    this.menu.addEventListener('pointerleave', event => {
+      if (event.pointerType === 'mouse' && this.openedOnHover && !this.panel.contains(root.activeElement)) {
+        this.setMenuOpen(false)
+      }
+    })
+    this.summary.addEventListener('click', event => {
+      event.preventDefault()
+      // A pointer click keeps a menu that already opened on hover open.
+      const keepOpen = this.openedOnHover && event.detail > 0
+      this.setMenuOpen(keepOpen || !this.menu.open)
+    })
+
     catalog.then(products => {
       for (const product of products) {
         const link = document.createElement('a')
@@ -44,17 +80,11 @@ class AgsNavigation extends HTMLElement {
         root.querySelector('.entries').append(link)
       }
     })
-    root.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && this.menu.open) {
-        this.menu.open = false
-        this.menu.querySelector('summary').focus()
-      }
-    })
     root.addEventListener('click', event => {
-      if (event.target.closest('a')) this.menu.open = false
+      if (event.target.closest('a')) this.setMenuOpen(false)
     })
     root.addEventListener('focusout', event => {
-      if (!this.menu.contains(event.relatedTarget)) this.menu.open = false
+      if (!this.menu.contains(event.relatedTarget)) this.setMenuOpen(false)
     })
   }
 }
