@@ -3,7 +3,7 @@ import { defineConfig, type Connect } from 'vite'
 import react from '@vitejs/plugin-react'
 import tailwindcss from '@tailwindcss/vite'
 
-const pages = ['product/image-studio', 'product/glideYT', 'downloads', 'support']
+const pages = ['product/image-studio', 'product/glideYT', 'product/rillboard', 'downloads', 'support']
 const servePage: Connect.NextHandleFunction = (req, _res, next) => {
   const url = new URL(req.url ?? '/', 'http://localhost')
   const path = url.pathname.replace(/^\/|\/$/g, '')

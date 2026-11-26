@@ -86,6 +86,10 @@
 .work-screen { position: absolute; width: 81%; left: 9.5%; top: 21%; box-shadow: 0 10px 40px #14192566; border-radius: 6px; }
 .studio .work-screen { transform: perspective(900px) rotateY(-9deg) rotateZ(-3deg); }
 .glide .work-screen { width: 34%; left: 52%; top: 8%; border: 4px solid #222; border-radius: clamp(12px, 2vw, 25px); transform: rotate(7deg); }
+.rillboard .work-picture {
+  background: radial-gradient(ellipse at 45% 80%, #365eb2, #121c30 78%);
+}
+.rillboard .work-screen { top: 11%; }
 .work-caption { flex: 1; display: flex; flex-direction: column; align-items: start; padding: clamp(1.4rem, 2.6vw, 2.75rem); }
 .work-platform { font-size: .88rem; color: #57595b; }
 .work-caption h3 { margin: .42rem 0 .65rem; font-size: clamp(2.15rem, 3.7vw, 3.9rem); line-height: 1.05; letter-spacing: -.075em; font-weight: 570; }
@@ -93,6 +97,9 @@
 .work-link { margin-top: auto; }
 .work-cover:hover, .work-cover:focus-visible { border-color: #777a83; }
 .work-cover:hover .work-link { color: var(--blue); }
+@media (min-width: 1000px) {
+  .work-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
 @media (prefers-reduced-motion: no-preference) {
   .work-screen { transition: translate .25s ease; }
   .work-cover:hover .work-screen { translate: 0 -5px; }

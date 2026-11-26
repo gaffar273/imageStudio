@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { Button } from './components/ui'
 import { LabsFooter } from './Labs'
-import { products, glideDownloads } from './products'
+import { products, glideDownloads, rillboardDownloads } from './products'
 import { useRelease } from './hooks/useRelease'
 import './resources.css'
 
@@ -10,6 +10,10 @@ function Installers({ slug, repository }: { slug: string; repository: string }) 
   if (slug === 'glideYT') return <>
     <Button variant="dark" href={glideDownloads.windows}>Windows installer</Button>
     <Button href={glideDownloads.android}>Android APK</Button>
+  </>
+  if (slug === 'rillboard') return <>
+    <Button variant="dark" href={rillboardDownloads.installer}>Windows installer ZIP</Button>
+    <Button href={rillboardDownloads.standalone}>Standalone EXE</Button>
   </>
   if (slug === 'image-studio' && release.state === 'ready' && release.windows) {
     return <Button variant="dark" href={release.windows.url}>Windows installer</Button>

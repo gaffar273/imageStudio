@@ -34,5 +34,23 @@
       "Playback remote"
     ],
     "summary": "Use your Android phone as a YouTube remote for your Windows laptop."
+  },
+  {
+    "slug": "rillboard",
+    "name": "Rillboard",
+    "platform": "Windows desktop",
+    "category": "Drawing and teaching",
+    "description": "Sketch with a pen or mouse, draw diagrams, and work through lessons on a scrolling whiteboard that saves to your PC.",
+    "repository": "https://github.com/gaffar273/Rillboard",
+    "image": "/media/rillboard-workspace.png",
+    "alt": "Rillboard’s Windows workspace showing the drawing toolbar and the Start drawing and My boards buttons",
+    "theme": "rillboard",
+    "walkthrough": "#workspace",
+    "features": [
+      "Pen and shape tools",
+      "Editable local boards",
+      "Optional live teaching"
+    ],
+    "summary": "Draw, diagram, and work through lessons on your Windows PC."
   }
 ]

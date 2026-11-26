@@ -1,0 +1,53 @@
+.rillboard-page .hero-intro h1 { max-width: 21ch; }
+.rillboard-mark { width: 1.4em; height: 1.4em; }
+.rillboard-preview {
+  padding: clamp(6px, 1vw, 12px);
+  border: 1px solid #34446a;
+  border-radius: clamp(12px, 2.5vw, 24px);
+  background: linear-gradient(135deg, #162239, #263c6c);
+  box-shadow: var(--shadow-float);
+  scroll-margin-top: 1rem;
+}
+.rillboard-preview img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: clamp(6px, 1.3vw, 13px);
+}
+.rillboard-guide {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1.25rem, 4vw, 4rem);
+  max-width: 56rem;
+  margin-inline: auto;
+}
+.rillboard-guide article {
+  border-top: 1px solid var(--color-line-strong);
+  padding-top: 1rem;
+}
+.rillboard-guide h3 {
+  font-size: 1.4rem;
+  font-weight: 600;
+  letter-spacing: -.035em;
+}
+.rillboard-guide p {
+  margin-top: .75rem;
+  color: var(--color-body);
+  line-height: 1.65;
+}
+.rillboard-guide a, .rillboard-links a {
+  display: inline-block;
+  text-decoration: underline;
+  text-underline-offset: .23em;
+}
+.rillboard-guide a { margin-top: .75rem; }
+.rillboard-links {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 1.2rem;
+  margin-top: 2rem;
+}
+@media (max-width: 650px) {
+  .rillboard-guide { grid-template-columns: 1fr; }
+}

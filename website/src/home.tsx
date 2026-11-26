@@ -32,7 +32,7 @@ function Home() {
         <div className="cover-inner">
           <div className="cover-type">
             <h1>Independent <em>software studio.</em></h1>
-            <p>We’re AGS Labs. We build tools for making pictures on your PC and connecting the screens around you.</p>
+            <p>We’re AGS Labs. We build tools for drawing, making pictures, and connecting the screens around you.</p>
             <a className="cover-action" href="#products">Explore our products</a>
           </div>
         </div>
