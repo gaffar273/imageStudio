@@ -19,9 +19,10 @@ function Rillboard() {
         label={<><img className="rillboard-mark" src="/rillboard-icon.svg" alt="" width="44" height="44" /> Rillboard</>}
         title="Sketch ideas."
         accent="Work them out."
-        lead="An offline whiteboard for Windows with drawing tools, editable boards, and optional live teaching."
+        lead="Draw offline and save editable boards on Windows and Linux. Optional live teaching is available on Windows."
         actions={<>
           <Button variant="primary" size="lg" href={rillboardDownloads.installer}><Download size={18} aria-hidden="true" /> Download for Windows</Button>
+          <Button size="lg" href={rillboardDownloads.deb}>Download for Ubuntu / Debian (.deb)</Button>
           <Button size="lg" href={rillboardDownloads.standalone}>Standalone EXE</Button>
         </>}
         note={<><a href="#guide">Setup guide</a> · <a href={rillboardRepository + '/releases'}>Release notes</a></>}
@@ -56,7 +57,12 @@ function Rillboard() {
               <p>Requires 64-bit Windows 10 or 11, .NET Framework 4.8, and the Microsoft Edge WebView2 Runtime.</p>
             </article>
             <article>
-              <h3>Connect live teaching</h3>
+              <h3>Install on Linux</h3>
+              <p>On Ubuntu, Debian or Mint, open the <a href={rillboardDownloads.deb}>.deb installer</a> with your software installer, choose <strong>Install</strong>, then open Rillboard from Applications.</p>
+              <p>Other desktops: extract the <a href={rillboardDownloads.portable}>portable archive</a> and run <code>sh rillboard/linux/install.sh</code>. Linux requires Python 3 and a desktop browser.</p>
+            </article>
+            <article>
+              <h3>Connect live teaching on Windows</h3>
               <p>With Node.js 18 or later installed, open <strong>Settings</strong> in Rillboard. Under <strong>Live teaching</strong>, choose <strong>Add plugin</strong>, then <strong>Set up</strong> to connect your assistant.</p>
               <a href={rillboardRepository + '/blob/main/TEACHER.md'}>Read the teaching guide</a>
             </article>

@@ -38,7 +38,7 @@
   {
     "slug": "rillboard",
     "name": "Rillboard",
-    "platform": "Windows desktop",
+    "platform": "Windows + Linux",
     "category": "Drawing and teaching",
     "description": "Sketch with a pen or mouse, draw diagrams, and work through lessons on a scrolling whiteboard that saves to your PC.",
     "repository": "https://github.com/gaffar273/Rillboard",
@@ -51,6 +51,6 @@
       "Editable local boards",
       "Optional live teaching"
     ],
-    "summary": "Draw, diagram, and work through lessons on your Windows PC."
+    "summary": "Draw and diagram offline on Windows or Linux."
   }
 ]

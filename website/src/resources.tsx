@@ -14,6 +14,8 @@ function Installers({ slug, repository }: { slug: string; repository: string }) 
   if (slug === 'rillboard') return <>
     <Button variant="dark" href={rillboardDownloads.installer}>Windows installer ZIP</Button>
     <Button href={rillboardDownloads.standalone}>Standalone EXE</Button>
+    <Button href={rillboardDownloads.deb}>Ubuntu / Debian installer</Button>
+    <Button href={rillboardDownloads.portable}>Other Linux desktops</Button>
   </>
   if (slug === 'image-studio' && release.state === 'ready' && release.windows) {
     return <Button variant="dark" href={release.windows.url}>Windows installer</Button>
