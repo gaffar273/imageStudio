@@ -11,8 +11,8 @@ export const rillboardRepository = 'https://github.com/gaffar273/Rillboard'
 export const rillboardVersion = '2.1.0'
 const rillboardDownloadDirectory = '/downloads/rillboard/' + rillboardVersion
 export const rillboardDownloads = {
-  deb: rillboardDownloadDirectory + '/rillboard.deb',
-  portable: rillboardDownloadDirectory + '/rillboard-linux.tar.gz',
-  installer: rillboardDownloadDirectory + '/Rillboard-Windows.zip',
-  standalone: rillboardDownloadDirectory + '/Rillboard.exe',
+  deb: rillboardDownloadDirectory + '/rillboard.deb?build=keyboard-fix',
+  portable: rillboardDownloadDirectory + '/rillboard-linux.tar.gz?build=keyboard-fix',
+  installer: rillboardDownloadDirectory + '/Rillboard-Windows.zip?build=keyboard-fix',
+  standalone: rillboardDownloadDirectory + '/Rillboard.exe?build=keyboard-fix',
 }

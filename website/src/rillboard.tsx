@@ -40,7 +40,7 @@ function Rillboard() {
       <section id="graph-studio" className="landing-section" aria-labelledby="graph-studio-title">
         <div className="section-head">
           <h2 id="graph-studio-title">Inside <Em>Graph Studio.</Em></h2>
-          <p>Open <strong>ƒ(x)</strong> from the board toolbar. Type <kbd>pi</kbd> for π, <kbd>x^4</kbd> for x⁴, or <kbd>int</kbd> for an integral with editable bounds.</p>
+          <p>Open <strong>ƒ(x)</strong> from the board toolbar. Type <kbd>pi</kbd> for π, <kbd>x^4</kbd> for x⁴, or <kbd>int</kbd> for an integral with editable bounds. Use the keyboard icon beside an expression to enter symbols in Graph or Calculate.</p>
         </div>
         <div className="rillboard-math-grid">
           <figure className="rillboard-math-card">
