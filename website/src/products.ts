@@ -8,9 +8,11 @@ export const glideDownloads = {
 }
 
 export const rillboardRepository = 'https://github.com/gaffar273/Rillboard'
+export const rillboardVersion = '2.1.0'
+const rillboardDownloadDirectory = '/downloads/rillboard/' + rillboardVersion
 export const rillboardDownloads = {
-  deb: 'https://gaffar273.github.io/Rillboard/downloads/rillboard.deb',
-  portable: 'https://gaffar273.github.io/Rillboard/downloads/rillboard-linux.tar.gz',
-  installer: rillboardRepository + '/releases/latest/download/Rillboard-Windows.zip',
-  standalone: rillboardRepository + '/releases/latest/download/Rillboard.exe',
+  deb: rillboardDownloadDirectory + '/rillboard.deb',
+  portable: rillboardDownloadDirectory + '/rillboard-linux.tar.gz',
+  installer: rillboardDownloadDirectory + '/Rillboard-Windows.zip',
+  standalone: rillboardDownloadDirectory + '/Rillboard.exe',
 }

@@ -40,17 +40,18 @@
     "name": "Rillboard",
     "platform": "Windows + Linux",
     "category": "Drawing and teaching",
-    "description": "Sketch with a pen or mouse, draw diagrams, and work through lessons on a scrolling whiteboard that saves to your PC.",
+    "description": "Draw on editable boards, plot equations as you type, and explore calculus with an offline symbolic calculator.",
     "repository": "https://github.com/gaffar273/Rillboard",
     "image": "/media/rillboard-workspace.png",
     "alt": "Rillboard’s Windows workspace showing the drawing toolbar and the Start drawing and My boards buttons",
     "theme": "rillboard",
-    "walkthrough": "#workspace",
+    "walkthrough": "#graph-studio",
     "features": [
       "Pen and shape tools",
       "Editable local boards",
+      "Live graphs and symbolic calculus",
       "Optional live teaching"
     ],
-    "summary": "Draw and diagram offline on Windows or Linux."
+    "summary": "Draw, graph, and calculate offline on Windows or Linux."
   }
 ]

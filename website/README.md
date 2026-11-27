@@ -18,4 +18,4 @@ The Vercel project uses the `website` root of `gaffar273/imageStudio` and deploy
 
 Add product names, artwork, descriptions and walkthrough links in `public/product-catalog.json`. The Products dropdown and homepage share this catalog. For a new product landing page, add its HTML entry, and register the new product HTML input in `vite.config.ts`. Image Studio reads its own GitHub releases. GlideYT serves its Windows installer from a checksum-specific directory under `public/downloads/glideyt/`. When updating it, change the download links and the SHA-256 value on the Windows help page. The Android APK comes from the latest GlideYT GitHub release.
 
-Rillboard links to its latest GitHub release assets using the stable names `Rillboard-Windows.zip` and `Rillboard.exe`.
+Rillboard serves its Windows ZIP and EXE, Debian installer, and portable Linux archive from `public/downloads/rillboard/<version>/`. When replacing the installers, update `rillboardVersion` in `src/products.ts` so the product and downloads pages use the same build.

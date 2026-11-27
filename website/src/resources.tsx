@@ -1,7 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { Button } from './components/ui'
 import { LabsFooter } from './Labs'
-import { products, glideDownloads, rillboardDownloads } from './products'
+import { products, glideDownloads, rillboardDownloads, rillboardVersion } from './products'
 import { useRelease } from './hooks/useRelease'
 import './resources.css'
 
@@ -12,10 +12,10 @@ function Installers({ slug, repository }: { slug: string; repository: string }) 
     <Button href={glideDownloads.android}>Android APK</Button>
   </>
   if (slug === 'rillboard') return <>
-    <Button variant="dark" href={rillboardDownloads.installer}>Windows installer ZIP</Button>
-    <Button href={rillboardDownloads.standalone}>Standalone EXE</Button>
-    <Button href={rillboardDownloads.deb}>Ubuntu / Debian installer</Button>
-    <Button href={rillboardDownloads.portable}>Other Linux desktops</Button>
+    <Button variant="dark" href={rillboardDownloads.installer} download>Windows installer ZIP</Button>
+    <Button href={rillboardDownloads.standalone} download>Standalone EXE</Button>
+    <Button href={rillboardDownloads.deb} download>Ubuntu / Debian installer</Button>
+    <Button href={rillboardDownloads.portable} download>Other Linux desktops</Button>
   </>
   if (slug === 'image-studio' && release.state === 'ready' && release.windows) {
     return <Button variant="dark" href={release.windows.url}>Windows installer</Button>
@@ -31,12 +31,12 @@ function ResourcePage({ support }: { support: boolean }) {
       </header>
       <div className="resource-list">{products.map(product =>
         <article key={product.slug}>
-          <div><h2>{product.name}</h2><p>{product.platform}</p></div>
+          <div><h2>{product.name}</h2><p>{product.platform}{!support && product.slug === 'rillboard' && ` · ${rillboardVersion}`}</p></div>
           <div className="resource-actions">{support ?
             <><Button variant="dark" href={'/product/' + product.slug + '#guide'}>Setup guide</Button>
               <Button href={product.repository + '/issues'}>Report an issue</Button></> :
             <><Installers slug={product.slug} repository={product.repository} />
-              <a className="resource-link" href={product.repository + '/releases'}>Release notes</a></>}
+              <a className="resource-link" href={product.repository + '/releases'}>{product.slug === 'rillboard' ? 'GitHub releases' : 'Release notes'}</a></>}
           </div>
         </article>)}</div>
       <a className="resource-link" href="/troubleshooting/windows/">Troubleshoot a Windows installation</a>

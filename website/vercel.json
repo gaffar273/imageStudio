@@ -6,6 +6,15 @@
       "permanent": true
     }
   ],
+  "headers": [
+    {
+      "source": "/downloads/rillboard/:version/rillboard-linux.tar.gz",
+      "headers": [
+        { "key": "Content-Type", "value": "application/gzip" },
+        { "key": "Content-Disposition", "value": "attachment; filename=rillboard-linux.tar.gz" }
+      ]
+    }
+  ],
   "rewrites": [
     {
       "source": "/product/:slug",

@@ -51,3 +51,37 @@
 @media (max-width: 650px) {
   .rillboard-guide { grid-template-columns: 1fr; }
 }
+
+#graph-studio .section-head p { max-width: 39rem; margin-inline: auto; }
+#graph-studio kbd {
+  padding: .1em .32em;
+  border: 1px solid var(--color-line-strong);
+  border-radius: .3em;
+  color: var(--color-ink);
+  background: var(--color-card);
+}
+.rillboard-math-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: clamp(1rem, 2.5vw, 1.75rem);
+}
+.rillboard-math-card {
+  overflow: hidden;
+  border: 1px solid var(--color-line-strong);
+  border-radius: 1.1rem;
+  background: var(--color-card);
+  box-shadow: var(--shadow-card);
+}
+.rillboard-math-card img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-bottom: 1px solid var(--color-line-strong);
+}
+.rillboard-math-card figcaption { padding: clamp(1rem, 2.5vw, 1.5rem); }
+.rillboard-math-card h3 { font-size: 1.25rem; font-weight: 600; letter-spacing: -.025em; }
+.rillboard-math-card p { margin-top: .45rem; color: var(--color-body); line-height: 1.65; }
+.rillboard-board-tools { padding-top: 0; }
+@media (max-width: 720px) {
+  .rillboard-math-grid { grid-template-columns: 1fr; }
+}
