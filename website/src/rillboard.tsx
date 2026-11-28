@@ -25,7 +25,7 @@ function Rillboard() {
           <Button size="lg" href={rillboardDownloads.deb} download>Download for Ubuntu / Debian (.deb)</Button>
           <Button size="lg" href={rillboardDownloads.standalone} download>Standalone EXE</Button>
         </>}
-        note={<>Version {rillboardVersion} · <a href="#graph-studio">What’s new</a> · <a href="#guide">Setup guide</a></>}
+        note={<>Version {rillboardVersion} · <a href="#release-notes">Release notes</a> · <a href="#guide">Setup guide</a></>}
       >
         <figure id="workspace" className="rillboard-preview">
           <img
@@ -36,6 +36,24 @@ function Rillboard() {
           />
         </figure>
       </LandingHero>
+
+      <section id="release-notes" className="landing-section" aria-labelledby="release-title">
+        <div className="section-head">
+          <h2 id="release-title">What’s new in <Em>{rillboardVersion}</Em></h2>
+          <p><time dateTime="2026-11-28">November 28, 2026</time></p>
+        </div>
+        <div className="rillboard-guide">
+          <article>
+            <h3>Write on PDFs and slides on Windows</h3>
+            <p>Choose <strong>Import PDF or PowerPoint…</strong> from the board menu. Pages appear in order below your work, with the pen ready. PowerPoint files (.ppt and .pptx) open through PowerPoint or WPS Presentation installed on your PC.</p>
+            <p>Windows now saves each page image once. In a 24-page PDF test, autosave after a pen stroke dropped from about 1.9 seconds to 35 milliseconds. Existing boards pick up the improvement when you reopen them.</p>
+          </article>
+          <article>
+            <h3>Fit pictures on Windows and Linux</h3>
+            <p>Press <kbd>Ctrl</kbd> + <kbd>V</kbd> to paste a picture sized to the visible board. Drag a corner to resize it while keeping its proportions, or drop an image file where you want it on the canvas.</p>
+          </article>
+        </div>
+      </section>
 
       <section id="graph-studio" className="landing-section" aria-labelledby="graph-studio-title">
         <div className="section-head">

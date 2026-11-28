@@ -36,7 +36,7 @@ function ResourcePage({ support }: { support: boolean }) {
             <><Button variant="dark" href={'/product/' + product.slug + '#guide'}>Setup guide</Button>
               <Button href={product.repository + '/issues'}>Report an issue</Button></> :
             <><Installers slug={product.slug} repository={product.repository} />
-              <a className="resource-link" href={product.repository + '/releases'}>{product.slug === 'rillboard' ? 'GitHub releases' : 'Release notes'}</a></>}
+              <a className="resource-link" href={product.slug === 'rillboard' ? '/product/rillboard#release-notes' : product.repository + '/releases'}>Release notes</a></>}
           </div>
         </article>)}</div>
       <a className="resource-link" href="/troubleshooting/windows/">Troubleshoot a Windows installation</a>
